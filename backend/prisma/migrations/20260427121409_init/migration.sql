@@ -14,7 +14,7 @@ CREATE TYPE "Tone" AS ENUM ('FRIENDLY', 'PROFESSIONAL', 'FORMAL');
 CREATE TYPE "ResponseStyle" AS ENUM ('SHORT', 'DETAILED', 'MIXED');
 
 -- CreateEnum
-CREATE TYPE "SenderType" AS ENUM ('USER', 'CLIENT', 'AI');
+CREATE TYPE "SenderType" AS ENUM ('USER', 'CLIENT', 'AI', 'PAGE');
 
 -- CreateEnum
 CREATE TYPE "MessageStatus" AS ENUM ('SENT', 'DELIVERED', 'READ', 'FAILED');
@@ -27,6 +27,15 @@ CREATE TYPE "PaymentStatus" AS ENUM ('PENDING', 'SUCCESS', 'FAILED', 'REFUNDED')
 
 -- CreateEnum
 CREATE TYPE "PaymentProvider" AS ENUM ('ORANGE_MONEY', 'MVOLA', 'MANUAL');
+
+-- CreateEnum
+CREATE TYPE "TokenStatus" AS ENUM ('VALID', 'INVALID', 'UNKNOWN');
+
+-- CreateEnum
+CREATE TYPE "WebhookEventType" AS ENUM ('MESSAGE', 'FEED_COMMENT', 'FEED_REACTION', 'FEED_CHANGE');
+
+-- CreateEnum
+CREATE TYPE "WebhookEventStatus" AS ENUM ('PENDING', 'PROCESSED', 'FAILED', 'SKIPPED');
 
 -- CreateTable
 CREATE TABLE "users" (
@@ -93,9 +102,12 @@ CREATE TABLE "facebook_connections" (
     "encryptedAccessToken" TEXT NOT NULL,
     "appId" TEXT NOT NULL,
     "tokenExpiresAt" TIMESTAMP(3),
+    "tokenStatus" "TokenStatus" NOT NULL DEFAULT 'UNKNOWN',
+    "tokenValidatedAt" TIMESTAMP(3),
     "grantedScopes" JSONB NOT NULL DEFAULT '[]',
     "instagramAccountId" TEXT,
     "webhookSubscribed" BOOLEAN NOT NULL DEFAULT false,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
     "lastSyncedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -104,12 +116,30 @@ CREATE TABLE "facebook_connections" (
 );
 
 -- CreateTable
+CREATE TABLE "webhook_events" (
+    "id" TEXT NOT NULL,
+    "facebookConnectionId" TEXT NOT NULL,
+    "externalId" TEXT NOT NULL,
+    "eventType" "WebhookEventType" NOT NULL,
+    "status" "WebhookEventStatus" NOT NULL DEFAULT 'PENDING',
+    "rawPayload" JSONB NOT NULL,
+    "resultEntityId" TEXT,
+    "errorMessage" TEXT,
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "processedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "webhook_events_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "conversations" (
     "id" TEXT NOT NULL,
     "businessProfileId" TEXT NOT NULL,
     "externalId" TEXT NOT NULL,
-    "clientName" TEXT,
     "clientPsid" TEXT,
+    "clientName" TEXT,
     "clientAvatarUrl" TEXT,
     "lastMessage" TEXT,
     "lastMessageAt" TIMESTAMP(3),
@@ -140,33 +170,6 @@ CREATE TABLE "messages" (
 );
 
 -- CreateTable
-CREATE TABLE "chat_resources" (
-    "id" TEXT NOT NULL,
-    "businessProfileId" TEXT NOT NULL,
-    "conversationId" TEXT,
-    "name" TEXT NOT NULL,
-    "description" TEXT,
-    "isActive" BOOLEAN NOT NULL DEFAULT true,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "chat_resources_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "chat_resource_images" (
-    "id" TEXT NOT NULL,
-    "chatResourceId" TEXT NOT NULL,
-    "url" TEXT NOT NULL,
-    "description" TEXT NOT NULL,
-    "sortOrder" INTEGER NOT NULL DEFAULT 0,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "chat_resource_images_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "facebook_posts" (
     "id" TEXT NOT NULL,
     "businessProfileId" TEXT NOT NULL,
@@ -194,12 +197,12 @@ CREATE TABLE "post_comments" (
     "authorName" TEXT NOT NULL,
     "authorAvatarUrl" TEXT,
     "message" TEXT NOT NULL,
+    "commentedAt" TIMESTAMP(3) NOT NULL,
+    "lastSyncedAt" TIMESTAMP(3),
     "isReplied" BOOLEAN NOT NULL DEFAULT false,
     "replyContent" TEXT,
     "repliedAt" TIMESTAMP(3),
     "repliedByAi" BOOLEAN,
-    "commentedAt" TIMESTAMP(3) NOT NULL,
-    "lastSyncedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -223,7 +226,34 @@ CREATE TABLE "post_ai_configs" (
 );
 
 -- CreateTable
-CREATE TABLE "subscriptions" (
+CREATE TABLE "chat_resources" (
+    "id" TEXT NOT NULL,
+    "businessProfileId" TEXT NOT NULL,
+    "conversationId" TEXT,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "chat_resources_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "chat_resource_images" (
+    "id" TEXT NOT NULL,
+    "chatResourceId" TEXT NOT NULL,
+    "url" TEXT NOT NULL,
+    "description" TEXT NOT NULL,
+    "sortOrder" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "chat_resource_images_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "subscription_plans" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "plan" "Plan" NOT NULL,
@@ -236,18 +266,18 @@ CREATE TABLE "subscriptions" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "subscriptions_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "subscription_plans_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "payments" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
+    "subscriptionPlanId" TEXT NOT NULL,
     "amount" INTEGER NOT NULL,
     "currency" TEXT NOT NULL DEFAULT 'MGA',
     "status" "PaymentStatus" NOT NULL DEFAULT 'PENDING',
     "provider" "PaymentProvider" NOT NULL,
-    "plan" "Plan" NOT NULL,
     "phoneNumber" TEXT,
     "operatorRef" TEXT,
     "operatorMessage" TEXT,
@@ -264,6 +294,7 @@ CREATE TABLE "payments" (
 -- CreateTable
 CREATE TABLE "refresh_tokens" (
     "id" TEXT NOT NULL,
+    "jti" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "tokenHash" TEXT NOT NULL,
     "expiresAt" TIMESTAMP(3) NOT NULL,
@@ -289,10 +320,16 @@ CREATE UNIQUE INDEX "facebook_connections_businessProfileId_key" ON "facebook_co
 CREATE UNIQUE INDEX "facebook_connections_pageId_key" ON "facebook_connections"("pageId");
 
 -- CreateIndex
-CREATE INDEX "conversations_externalId_idx" ON "conversations"("externalId");
+CREATE INDEX "facebook_connections_tokenStatus_isActive_idx" ON "facebook_connections"("tokenStatus", "isActive");
 
 -- CreateIndex
-CREATE INDEX "conversations_businessProfileId_idx" ON "conversations"("businessProfileId");
+CREATE INDEX "webhook_events_facebookConnectionId_status_idx" ON "webhook_events"("facebookConnectionId", "status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "webhook_events_externalId_eventType_key" ON "webhook_events"("externalId", "eventType");
+
+-- CreateIndex
+CREATE INDEX "conversations_businessProfileId_lastMessageAt_idx" ON "conversations"("businessProfileId", "lastMessageAt");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "conversations_businessProfileId_externalId_key" ON "conversations"("businessProfileId", "externalId");
@@ -301,7 +338,22 @@ CREATE UNIQUE INDEX "conversations_businessProfileId_externalId_key" ON "convers
 CREATE UNIQUE INDEX "messages_externalId_key" ON "messages"("externalId");
 
 -- CreateIndex
-CREATE INDEX "messages_conversationId_idx" ON "messages"("conversationId");
+CREATE INDEX "messages_conversationId_createdAt_idx" ON "messages"("conversationId", "createdAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "facebook_posts_externalId_key" ON "facebook_posts"("externalId");
+
+-- CreateIndex
+CREATE INDEX "facebook_posts_businessProfileId_publishedAt_idx" ON "facebook_posts"("businessProfileId", "publishedAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "post_comments_externalId_key" ON "post_comments"("externalId");
+
+-- CreateIndex
+CREATE INDEX "post_comments_postId_isReplied_idx" ON "post_comments"("postId", "isReplied");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "post_ai_configs_postId_key" ON "post_ai_configs"("postId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "chat_resources_conversationId_key" ON "chat_resources"("conversationId");
@@ -313,22 +365,7 @@ CREATE INDEX "chat_resources_businessProfileId_idx" ON "chat_resources"("busines
 CREATE INDEX "chat_resource_images_chatResourceId_idx" ON "chat_resource_images"("chatResourceId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "facebook_posts_externalId_key" ON "facebook_posts"("externalId");
-
--- CreateIndex
-CREATE INDEX "facebook_posts_businessProfileId_idx" ON "facebook_posts"("businessProfileId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "post_comments_externalId_key" ON "post_comments"("externalId");
-
--- CreateIndex
-CREATE INDEX "post_comments_postId_idx" ON "post_comments"("postId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "post_ai_configs_postId_key" ON "post_ai_configs"("postId");
-
--- CreateIndex
-CREATE INDEX "subscriptions_userId_idx" ON "subscriptions"("userId");
+CREATE INDEX "subscription_plans_userId_isActive_idx" ON "subscription_plans"("userId", "isActive");
 
 -- CreateIndex
 CREATE INDEX "payments_userId_idx" ON "payments"("userId");
@@ -337,10 +374,22 @@ CREATE INDEX "payments_userId_idx" ON "payments"("userId");
 CREATE INDEX "payments_status_idx" ON "payments"("status");
 
 -- CreateIndex
+CREATE INDEX "payments_subscriptionPlanId_idx" ON "payments"("subscriptionPlanId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "refresh_tokens_jti_key" ON "refresh_tokens"("jti");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "refresh_tokens_tokenHash_key" ON "refresh_tokens"("tokenHash");
 
 -- CreateIndex
 CREATE INDEX "refresh_tokens_userId_idx" ON "refresh_tokens"("userId");
+
+-- CreateIndex
+CREATE INDEX "refresh_tokens_userId_jti_idx" ON "refresh_tokens"("userId", "jti");
+
+-- CreateIndex
+CREATE INDEX "refresh_tokens_expiresAt_idx" ON "refresh_tokens"("expiresAt");
 
 -- AddForeignKey
 ALTER TABLE "business_profiles" ADD CONSTRAINT "business_profiles_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -352,19 +401,13 @@ ALTER TABLE "ai_configs" ADD CONSTRAINT "ai_configs_businessProfileId_fkey" FORE
 ALTER TABLE "facebook_connections" ADD CONSTRAINT "facebook_connections_businessProfileId_fkey" FOREIGN KEY ("businessProfileId") REFERENCES "business_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "webhook_events" ADD CONSTRAINT "webhook_events_facebookConnectionId_fkey" FOREIGN KEY ("facebookConnectionId") REFERENCES "facebook_connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "conversations" ADD CONSTRAINT "conversations_businessProfileId_fkey" FOREIGN KEY ("businessProfileId") REFERENCES "business_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "messages" ADD CONSTRAINT "messages_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "chat_resources" ADD CONSTRAINT "chat_resources_businessProfileId_fkey" FOREIGN KEY ("businessProfileId") REFERENCES "business_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "chat_resources" ADD CONSTRAINT "chat_resources_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "conversations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "chat_resource_images" ADD CONSTRAINT "chat_resource_images_chatResourceId_fkey" FOREIGN KEY ("chatResourceId") REFERENCES "chat_resources"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "facebook_posts" ADD CONSTRAINT "facebook_posts_businessProfileId_fkey" FOREIGN KEY ("businessProfileId") REFERENCES "business_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -376,10 +419,22 @@ ALTER TABLE "post_comments" ADD CONSTRAINT "post_comments_postId_fkey" FOREIGN K
 ALTER TABLE "post_ai_configs" ADD CONSTRAINT "post_ai_configs_postId_fkey" FOREIGN KEY ("postId") REFERENCES "facebook_posts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "chat_resources" ADD CONSTRAINT "chat_resources_businessProfileId_fkey" FOREIGN KEY ("businessProfileId") REFERENCES "business_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "chat_resources" ADD CONSTRAINT "chat_resources_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "conversations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "chat_resource_images" ADD CONSTRAINT "chat_resource_images_chatResourceId_fkey" FOREIGN KEY ("chatResourceId") REFERENCES "chat_resources"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "subscription_plans" ADD CONSTRAINT "subscription_plans_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "payments" ADD CONSTRAINT "payments_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "payments" ADD CONSTRAINT "payments_subscriptionPlanId_fkey" FOREIGN KEY ("subscriptionPlanId") REFERENCES "subscription_plans"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "refresh_tokens" ADD CONSTRAINT "refresh_tokens_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

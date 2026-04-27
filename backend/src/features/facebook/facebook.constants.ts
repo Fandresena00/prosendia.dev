@@ -21,6 +21,7 @@ export const FACEBOOK_API = {
 export const FACEBOOK_SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
+  'pages_read_user_content',
   'pages_manage_metadata',
   'pages_manage_posts',
   'pages_messaging',

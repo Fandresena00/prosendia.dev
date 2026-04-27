@@ -67,7 +67,9 @@ export function mapGraphApiError(err: FacebookApiErrorData): FacebookApiError {
   const { code, error_subcode, message, fbtrace_id } = err;
   if (code === 190)
     return new FacebookTokenError(message, error_subcode, fbtrace_id);
-  if (code === 200) return new FacebookPermissionError(message, fbtrace_id);
+  // Facebook often uses code #10 for missing permissions / features
+  if (code === 200 || code === 10)
+    return new FacebookPermissionError(message, fbtrace_id);
   if (code === 4 || code === 17 || code === 32)
     return new FacebookRateLimitError(code, message, fbtrace_id);
   if (code === 2) return new FacebookTemporaryError(message, code, fbtrace_id);

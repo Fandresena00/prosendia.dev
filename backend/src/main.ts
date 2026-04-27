@@ -27,6 +27,7 @@ async function bootstrap(): Promise<void> {
       process.env.NODE_ENV === 'production'
         ? ['error', 'warn', 'log']
         : ['error', 'warn', 'log', 'debug', 'verbose'],
+    rawBody: true, // ⭐ IMPORTANT
   });
 
   const configService = app.get(ConfigService);

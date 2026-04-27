@@ -1,27 +1,40 @@
 /**
  * @file features/facebook/services/facebook.service.ts
  *
- * All backend calls go through apiClient (auto auth + refresh).
- * fetchPagePublicInfo fetches real stats directly from Facebook Graph API.
+ * All backend calls route through apiClient (handles JWT auth + refresh).
+ * fetchPagePublicInfo calls the Facebook Graph API directly for live page stats.
+ *
+ * Endpoints map:
+ *   GET  /facebook/oauth/url              → getOAuthUrl
+ *   POST /facebook/oauth/callback         → handleOAuthCallback
+ *   GET  /facebook/connections            → listConnections       (paginated)
+ *   GET  /facebook/connections/:id        → getConnection
+ *   POST /facebook/connect                → connectPage
+ *   DEL  /facebook/disconnect/:id         → disconnectPage
+ *   POST /facebook/sync/conversations/:id → syncPageConversations
+ *   POST /facebook/sync/posts/:id         → syncPagePosts
+ *   POST /facebook/messages/send          → sendMessage
+ *   POST /facebook/comments/:id/reply     → replyToComment
  */
 
 import { apiClient } from "@/lib/api-client";
 import {
+  type FacebookConnection,
+  type FacebookPageInfo,
+  type OAuthCallbackPage,
+  type SyncResult,
   connectionResponseSchema,
-  FacebookConnection,
-  FacebookPageInfo,
   facebookPageInfoSchema,
   oauthCallbackResponseSchema,
   oauthUrlResponseSchema,
-  OAuthCallbackPage,
-  SyncResult,
+  paginatedConnectionsSchema,
   syncResultSchema,
 } from "../types/facebook.types";
 
-const BASE         = "/facebook";
-const GRAPH_BASE   = "https://graph.facebook.com/v25.0";
+const BASE       = "/facebook";
+const GRAPH_BASE = "https://graph.facebook.com/v25.0";
 
-/* ─── OAuth ─── */
+// ─── OAuth ────────────────────────────────────────────────────────────────────
 
 export async function getOAuthUrl(businessProfileId: string): Promise<string> {
   const data = await apiClient<{ url: string }>(
@@ -30,6 +43,11 @@ export async function getOAuthUrl(businessProfileId: string): Promise<string> {
   return oauthUrlResponseSchema.parse(data).url;
 }
 
+/**
+ * Exchange OAuth code for page tokens.
+ * Call this in the `/facebook/callback` route handler after Facebook redirects back.
+ * Store the returned pages in sessionStorage, then redirect to `?oauth=ok`.
+ */
 export async function handleOAuthCallback(
   code: string,
   businessProfileId: string,
@@ -41,11 +59,25 @@ export async function handleOAuthCallback(
   return oauthCallbackResponseSchema.parse(data);
 }
 
-/* ─── Connections ─── */
+// ─── Connections ──────────────────────────────────────────────────────────────
 
+/**
+ * Fetch all Facebook connections for the authenticated user.
+ * Backend returns a paginated wrapper — we extract `.data` and return the array.
+ */
 export async function listConnections(): Promise<FacebookConnection[]> {
-  const data = await apiClient<unknown[]>(`${BASE}/connections`);
-  return data.map((item) => connectionResponseSchema.parse(item));
+  const raw = await apiClient<unknown>(`${BASE}/connections`);
+  const parsed = paginatedConnectionsSchema.parse(raw);
+  return parsed.data;
+}
+
+export async function getConnection(
+  businessProfileId: string,
+): Promise<FacebookConnection> {
+  const raw = await apiClient<unknown>(
+    `${BASE}/connections/${encodeURIComponent(businessProfileId)}`,
+  );
+  return connectionResponseSchema.parse(raw);
 }
 
 export async function connectPage(payload: {
@@ -69,11 +101,10 @@ export async function disconnectPage(businessProfileId: string): Promise<void> {
   );
 }
 
-/* ─── Sync ─── */
+// ─── Sync ─────────────────────────────────────────────────────────────────────
 
 /**
- * Sync conversations — should succeed for all pages with pages_messaging.
- * Returns number of conversations synced.
+ * Sync Messenger conversations — always works if pages_messaging is granted.
  */
 export async function syncPageConversations(
   businessProfileId: string,
@@ -87,8 +118,8 @@ export async function syncPageConversations(
 }
 
 /**
- * Sync posts — may fail with (#10) if pages_read_engagement is not granted.
- * The hook handles this gracefully; never throw to the UI.
+ * Sync page posts — may fail with (#10) if pages_manage_posts is not granted.
+ * The hook handles this gracefully. Do not propagate permission errors to the UI.
  */
 export async function syncPagePosts(
   businessProfileId: string,
@@ -101,23 +132,50 @@ export async function syncPagePosts(
   return syncResultSchema.parse(data);
 }
 
-/* ─── Facebook Graph — public page info ─── */
+// ─── Messaging ────────────────────────────────────────────────────────────────
+
+export async function sendMessage(payload: {
+  businessProfileId: string;
+  recipientPsid: string;
+  text: string;
+}): Promise<{ recipientId: string; messageId: string }> {
+  return apiClient(`${BASE}/messages/send`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function replyToComment(
+  externalCommentId: string,
+  payload: { businessProfileId: string; message: string },
+): Promise<{ commentId: string }> {
+  return apiClient(`${BASE}/comments/${encodeURIComponent(externalCommentId)}/reply`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// ─── Facebook Graph — public page stats ──────────────────────────────────────
 
 /**
- * Fetches publicly available page stats directly from Facebook Graph API.
- * Works for public pages without a user token (uses app-level access or public data).
+ * Fetches public page stats from the Facebook Graph API.
  *
- * Fields: fan_count, followers_count, category, about, website.
- * Note: fan_count requires the page to be public. Falls back gracefully on error.
+ * Note: fan_count and followers_count are only available for pages the app
+ * has a connection to (via the stored page token on the backend). This call
+ * is made without a token and may return partial data for strictly private pages.
+ * Fails gracefully — returns null on any error.
  */
-export async function fetchPagePublicInfo(pageId: string): Promise<FacebookPageInfo | null> {
+export async function fetchPagePublicInfo(
+  pageId: string,
+): Promise<FacebookPageInfo | null> {
   try {
     const fields = "id,name,category,fan_count,followers_count,about,website";
-    const url    = `${GRAPH_BASE}/${pageId}?fields=${fields}`;
-    const res    = await fetch(url, { cache: "no-store" });
+    const res = await fetch(`${GRAPH_BASE}/${pageId}?fields=${fields}`, {
+      cache: "no-store",
+    });
     if (!res.ok) return null;
-    const json   = await res.json();
-    // Facebook returns an error object, not HTTP error status, for auth failures
+    const json = await res.json();
+    // Facebook returns an error object in the body (not HTTP status) for auth issues
     if ("error" in json) return null;
     return facebookPageInfoSchema.parse(json);
   } catch {

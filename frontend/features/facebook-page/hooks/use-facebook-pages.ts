@@ -1,11 +1,11 @@
 /**
  * @file features/facebook/hooks/use-facebook-pages.ts
  *
- * - Fetches connections and maps them to UI pages
- * - On sync: fetches real page stats (fan_count, followers) from Facebook Graph
- * - Handles partial sync failures gracefully (posts may fail on missing permissions)
- * - Auto-syncs all pages at 12:00 and 00:00 every day
- * - Exposes per-page SyncSummary for rich UI feedback
+ * Manages the full lifecycle of Facebook page connections in the UI:
+ * - Fetches and maps connections to UI-enriched FacebookPage objects
+ * - Syncs page stats (conversations, posts, Graph API follower counts)
+ * - Schedules automatic syncs at 00:00 and 12:00 every day
+ * - Exposes per-page SyncSummary for rich feedback in the card
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -21,17 +21,16 @@ import type {
   FacebookPage,
   SyncSummary,
 } from "../types/facebook.types";
+import { getTokenHealth } from "../types/facebook.types";
 
-/* ─────────────────────────────────────────────
-   Mapper helpers
-───────────────────────────────────────────── */
+// ─── Mapper ───────────────────────────────────────────────────────────────────
 
 function formatLastSync(isoDate: string | null | undefined): string {
-  if (!isoDate) return "Jamais";
-  return new Date(isoDate).toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
+  if (!isoDate) return "Jamais synchronisée";
+  return new Date(isoDate).toLocaleString("fr-FR", {
+    day:    "2-digit",
+    month:  "short",
+    hour:   "2-digit",
     minute: "2-digit",
   });
 }
@@ -50,7 +49,8 @@ function mapConnection(conn: FacebookConnection): FacebookPage {
     pageUrl:             `https://facebook.com/${conn.pageId}`,
     webhookSubscribed:   conn.webhookSubscribed,
     tokenStatus:         conn.tokenStatus,
-    /* Stats — updated by syncPage() */
+    tokenExpiresAt:      conn.tokenExpiresAt ?? null,
+    tokenHealth:         getTokenHealth(conn.tokenStatus, conn.tokenExpiresAt),
     followersCount:      0,
     fanCount:            0,
     conversationsSynced: 0,
@@ -58,20 +58,19 @@ function mapConnection(conn: FacebookConnection): FacebookPage {
   };
 }
 
-/* ─────────────────────────────────────────────
-   Milliseconds until next 12:00 or 00:00
-───────────────────────────────────────────── */
-function msUntilNextAutoSync(): number {
-  const now   = new Date();
-  const next  = new Date(now);
-  const h     = now.getHours();
+// ─── Auto-sync scheduling ─────────────────────────────────────────────────────
 
-  if (h < 0) {
-    next.setHours(0, 0, 0, 0);
-  } else if (h < 12) {
+/** Returns milliseconds until the next 00:00 or 12:00 target. */
+function msUntilNextAutoSync(): number {
+  const now  = new Date();
+  const next = new Date(now);
+  const h    = now.getHours();
+
+  if (h < 12) {
+    // Before noon → next target is today at 12:00
     next.setHours(12, 0, 0, 0);
   } else {
-    // after 12pm → next sync at midnight tomorrow
+    // After noon (or exactly noon) → next target is midnight tomorrow
     next.setDate(next.getDate() + 1);
     next.setHours(0, 0, 0, 0);
   }
@@ -79,21 +78,21 @@ function msUntilNextAutoSync(): number {
   return next.getTime() - now.getTime();
 }
 
-/* ─────────────────────────────────────────────
-   Hook
-───────────────────────────────────────────── */
+// ─── Hook interface ───────────────────────────────────────────────────────────
 
 export interface UseFacebookPagesResult {
-  pages:      FacebookPage[];
-  loading:    boolean;
-  /** businessProfileIds currently being synced */
-  syncingIds: Set<string>;
-  /** Per-page last sync summary — keyed by businessProfileId */
+  pages:         FacebookPage[];
+  loading:       boolean;
+  /** Set of businessProfileIds currently being synced */
+  syncingIds:    Set<string>;
+  /** Last sync result per businessProfileId */
   syncSummaries: Map<string, SyncSummary>;
-  refresh:    () => Promise<void>;
-  removePage: (businessProfileId: string) => Promise<void>;
-  syncPage:   (businessProfileId: string) => Promise<SyncSummary>;
+  refresh:       () => Promise<void>;
+  removePage:    (businessProfileId: string) => Promise<void>;
+  syncPage:      (businessProfileId: string) => Promise<SyncSummary>;
 }
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useFacebookPages(): UseFacebookPagesResult {
   const [pages,         setPages]         = useState<FacebookPage[]>([]);
@@ -101,23 +100,30 @@ export function useFacebookPages(): UseFacebookPagesResult {
   const [syncingIds,    setSyncingIds]    = useState<Set<string>>(new Set());
   const [syncSummaries, setSyncSummaries] = useState<Map<string, SyncSummary>>(new Map());
 
-  /* Keep a stable ref to pages for the auto-sync callback */
+  // Stable ref so the auto-sync timeout can always read the latest pages
   const pagesRef = useRef<FacebookPage[]>([]);
   pagesRef.current = pages;
 
-  /* ── Fetch connections from backend ── */
+  // ── Fetch from backend ──────────────────────────────────────────────────────
+
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const connections = await listConnections();
+
       setPages((prev) => {
-        // Preserve synced stats that are not in the connection response
-        const statsMap = new Map(prev.map((p) => [p.accountId, {
-          followersCount:      p.followersCount,
-          fanCount:            p.fanCount,
-          conversationsSynced: p.conversationsSynced,
-          postsSynced:         p.postsSynced,
-        }]));
+        // Preserve live stats (followers, conversations) that are not in the API response
+        const statsMap = new Map(
+          prev.map((p) => [
+            p.accountId,
+            {
+              followersCount:      p.followersCount,
+              fanCount:            p.fanCount,
+              conversationsSynced: p.conversationsSynced,
+              postsSynced:         p.postsSynced,
+            },
+          ]),
+        );
         return connections.map((conn) => ({
           ...mapConnection(conn),
           ...(statsMap.get(conn.businessProfileId) ?? {}),
@@ -128,7 +134,8 @@ export function useFacebookPages(): UseFacebookPagesResult {
     }
   }, []);
 
-  /* ── Disconnect ── */
+  // ── Disconnect ──────────────────────────────────────────────────────────────
+
   const removePage = useCallback(
     async (businessProfileId: string) => {
       await disconnectPage(businessProfileId);
@@ -137,59 +144,65 @@ export function useFacebookPages(): UseFacebookPagesResult {
     [refresh],
   );
 
-  /* ── Sync a single page ── */
+  // ── Sync a single page ──────────────────────────────────────────────────────
+
   const syncPage = useCallback(
     async (businessProfileId: string): Promise<SyncSummary> => {
       setSyncingIds((prev) => new Set(prev).add(businessProfileId));
 
-      /* Find the pageId for this businessProfile */
-      const page = pagesRef.current.find((p) => p.accountId === businessProfileId);
-      const pageId = page?.id;
+      const targetPage = pagesRef.current.find((p) => p.accountId === businessProfileId);
+      const pageId     = targetPage?.id;
 
       let conversationsSynced = -1;
       let postsSynced         = -1;
 
       try {
-        /* ── 1. Sync conversations (should always succeed) ── */
-        const [convsResult, postsResult] = await Promise.allSettled([
+        // Run sync + Graph API call in parallel — posts failure is non-fatal
+        const [convsResult, postsResult, pageInfo] = await Promise.allSettled([
           syncPageConversations(businessProfileId),
           syncPagePosts(businessProfileId),
+          pageId ? fetchPagePublicInfo(pageId) : Promise.resolve(null),
         ]);
 
         if (convsResult.status === "fulfilled") {
           conversationsSynced = convsResult.value.synced;
         }
         if (postsResult.status === "fulfilled") {
-          postsSynced = postsResult.value.synced;
+          postsSynced =
+            postsResult.value.status === "skipped" ||
+            postsResult.value.code === "MISSING_PERMISSION"
+              ? -1
+              : postsResult.value.synced;
         }
-        // If posts failed with permission error, we silently swallow it.
-        // conversationsSynced will still be a positive number.
 
-        /* ── 2. Fetch real page stats from Facebook Graph API ── */
-        const pageInfo = pageId ? await fetchPagePublicInfo(pageId) : null;
+        const graphInfo =
+          pageInfo.status === "fulfilled" ? pageInfo.value : null;
 
-        /* ── 3. Refresh connections to pick up new lastSyncedAt ── */
-        const connections = await listConnections();
-        setPages((prev) => {
-          const statsMap = new Map(prev.map((p) => [p.accountId, {
-            followersCount:      p.followersCount,
-            fanCount:            p.fanCount,
-            conversationsSynced: p.conversationsSynced,
-            postsSynced:         p.postsSynced,
-          }]));
-          return connections.map((conn) => {
-            const base   = { ...mapConnection(conn), ...(statsMap.get(conn.businessProfileId) ?? {}) };
-            const isThis = conn.businessProfileId === businessProfileId;
-            return isThis ? {
+        // Refresh connections to pick up the new lastSyncedAt timestamp
+        // then merge live stats for this specific page
+        const freshConnections = await listConnections();
+
+        setPages(
+          freshConnections.map((conn): FacebookPage => {
+            const base     = mapConnection(conn);
+            const isTarget = conn.businessProfileId === businessProfileId;
+
+            if (!isTarget) {
+              // Preserve stats for unrelated pages
+              const existing = pagesRef.current.find((p) => p.accountId === conn.businessProfileId);
+              return existing ? { ...base, ...pickStats(existing) } : base;
+            }
+
+            return {
               ...base,
-              followersCount:      pageInfo?.followers_count ?? base.followersCount,
-              fanCount:            pageInfo?.fan_count        ?? base.fanCount,
-              category:            pageInfo?.category         ?? base.category,
+              followersCount:      graphInfo?.followers_count ?? targetPage?.followersCount ?? 0,
+              fanCount:            graphInfo?.fan_count        ?? targetPage?.fanCount        ?? 0,
+              category:            graphInfo?.category         ?? base.category,
               conversationsSynced: Math.max(0, conversationsSynced),
               postsSynced:         Math.max(0, postsSynced),
-            } : base;
-          });
-        });
+            };
+          }),
+        );
 
         const summary: SyncSummary = {
           businessProfileId,
@@ -199,7 +212,6 @@ export function useFacebookPages(): UseFacebookPagesResult {
         };
         setSyncSummaries((prev) => new Map(prev).set(businessProfileId, summary));
         return summary;
-
       } finally {
         setSyncingIds((prev) => {
           const next = new Set(prev);
@@ -211,28 +223,43 @@ export function useFacebookPages(): UseFacebookPagesResult {
     [],
   );
 
-  /* ── Auto-sync all pages at 12:00 and 00:00 ── */
+  // ── Auto-sync at 00:00 and 12:00 ───────────────────────────────────────────
+
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout>;
 
     const scheduleNext = () => {
-      const delay = msUntilNextAutoSync();
       timeoutId = setTimeout(async () => {
-        const current = pagesRef.current;
-        // Fire-and-forget — don't block UI
-        for (const page of current) {
-          await syncPage(page.accountId).catch(() => { /* silent */ });
+        // Fire-and-forget — sync all connected pages, swallow individual failures
+        for (const page of pagesRef.current) {
+          await syncPage(page.accountId).catch(() => undefined);
         }
-        scheduleNext(); // schedule the next occurrence
-      }, delay);
+        scheduleNext();
+      }, msUntilNextAutoSync());
     };
 
     scheduleNext();
     return () => clearTimeout(timeoutId);
   }, [syncPage]);
 
-  /* ── Initial fetch ── */
-  useEffect(() => { refresh(); }, [refresh]);
+  // ── Initial fetch ───────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
 
   return { pages, loading, syncingIds, syncSummaries, refresh, removePage, syncPage };
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function pickStats(
+  page: FacebookPage,
+): Pick<FacebookPage, "followersCount" | "fanCount" | "conversationsSynced" | "postsSynced"> {
+  return {
+    followersCount:      page.followersCount,
+    fanCount:            page.fanCount,
+    conversationsSynced: page.conversationsSynced,
+    postsSynced:         page.postsSynced,
+  };
 }

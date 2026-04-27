@@ -134,14 +134,13 @@ export class FacebookController {
     @Param('businessProfileId') businessProfileId: string,
     @Query('limit') limit = 10,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<{ synced: number }> {
-    return {
-      synced: await this.syncService.syncPosts(
-        businessProfileId,
-        user.sub,
-        +limit,
-      ),
-    };
+  ): Promise<{
+    synced: number;
+    status: 'success' | 'skipped';
+    code?: 'MISSING_PERMISSION';
+    message?: string;
+  }> {
+    return this.syncService.syncPosts(businessProfileId, user.sub, +limit);
   }
 
   @UseGuards(JwtAuthGuard)
