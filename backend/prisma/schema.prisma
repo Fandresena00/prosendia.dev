@@ -1,0 +1,650 @@
+// =============================================================================
+// VendeoAI — Prisma Schema
+//
+// Stack:    NestJS + PostgreSQL + Prisma
+// Naming:   models PascalCase, tables snake_case plural, fields camelCase
+// Encoding: all monetary amounts in smallest unit (Ariary, no decimals)
+//
+// =============================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+/// Authentication provider for the User account
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+  FACEBOOK
+}
+
+/// Subscription plan level
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+/// Type of business — used to tailor the AI assistant's default persona
+enum BusinessType {
+  HAIR_SALON
+  RESTAURANT
+  FREELANCER
+  SHOP
+  SERVICE
+  OTHER
+}
+
+/// AI reply tone
+enum Tone {
+  FRIENDLY
+  PROFESSIONAL
+  FORMAL
+}
+
+/// Length/verbosity of AI replies
+enum ResponseStyle {
+  SHORT
+  DETAILED
+  MIXED
+}
+
+/// Who sent a message in a conversation
+enum SenderType {
+  /// The business owner / agent replying manually
+  USER
+  /// The end-customer (Facebook user)
+  CLIENT
+  /// The AI assistant
+  AI
+  /// The Facebook Page itself (outbound DM sent via the API)
+  PAGE
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+/// Tracks who is handling a conversation
+enum HandoverStatus {
+  /// AI is handling replies automatically
+  AI
+  /// A human agent has taken over
+  HUMAN
+  /// Conversation is resolved / closed
+  RESOLVED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+/// Payment provider available in Madagascar
+enum PaymentProvider {
+  ORANGE_MONEY
+  MVOLA
+  MANUAL
+}
+
+/// Health status of a Facebook Page access token
+enum TokenStatus {
+  /// Validated and usable
+  VALID
+  /// Failed validation or explicitly revoked — requires reconnect
+  INVALID
+  /// Not yet validated (e.g. just stored)
+  UNKNOWN
+}
+
+/// Type of incoming Facebook webhook event
+enum WebhookEventType {
+  /// Messenger DM received
+  MESSAGE
+  /// New comment on a synced post
+  FEED_COMMENT
+  /// Reaction on a synced post
+  FEED_REACTION
+  /// Other feed change (post edit, share, etc.)
+  FEED_CHANGE
+}
+
+/// Processing state of a persisted webhook event
+enum WebhookEventStatus {
+  /// Received, queued for processing
+  PENDING
+  /// Processed successfully
+  PROCESSED
+  /// Failed after all retry attempts
+  FAILED
+  /// Duplicate event — skipped intentionally
+  SKIPPED
+}
+
+// =============================================================================
+// ── Auth & Users
+// =============================================================================
+
+/// Platform user (business owner).
+/// One user can own multiple BusinessProfiles (e.g. agency managing several brands).
+model User {
+  id String @id @default(uuid())
+
+  email     String  @unique
+  username  String
+  password  String
+  avatarUrl String?
+
+  activePlan     Plan         @default(FREE)
+  provider       AuthProvider @default(LOCAL)
+  /// External ID from the OAuth provider (null for LOCAL accounts)
+  providerId     String?
+  onboardingDone Boolean      @default(false)
+
+  // ── Relations
+  businessProfiles BusinessProfile[]
+  payments         Payment[]
+  packPlans        SubscriptionPlan[]
+  refreshTokens    RefreshToken[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+// =============================================================================
+// ── Business
+// =============================================================================
+
+/// A business entity managed by a User.
+/// Each BusinessProfile connects to one Facebook Page and owns all AI / content config.
+model BusinessProfile {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name           String
+  businessType   BusinessType
+  description    String?
+  whatsappNumber String?
+  websiteUrl     String?
+
+  // ── Relations
+  aiConfig           AiConfig?
+  facebookConnection FacebookConnection?
+  conversations      Conversation[]
+  facebookPosts      FacebookPost[]
+  chatResources      ChatResource[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("business_profiles")
+}
+
+/// AI assistant configuration per BusinessProfile.
+/// All fields have sensible defaults so the profile works out-of-the-box.
+model AiConfig {
+  id String @id @default(uuid())
+
+  businessProfileId String          @unique
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+
+  // ── Behaviour
+  tone          Tone          @default(FRIENDLY)
+  responseStyle ResponseStyle @default(MIXED)
+  autoReply     Boolean       @default(true)
+
+  // ── Prompts
+  /// Base system prompt injected before every AI reply
+  systemPrompt        String?
+  /// Extra instructions for Messenger inbox replies
+  inboxInstructions   String?
+  /// Extra instructions for post comment replies
+  commentInstructions String?
+  /// ISO 639-1 code, e.g. "fr", "mg". Null = detect from client message.
+  replyLanguage       String?
+
+  // ── Limits
+  /// Hard cap on tokens per reply (controls cost and response length)
+  maxReplyTokens      Int     @default(300)
+  /// Artificial delay in seconds before sending AI reply (0 = immediate)
+  replyDelaySeconds   Int     @default(0)
+  personalizeGreeting Boolean @default(true)
+
+  // ── Filters
+  /// Words that trigger escalation to a human agent instead of an AI reply
+  blockedKeywords Json @default("[]")
+  /// When non-empty, AI only replies to messages about these topics
+  allowedTopics   Json @default("[]")
+
+  // ── Escalation
+  /// Escalate to human agent when AI confidence is below the threshold
+  escalateOnLowConfidence Boolean @default(true)
+  /// Confidence score (0–1) below which escalation is triggered
+  escalationThreshold     Float   @default(0.6)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("ai_configs")
+}
+
+// =============================================================================
+// ── Facebook Integration
+// =============================================================================
+
+/// Facebook Page connection for a BusinessProfile.
+/// Stores the encrypted page token and webhook subscription state.
+/// Relationship: one BusinessProfile ↔ one FacebookConnection (enforced by @unique).
+model FacebookConnection {
+  id String @id @default(uuid())
+
+  /// @unique enforces the 1-to-1 relationship with BusinessProfile
+  businessProfileId String          @unique
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+
+  /// Facebook numeric Page ID (e.g. "123456789")
+  pageId   String @unique
+  pageName String
+
+  /// AES-256-GCM encrypted long-lived Page Access Token.
+  /// Stored as: iv:authTag:ciphertext — all hex-encoded, colon-separated.
+  /// See TokenEncryptionService for encrypt/decrypt logic.
+  encryptedAccessToken String
+
+  /// Facebook App ID used when this token was generated
+  appId String
+
+  // ── Token health
+  /// Null = non-expiring page token; non-null = user token (60-day expiry)
+  tokenExpiresAt   DateTime?
+  tokenStatus      TokenStatus @default(UNKNOWN)
+  /// Timestamp of the last /debug_token check
+  tokenValidatedAt DateTime?
+
+  /// Granted OAuth scopes as an array (e.g. ["pages_messaging", "pages_manage_posts"])
+  grantedScopes Json @default("[]")
+
+  /// Instagram Business Account ID linked to this page (null if not connected)
+  instagramAccountId String?
+
+  /// True when the page is subscribed to our webhook app
+  webhookSubscribed Boolean @default(false)
+
+  /// Soft-disable: false disables all sync and webhook processing without deleting
+  isActive Boolean @default(true)
+
+  /// Timestamp of the last successful data sync (posts/conversations)
+  lastSyncedAt DateTime?
+
+  // ── Relations
+  webhookEvents WebhookEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Index on status + isActive for the token health-check scheduled job
+  @@index([tokenStatus, isActive])
+  @@map("facebook_connections")
+}
+
+/// Persists every incoming webhook event for idempotent processing.
+/// Meta (Facebook) retries delivery up to 5× — this table prevents duplicates.
+model WebhookEvent {
+  id String @id @default(uuid())
+
+  facebookConnectionId String
+  facebookConnection   FacebookConnection @relation(fields: [facebookConnectionId], references: [id], onDelete: Cascade)
+
+  /// Facebook's event ID (message mid, comment_id, etc.)
+  /// Combined with eventType as the idempotency key — see @@unique below.
+  externalId String
+  eventType  WebhookEventType
+  status     WebhookEventStatus @default(PENDING)
+
+  /// Full raw webhook payload — kept for debugging and manual replay
+  rawPayload Json
+
+  /// ID of the DB entity created/updated as a result (Message.id, PostComment.id…)
+  resultEntityId String?
+
+  /// Human-readable error detail when status = FAILED
+  errorMessage String?
+
+  /// Total number of processing attempts (incremented on each retry)
+  attempts Int @default(0)
+
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  /// Idempotency key: same event from Facebook must never be processed twice
+  @@unique([externalId, eventType])
+  @@index([facebookConnectionId, status])
+  @@map("webhook_events")
+}
+
+// =============================================================================
+// ── Conversations & Messages
+// =============================================================================
+
+/// A Messenger conversation thread between the Facebook Page and a single user.
+model Conversation {
+  id String @id @default(uuid())
+
+  businessProfileId String
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+
+  /// Facebook's conversation/thread ID (externalId) or the sender's PSID
+  externalId String
+
+  // ── Client info (populated from Facebook profile data)
+  clientPsid      String?
+  clientName      String?
+  clientAvatarUrl String?
+
+  // ── Inbox state
+  /// Text of the most recent message (used for inbox list preview)
+  lastMessage   String?
+  lastMessageAt DateTime?
+  handoverStatus  HandoverStatus @default(AI)
+  /// Timestamp when a human agent first responded
+  humanTookOverAt DateTime?
+  /// Internal note visible only to the business agent
+  agentNote String?
+
+  // ── Relations
+  messages     Message[]
+  chatResource ChatResource?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// A page can only have one conversation per external thread
+  @@unique([businessProfileId, externalId])
+  @@index([businessProfileId, lastMessageAt])
+  @@map("conversations")
+}
+
+/// Individual message within a Conversation (inbound or outbound).
+model Message {
+  id String @id @default(uuid())
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  sender  SenderType
+  content String?
+  /// URL of an image attachment (stored externally, e.g. S3)
+  imageUrl String?
+  /// URL of a non-image file attachment
+  fileUrl  String?
+  status   MessageStatus @default(SENT)
+
+  /// Facebook message ID (mid) — null for AI-generated messages not yet sent
+  externalId String? @unique
+
+  // ── AI metadata (populated when sender = AI)
+  aiModel      String?
+  aiTokensUsed Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+// =============================================================================
+// ── Posts & Comments
+// =============================================================================
+
+/// A Facebook post synced from the Page.
+model FacebookPost {
+  id String @id @default(uuid())
+
+  businessProfileId String
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+
+  /// Facebook post ID (e.g. "123_456")
+  externalId   String  @unique
+  message      String?
+  imageUrl     String?
+  permalinkUrl String?
+
+  // ── Engagement counters (updated on each sync)
+  reactionsCount Int @default(0)
+  commentsCount  Int @default(0)
+  sharesCount    Int @default(0)
+
+  publishedAt  DateTime
+  lastSyncedAt DateTime?
+
+  // ── Relations
+  comments     PostComment[]
+  postAiConfig PostAiConfig?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessProfileId, publishedAt])
+  @@map("facebook_posts")
+}
+
+/// A comment on a FacebookPost, either synced or received via webhook.
+model PostComment {
+  id String @id @default(uuid())
+
+  postId String
+  post   FacebookPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  /// Facebook comment ID
+  externalId String @unique
+
+  // ── Author info (from Facebook)
+  authorId        String
+  authorName      String
+  authorAvatarUrl String?
+
+  message     String
+  commentedAt DateTime
+  lastSyncedAt DateTime?
+
+  // ── Reply tracking
+  isReplied    Boolean   @default(false)
+  replyContent String?
+  repliedAt    DateTime?
+  /// True = reply was sent by AI, false = reply was sent manually, null = not replied
+  repliedByAi  Boolean?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postId, isReplied])
+  @@map("post_comments")
+}
+
+/// Per-post AI config override.
+/// When set, overrides the BusinessProfile's AiConfig for this specific post.
+model PostAiConfig {
+  id String @id @default(uuid())
+
+  postId String       @unique
+  post   FacebookPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  autoReply          Boolean       @default(true)
+  tone               Tone?
+  responseStyle      ResponseStyle?
+  customInstructions String?
+  /// ISO 639-1 code. Null = inherit from AiConfig.
+  replyLanguage      String?
+  /// Null = inherit from AiConfig.maxReplyTokens
+  maxReplyTokens     Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("post_ai_configs")
+}
+
+// =============================================================================
+// ── Chat Resources
+// =============================================================================
+
+/// A product/service card with images that the AI can reference in replies.
+/// Can optionally be linked to a specific Conversation for contextual upselling.
+model ChatResource {
+  id String @id @default(uuid())
+
+  businessProfileId String
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+
+  /// Optional: link to a specific conversation (e.g. after a product inquiry)
+  conversationId String?      @unique
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  name        String
+  description String?
+  isActive    Boolean @default(true)
+
+  // ── Relations
+  images ChatResourceImage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessProfileId])
+  @@map("chat_resources")
+}
+
+/// An image attached to a ChatResource (product photo, menu item, etc.)
+model ChatResourceImage {
+  id String @id @default(uuid())
+
+  chatResourceId String
+  chatResource   ChatResource @relation(fields: [chatResourceId], references: [id], onDelete: Cascade)
+
+  url         String
+  description String
+  /// Display order within the resource (0 = first)
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([chatResourceId])
+  @@map("chat_resource_images")
+}
+
+// =============================================================================
+// ── Billing
+// =============================================================================
+
+/// Active or historical subscription plan for a User.
+/// Renamed from PacksPlan → SubscriptionPlan for clarity.
+model SubscriptionPlan {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  plan               Plan
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime?
+  isActive           Boolean   @default(true)
+  autoRenew          Boolean   @default(true)
+  cancelReason       String?
+  cancelledAt        DateTime?
+
+  // ── Relations
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, isActive])
+  @@map("subscription_plans")
+}
+
+/// A payment attempt linked to a SubscriptionPlan.
+/// Amounts stored in MGA (Malagasy Ariary, integer — no decimal subdivision).
+model Payment {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subscriptionPlanId String
+  subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade)
+
+  /// Amount in MGA (Malagasy Ariary — smallest unit, no decimals)
+  amount   Int
+  currency String          @default("MGA")
+  status   PaymentStatus   @default(PENDING)
+  provider PaymentProvider
+
+  // ── Provider-specific fields
+  /// Customer phone number (Orange Money / MVola)
+  phoneNumber String?
+  /// Transaction reference from the operator
+  operatorRef String?
+  /// Status message returned by the operator
+  operatorMessage String?
+  /// Our own internal reference passed to the operator
+  externalRef String?
+
+  adminNote  String?
+  paidAt     DateTime?
+  refundedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([subscriptionPlanId])
+  @@map("payments")
+}
+
+// =============================================================================
+// ── Auth Tokens
+// =============================================================================
+
+/// Stores hashed refresh tokens for JWT rotation.
+/// Each login creates a new record; revocation is done by setting revokedAt.
+model RefreshToken {
+  id String @id @default(uuid())
+
+  /// JWT ID claim — used to identify a token family (for rotation tracking)
+  jti    String @unique
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Bcrypt/SHA-256 hash of the raw refresh token — never store raw tokens
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, jti])
+  /// Used by the cleanup cron job to delete expired tokens in bulk
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}

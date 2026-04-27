@@ -1,0 +1,82 @@
+{
+  "name": "VendeoAI — Automatisez vos ventes Facebook",
+  "short_name": "VendeoAI",
+  "description": "Assistant IA pour automatiser vos messages et commentaires Facebook. Vendez plus, travaillez moins.",
+  "start_url": "/",
+  "id": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#0F172A",
+  "theme_color": "#4F46E5",
+  "orientation": "portrait-primary",
+  "lang": "fr",
+  "dir": "ltr",
+  "categories": ["business", "productivity", "utilities"],
+  "screenshots": [
+    {
+      "src": "/screenshot-dashboard.png",
+      "sizes": "1280x800",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Tableau de bord VendeoAI"
+    },
+    {
+      "src": "/screenshot-inbox.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Inbox VendeoAI"
+    }
+  ],
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192-maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Inbox",
+      "short_name": "Inbox",
+      "description": "Accéder aux messages Facebook",
+      "url": "/inbox",
+      "icons": [{ "src": "/icon-shortcut-inbox.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "Voir les statistiques",
+      "url": "/dashboard",
+      "icons": [{ "src": "/icon-shortcut-dashboard.png", "sizes": "96x96" }]
+    }
+  ],
+  "related_applications": [],
+  "prefer_related_applications": false
+}
