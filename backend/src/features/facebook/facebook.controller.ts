@@ -23,26 +23,14 @@ import {
   SendMessageDto,
   SendMessageResponseDto,
 } from './dto/messaging/messaging.dto.js';
-import {
-  PaginatedResponseDto,
-  PaginationQueryDto,
-} from './dto/shared/pagination.dto.js';
+import { PaginatedResponseDto, PaginationQueryDto } from './dto/shared/pagination.dto.js';
 import { WebhookSignatureGuard } from './security/webhook-signature.guard.js';
 import { FacebookAccountService } from './services/facebook-account.service.js';
-import {
-  type OAuthPageOption,
-  FacebookAuthService,
-} from './services/facebook-auth.service.js';
+import { type OAuthPageOption, FacebookAuthService } from './services/facebook-auth.service.js';
 import { FacebookMessagingService } from './services/facebook-messaging.service.js';
 import { FacebookSyncService } from './services/facebook-sync.service.js';
-import {
-  type TokenValidationSummary,
-  TokenService,
-} from './services/token.service.js';
-import {
-  type FbWebhookPayload,
-  WebhookService,
-} from './services/webhook.service.js';
+import { type TokenValidationSummary, TokenService } from './services/token.service.js';
+import { type FbWebhookPayload, WebhookService } from './services/webhook.service.js';
 
 @Controller('facebook')
 export class FacebookController {
@@ -61,9 +49,9 @@ export class FacebookController {
   /** Step 1 — Frontend redirects the user to the returned URL. */
   @UseGuards(JwtAuthGuard)
   @Get('oauth/url')
-  getOAuthUrl(@Query('businessProfileId') businessProfileId: string): {
-    url: string;
-  } {
+  getOAuthUrl(
+    @Query('businessProfileId') businessProfileId: string,
+  ): { url: string } {
     return { url: this.authService.buildOAuthUrl(businessProfileId) };
   }
 
@@ -134,13 +122,10 @@ export class FacebookController {
     @Param('businessProfileId') businessProfileId: string,
     @Query('limit') limit = 10,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<{
-    synced: number;
-    status: 'success' | 'skipped';
-    code?: 'MISSING_PERMISSION';
-    message?: string;
-  }> {
-    return this.syncService.syncPosts(businessProfileId, user.sub, +limit);
+  ): Promise<{ synced: number }> {
+    return {
+      synced: await this.syncService.syncPosts(businessProfileId, user.sub, +limit),
+    };
   }
 
   @UseGuards(JwtAuthGuard)
@@ -163,11 +148,7 @@ export class FacebookController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ synced: number }> {
     return {
-      synced: await this.syncService.syncConversations(
-        businessProfileId,
-        user.sub,
-        +limit,
-      ),
+      synced: await this.syncService.syncConversations(businessProfileId, user.sub, +limit),
     };
   }
 
@@ -250,9 +231,7 @@ export class FacebookController {
     @Query('hub.challenge') challenge: string,
     @Query('hub.verify_token') verifyToken: string,
   ): string {
-    const expected = this.configService.getOrThrow<string>(
-      'facebookVerifyToken',
-    );
+    const expected = this.configService.getOrThrow<string>('facebookVerifyToken');
     if (mode !== 'subscribe' || verifyToken !== expected) {
       throw new ForbiddenException('Webhook verification failed');
     }

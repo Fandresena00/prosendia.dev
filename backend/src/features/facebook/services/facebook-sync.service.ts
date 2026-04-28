@@ -1,15 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
-import { FacebookPermissionError } from '../clients/facebook-graph.errors.js';
 import { FacebookGraphClient } from '../clients/facebook-graph.client.js';
 import { FacebookAccountService } from './facebook-account.service.js';
-
-export interface SyncPostsResult {
-  synced: number;
-  status: 'success' | 'skipped';
-  code?: 'MISSING_PERMISSION';
-  message?: string;
-}
 
 @Injectable()
 export class FacebookSyncService {
@@ -27,43 +19,13 @@ export class FacebookSyncService {
     businessProfileId: string,
     userId: string,
     limit = 10,
-  ): Promise<SyncPostsResult> {
+  ): Promise<number> {
     const conn = await this.accounts.requireByProfileId(businessProfileId, userId);
-    const grantedScopes = new Set(conn.grantedScopes as unknown as string[]);
-    if (!grantedScopes.has('pages_read_engagement')) {
-      this.logger.warn(
-        `Skipping posts sync for profile ${businessProfileId}: missing pages_read_engagement scope`,
-      );
-      return {
-        synced: 0,
-        status: 'skipped',
-        code: 'MISSING_PERMISSION',
-        message:
-          "Missing Facebook permission 'pages_read_engagement' for this page token.",
-      };
-    }
-
-    let posts: Awaited<ReturnType<FacebookGraphClient['getPagePosts']>>;
-    try {
-      posts = await this.graphClient.getPagePosts(
-        conn.pageId,
-        conn.decryptedToken,
-        limit,
-      );
-    } catch (error) {
-      if (error instanceof FacebookPermissionError) {
-        this.logger.warn(
-          `Skipping posts sync for profile ${businessProfileId}: ${error.message}`,
-        );
-        return {
-          synced: 0,
-          status: 'skipped',
-          code: 'MISSING_PERMISSION',
-          message: error.message,
-        };
-      }
-      throw error;
-    }
+    const posts = await this.graphClient.getPagePosts(
+      conn.pageId,
+      conn.decryptedToken,
+      limit,
+    );
 
     let synced = 0;
     for (const post of posts) {
@@ -99,7 +61,7 @@ export class FacebookSyncService {
     });
 
     this.logger.log(`Synced ${synced} posts for profile ${businessProfileId}`);
-    return { synced, status: 'success' };
+    return synced;
   }
 
   // ─── Comments ─────────────────────────────────────────────────────────────
@@ -188,11 +150,6 @@ export class FacebookSyncService {
       });
       synced++;
     }
-
-    await this.prisma.facebookConnection.update({
-      where: { id: conn.id },
-      data: { lastSyncedAt: new Date() },
-    });
 
     this.logger.log(`Synced ${synced} conversations for profile ${businessProfileId}`);
     return synced;
