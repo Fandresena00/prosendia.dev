@@ -1,42 +1,53 @@
-"use client";
+'use client';
 
 /**
- * Install: npm install @emoji-mart/react @emoji-mart/data
+ * Emoji picker wrapping emoji-mart inside a shadcn Popover.
+ * Dynamically imported to avoid SSR issues.
  *
- * EmojiPickerPopover wraps emoji-mart inside a shadcn Popover.
- * The Picker is dynamically imported to avoid SSR issues.
+ * Install: npm install @emoji-mart/react @emoji-mart/data
  */
+
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { Smile } from "lucide-react";
-import dynamic from "next/dynamic";
-import { useState } from "react";
+} from '@/components/ui/popover';
+import { Smile } from 'lucide-react';
+import dynamic from 'next/dynamic';
+import { useState } from 'react';
 
-// Dynamically imported to avoid SSR issues with emoji-mart
 const EmojiMartPicker = dynamic(
-  () => import("@emoji-mart/react").then((m) => m.default ?? m),
+  () => import('@emoji-mart/react').then((m) => (m.default ?? m) as React.ComponentType<EmojiMartProps>),
   {
     ssr: false,
     loading: () => (
-      <div className="h-87.5 w-88 flex items-center justify-center text-muted-foreground text-xs">
+      <div className="h-80 w-80 flex items-center justify-center text-muted-foreground text-xs">
         Chargement…
       </div>
     ),
   },
 );
 
+interface EmojiMartProps {
+  data:             () => Promise<unknown>;
+  onEmojiSelect:    (emoji: { native: string }) => void;
+  theme?:           string;
+  locale?:          string;
+  previewPosition?: string;
+  skinTonePosition?: string;
+  searchPosition?:  string;
+  navPosition?:     string;
+  perLine?:         number;
+}
+
 interface EmojiPickerPopoverProps {
   onSelect: (emoji: { native: string }) => void;
-  /** Theme of the picker — "light" | "dark" | "auto" */
-  theme?: "light" | "dark" | "auto";
+  theme?:   'light' | 'dark' | 'auto';
 }
 
 export function EmojiPickerPopover({
   onSelect,
-  theme = "auto",
+  theme = 'auto',
 }: EmojiPickerPopoverProps) {
   const [open, setOpen] = useState(false);
 
@@ -51,6 +62,7 @@ export function EmojiPickerPopover({
           <Smile className="h-4.5 w-4.5" />
         </button>
       </PopoverTrigger>
+
       <PopoverContent
         side="top"
         align="start"
@@ -59,10 +71,8 @@ export function EmojiPickerPopover({
       >
         <EmojiMartPicker
           data={async () => {
-            const response = await fetch(
-              "https://cdn.jsdelivr.net/npm/@emoji-mart/data",
-            );
-            return response.json();
+            const res = await fetch('https://cdn.jsdelivr.net/npm/@emoji-mart/data');
+            return res.json();
           }}
           onEmojiSelect={(emoji: { native: string }) => {
             onSelect(emoji);

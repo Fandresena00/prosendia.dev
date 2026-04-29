@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../database/prisma.module.js';
+import { InboxEventsModule } from '../inbox/inbox-events.module.js';
 import { FacebookGraphClient } from './clients/facebook-graph.client.js';
 import { FacebookController } from './facebook.controller.js';
 import { TokenEncryptionService } from './security/token-encryption.service.js';
@@ -12,7 +13,7 @@ import { TokenService } from './services/token.service.js';
 import { WebhookService } from './services/webhook.service.js';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, InboxEventsModule],
   controllers: [FacebookController],
   providers: [
     // Infrastructure

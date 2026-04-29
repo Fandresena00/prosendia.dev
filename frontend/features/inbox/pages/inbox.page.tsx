@@ -1,90 +1,107 @@
-"use client";
-
-import { AddPresetDialog } from "../components/AddPresetDialog";
-import { ChatView } from "../components/ChatView";
-import { ConvList } from "../components/ConvList";
-import { CONVS } from "../data/inbox.mock";
-import { useInbox } from "../hooks/useInbox";
+'use client';
 
 /**
- * InboxPage — root layout:
- *  h-screen overflow-hidden  →  page never taller than viewport
- *  ConvList  |  ChatView     →  flex, each internally scrollable
+ * @file features/inbox/pages/inbox.page.tsx
+ *
+ * Root layout for the inbox feature.
+ *
+ * Layout:
+ *   ┌─────────────────────────────────────────┐
+ *   │  ConvList (320px fixed)  │  ChatView    │
+ *   │  ← full width on mobile  │  flex-1      │
+ *   └─────────────────────────────────────────┘
+ *
+ * Responsive:
+ *   - Mobile: ConvList fills screen, ChatView hidden (and vice-versa)
+ *   - Desktop: both panels visible side-by-side
+ *
+ * Real-time:
+ *   - SSE stream established via useInboxSse inside useInbox
+ *   - No polling required
  */
+
+import { AddPresetDialog } from '../components/AddPresetDialog';
+import { ChatView } from '../components/ChatView';
+import { ConvList } from '../components/ConvList';
+import { useInbox } from '../hooks/useInbox';
+import type { PhotoPreset } from '../types/inbox.types';
+
 export function InboxPage() {
   const inbox = useInbox();
 
-  const isOnline =
-    CONVS[inbox.activeAcc.id]?.find((c) => c.id === inbox.selected.id)
-      ?.online ?? false;
+  // Guard: no selected conversation yet (loading or empty inbox)
+  const showChat = !!inbox.selected;
 
   return (
-    /* Screen height minus 10px */
     <div className="flex h-[calc(100vh-20px)] overflow-hidden bg-background">
-      {/* ── Left panel — conversation list ── */}
+
+      {/* ── Left panel ── */}
       <ConvList
+        accounts={inbox.accounts}
         activeAcc={inbox.activeAcc}
-        onChangeAcc={(acc) => {
-          inbox.setActiveAcc(acc);
-          const firstConv = CONVS[acc.id]?.[0];
-          if (firstConv) inbox.handleSelectConv(firstConv);
-        }}
+        onChangeAcc={inbox.setActiveAcc}
         convs={inbox.convs}
+        loading={inbox.loadingConvs}
         selected={inbox.selected}
         onSelect={inbox.handleSelectConv}
         searchQuery={inbox.searchQuery}
         onSearchChange={inbox.setSearchQuery}
         className={
-          inbox.showList ? "w-full sm:w-[320px]" : "hidden sm:flex sm:w-[320px]"
+          inbox.showList
+            ? 'w-full sm:w-[320px]'
+            : 'hidden sm:flex sm:w-[320px]'
         }
       />
 
-      {/* ── Right panel — chat view ── */}
-      <ChatView
-        selected={inbox.selected}
-        onBack={() => inbox.setShowList(true)}
-        isOnline={isOnline}
-        convMode={inbox.convMode}
-        onModeChange={inbox.setConvMode}
-        visibleMsgs={inbox.visibleMsgs}
-        hasMore={inbox.hasMore}
-        onLoadMore={inbox.loadMore}
-        pendingPhotos={inbox.pendingPhotos}
-        pendingFile={inbox.pendingFile}
-        pendingPreset={inbox.pendingPreset}
-        onRemovePhoto={(i) =>
-          inbox.setPendingPhotos((p) => p.filter((_, j) => j !== i))
-        }
-        onRemoveFile={() => inbox.setPendingFile(null)}
-        onRemovePendingPreset={() => inbox.setPendingPreset(null)}
-        presets={inbox.presets}
-        onSelectPreset={(p) => {
-          inbox.setPendingPreset(p);
-          inbox.setMessage(p.description);
-        }}
-        onOpenAddPreset={() => {
-          inbox.setAddPresetOpen(true);
-        }}
-        onRemovePreset={inbox.removePreset}
-        message={inbox.message}
-        onMessageChange={inbox.setMessage}
-        canSend={inbox.canSend}
-        onSend={inbox.handleSend}
-        onEmojiSelect={inbox.handleEmojiSelect}
-        photoRef={inbox.photoRef}
-        fileRef={inbox.fileRef}
-        bottomRef={inbox.bottomRef}
-        textareaRef={inbox.textareaRef}
-        onPhotoFiles={inbox.handlePhotoFiles}
-        onFileSelect={inbox.handleFileSelect}
-        className={!inbox.showList ? "flex" : "hidden sm:flex"}
-      />
+      {/* ── Right panel ── */}
+      {showChat && inbox.selected && (
+        <ChatView
+          selected={inbox.selected}
+          onBack={() => inbox.setShowList(true)}
+          isOnline={inbox.selected.online ?? false}
+          convMode={inbox.convMode}
+          onModeChange={inbox.setConvMode}
+          msgs={inbox.msgs}
+          hasMore={inbox.hasMore}
+          loadingMsgs={inbox.loadingMsgs}
+          onLoadMore={inbox.loadMore}
+          pendingPhotos={inbox.pendingPhotos}
+          pendingFile={inbox.pendingFile}
+          pendingPreset={inbox.pendingPreset}
+          onRemovePhoto={(i) =>
+            inbox.setPendingPhotos((p) => p.filter((_, j) => j !== i))
+          }
+          onRemoveFile={() => inbox.setPendingFile(null)}
+          onRemovePendingPreset={() => inbox.setPendingPreset(null)}
+          presets={inbox.presets}
+          onSelectPreset={(p) => {
+            inbox.setPendingPreset(p);
+            inbox.setMessage(p.description);
+          }}
+          onOpenAddPreset={() => inbox.setAddPresetOpen(true)}
+          onRemovePreset={inbox.removePreset}
+          message={inbox.message}
+          onMessageChange={inbox.setMessage}
+          canSend={inbox.canSend}
+          onSend={inbox.handleSend}
+          onEmojiSelect={inbox.handleEmojiSelect}
+          photoRef={inbox.photoRef}
+          fileRef={inbox.fileRef}
+          bottomRef={inbox.bottomRef}
+          textareaRef={inbox.textareaRef}
+          onPhotoFiles={inbox.handlePhotoFiles}
+          onFileSelect={inbox.handleFileSelect}
+          className={!inbox.showList ? 'flex' : 'hidden sm:flex'}
+        />
+      )}
 
       {/* ── Add preset dialog ── */}
       <AddPresetDialog
         open={inbox.addPresetOpen}
         onClose={() => inbox.setAddPresetOpen(false)}
-        onAdd={inbox.addPreset}
+        onAdd={(p) =>
+          inbox.addPreset(p as Omit<PhotoPreset, 'id'> & { files: File[] })
+        }
       />
     </div>
   );

@@ -67,13 +67,21 @@ export interface FbConversation {
 
 export interface FbMessage {
   readonly id: string;
-  readonly message: string;
+  readonly message?: string;
   readonly from: { id: string; name: string; email?: string };
   readonly to: { data: ReadonlyArray<{ id: string; name: string }> };
   readonly created_time: string;
   readonly attachments?: {
     data: ReadonlyArray<{ id: string; image_data?: { url: string }; mime_type: string }>;
   };
+}
+
+export interface FbUserProfile {
+  readonly id: string;
+  readonly first_name?: string;
+  readonly last_name?: string;
+  readonly name?: string;
+  readonly profile_pic?: string;
 }
 
 export interface TokenDebugData {
@@ -467,7 +475,11 @@ export class FacebookGraphClient {
   ): Promise<FbSendMessageResponse> {
     return this.post<FbSendMessageResponse>(
       '/me/messages',
-      { recipient: { id: recipientPsid }, message: { text } },
+      {
+        messaging_type: 'RESPONSE',
+        recipient: { id: recipientPsid },
+        message: { text },
+      },
       { access_token: pageAccessToken },
     );
   }
@@ -480,6 +492,7 @@ export class FacebookGraphClient {
     return this.post<FbSendMessageResponse>(
       '/me/messages',
       {
+        messaging_type: 'RESPONSE',
         recipient: { id: recipientPsid },
         message: {
           attachment: {
@@ -490,6 +503,16 @@ export class FacebookGraphClient {
       },
       { access_token: pageAccessToken },
     );
+  }
+
+  async getMessengerUserProfile(
+    psid: string,
+    pageAccessToken: string,
+  ): Promise<FbUserProfile> {
+    return this.get<FbUserProfile>(`/${psid}`, {
+      access_token: pageAccessToken,
+      fields: 'first_name,last_name,name,profile_pic',
+    });
   }
 
   /** Mark a message as seen (sender action). */
@@ -507,34 +530,52 @@ export class FacebookGraphClient {
   async getConversations(
     pageId: string,
     accessToken: string,
-    limit = 20,
+    limit = 100,
   ): Promise<FbConversation[]> {
-    const result = await this.get<FbPaginatedResponse<FbConversation>>(
-      `/${pageId}/conversations`,
-      {
-        access_token: accessToken,
-        platform: 'messenger',
-        limit,
-        fields:
-          'id,updated_time,participants,messages{id,message,from,created_time}',
-      },
-    );
-    return result.data;
+    const conversations: FbConversation[] = [];
+    let after: string | undefined;
+
+    do {
+      const result = await this.get<FbPaginatedResponse<FbConversation>>(
+        `/${pageId}/conversations`,
+        {
+          access_token: accessToken,
+          platform: 'messenger',
+          limit,
+          after,
+          fields:
+            'id,updated_time,participants,messages.limit(1){id,message,from,created_time,attachments}',
+        },
+      );
+      conversations.push(...result.data);
+      after = result.paging?.cursors?.after;
+    } while (after);
+
+    return conversations;
   }
 
   async getConversationMessages(
     conversationId: string,
     accessToken: string,
-    limit = 25,
+    limit = 100,
   ): Promise<FbMessage[]> {
-    const result = await this.get<FbPaginatedResponse<FbMessage>>(
-      `/${conversationId}/messages`,
-      {
-        access_token: accessToken,
-        limit,
-        fields: 'id,message,from,to,created_time,attachments',
-      },
-    );
-    return result.data;
+    const messages: FbMessage[] = [];
+    let after: string | undefined;
+
+    do {
+      const result = await this.get<FbPaginatedResponse<FbMessage>>(
+        `/${conversationId}/messages`,
+        {
+          access_token: accessToken,
+          limit,
+          after,
+          fields: 'id,message,from,to,created_time,attachments',
+        },
+      );
+      messages.push(...result.data);
+      after = result.paging?.cursors?.after;
+    } while (after);
+
+    return messages;
   }
 }

@@ -4,6 +4,8 @@ import {
   WebhookEventStatus,
   WebhookEventType,
 } from '../../../generated/prisma/enums.js';
+import { InboxEventEmitter } from '../../inbox/gateways/inbox-sse.gateway.js';
+import { FacebookGraphClient } from '../clients/facebook-graph.client.js';
 import { FacebookAccountService } from './facebook-account.service.js';
 import { TokenService } from './token.service.js';
 
@@ -48,6 +50,8 @@ export class WebhookService {
     private readonly prisma: PrismaService,
     private readonly accounts: FacebookAccountService,
     private readonly tokenService: TokenService,
+    private readonly emitter: InboxEventEmitter,
+    private readonly graphClient: FacebookGraphClient,
   ) {}
 
   async dispatchPayload(payload: FbWebhookPayload): Promise<void> {
@@ -110,29 +114,50 @@ export class WebhookService {
 
     const conn = await this.prisma.facebookConnection.findUnique({
       where: { id: connectionId },
-      select: { businessProfileId: true },
+      select: {
+        businessProfileId: true,
+        businessProfile: { select: { userId: true } },
+      },
     });
     if (!conn) return;
 
-    const conversation = await this.prisma.conversation.upsert({
+    const clientProfile = await this.getClientProfile(
+      event.sender.id,
+      pageId,
+    );
+
+    const existingConversation = await this.prisma.conversation.findFirst({
       where: {
-        businessProfileId_externalId: {
-          businessProfileId: conn.businessProfileId,
-          externalId: event.sender.id,
-        },
-      },
-      create: {
         businessProfileId: conn.businessProfileId,
-        externalId: event.sender.id,
-        clientPsid: event.sender.id,
-        lastMessage: event.message?.text ?? null,
-        lastMessageAt: new Date(event.timestamp),
-      },
-      update: {
-        lastMessage: event.message?.text ?? null,
-        lastMessageAt: new Date(event.timestamp),
+        OR: [{ externalId: event.sender.id }, { clientPsid: event.sender.id }],
       },
     });
+
+    const conversation = existingConversation
+      ? await this.prisma.conversation.update({
+          where: { id: existingConversation.id },
+          data: {
+            clientPsid: event.sender.id,
+            clientName:
+              clientProfile?.name ?? existingConversation.clientName,
+            clientAvatarUrl:
+              clientProfile?.profile_pic ??
+              existingConversation.clientAvatarUrl,
+            lastMessage: event.message?.text ?? null,
+            lastMessageAt: new Date(event.timestamp),
+          },
+        })
+      : await this.prisma.conversation.create({
+          data: {
+            businessProfileId: conn.businessProfileId,
+            externalId: event.sender.id,
+            clientPsid: event.sender.id,
+            clientName: clientProfile?.name ?? null,
+            clientAvatarUrl: clientProfile?.profile_pic ?? null,
+            lastMessage: event.message?.text ?? null,
+            lastMessageAt: new Date(event.timestamp),
+          },
+        });
 
     const message = await this.prisma.message.create({
       data: {
@@ -150,6 +175,38 @@ export class WebhookService {
       WebhookEventType.MESSAGE,
       message.id,
     );
+
+    this.emitter.newMessage(conn.businessProfile.userId, {
+      conversationId: conversation.id,
+      message: {
+        id: message.id,
+        conversationId: conversation.id,
+        sender: message.sender,
+        content: message.content,
+        imageUrl: message.imageUrl,
+        fileUrl: message.fileUrl,
+        referenceImageUrls: [],
+        status: message.status,
+        externalId: message.externalId,
+        createdAt: message.createdAt,
+      },
+    });
+
+    this.emitter.conversationUpdated(conn.businessProfile.userId, {
+      conversation: {
+        id: conversation.id,
+        businessProfileId: conversation.businessProfileId,
+        externalId: conversation.externalId,
+        clientPsid: conversation.clientPsid,
+        clientName: conversation.clientName,
+        clientAvatarUrl: conversation.clientAvatarUrl,
+        lastMessage: conversation.lastMessage,
+        lastMessageAt: conversation.lastMessageAt,
+        handoverStatus: conversation.handoverStatus,
+        unreadCount: 1,
+        updatedAt: conversation.updatedAt,
+      },
+    });
   }
 
   private async handleFeedChange(
@@ -217,6 +274,32 @@ export class WebhookService {
       WebhookEventType.FEED_COMMENT,
       comment.id,
     );
+  }
+
+  private async getClientProfile(
+    psid: string,
+    pageId: string,
+  ): Promise<{ name: string | null; profile_pic: string | null } | null> {
+    try {
+      const account = await this.accounts.getByPageId(pageId);
+      if (!account) return null;
+
+      const profile = await this.graphClient.getMessengerUserProfile(
+        psid,
+        account.decryptedToken,
+      );
+
+      const name =
+        profile.name ??
+        [profile.first_name, profile.last_name].filter(Boolean).join(' ');
+
+      return {
+        name: name.trim() || null,
+        profile_pic: profile.profile_pic ?? null,
+      };
+    } catch {
+      return null;
+    }
   }
 
   private async recordEvent(

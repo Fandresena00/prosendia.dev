@@ -26,6 +26,7 @@ import { PrismaModule } from './database/prisma.module.js';
 import { AuthModule } from './features/auth/auth.module.js';
 import { FacebookModule } from './features/facebook/facebook.module.js';
 import { UsersModule } from './features/users/users.module.js';
+import { InboxModule } from './features/inbox/inbox.module.js';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { UsersModule } from './features/users/users.module.js';
     UsersModule,
     AuthModule,
     FacebookModule,
+    InboxModule,
   ],
   controllers: [AppController],
   providers: [
