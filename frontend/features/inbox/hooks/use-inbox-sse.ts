@@ -12,26 +12,23 @@
  *   });
  */
 
-'use client';
+"use client";
 
-import { useEffect, useRef } from 'react';
-import { env } from '@/lib/env';
+import { useEffect, useRef } from "react";
 import type {
   ConversationUpdatedSsePayload,
   NewMessageSsePayload,
   SseEvent,
   SyncCompleteSsePayload,
-} from '../types/inbox.types';
+} from "../types/inbox.types";
 
 interface InboxSseCallbacks {
-  onNewMessage?:         (payload: NewMessageSsePayload) => void;
+  onNewMessage?: (payload: NewMessageSsePayload) => void;
   onConversationUpdated?: (payload: ConversationUpdatedSsePayload) => void;
-  onSyncComplete?:       (payload: SyncCompleteSsePayload) => void;
+  onSyncComplete?: (payload: SyncCompleteSsePayload) => void;
 }
 
-export function useInboxSse(
-  callbacks: InboxSseCallbacks,
-): void {
+export function useInboxSse(callbacks: InboxSseCallbacks): void {
   // Keep a stable ref so the effect doesn't re-run when callbacks change
   const cbRef = useRef(callbacks);
 
@@ -40,7 +37,7 @@ export function useInboxSse(
   }, [callbacks]);
 
   useEffect(() => {
-    const url = `${env.API_URL}/inbox/events`;
+    const url = `/api/inbox/events`;
     const source = new EventSource(url, { withCredentials: true });
 
     source.onmessage = (event: MessageEvent<string>) => {
@@ -48,16 +45,20 @@ export function useInboxSse(
         const parsed: SseEvent = JSON.parse(event.data);
 
         switch (parsed.type) {
-          case 'new_message':
+          case "new_message":
             cbRef.current.onNewMessage?.(parsed.data as NewMessageSsePayload);
             break;
-          case 'conversation_updated':
-            cbRef.current.onConversationUpdated?.(parsed.data as ConversationUpdatedSsePayload);
+          case "conversation_updated":
+            cbRef.current.onConversationUpdated?.(
+              parsed.data as ConversationUpdatedSsePayload,
+            );
             break;
-          case 'sync_complete':
-            cbRef.current.onSyncComplete?.(parsed.data as SyncCompleteSsePayload);
+          case "sync_complete":
+            cbRef.current.onSyncComplete?.(
+              parsed.data as SyncCompleteSsePayload,
+            );
             break;
-          case 'ping':
+          case "ping":
             // Keepalive — no action needed
             break;
         }

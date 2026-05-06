@@ -24,9 +24,6 @@
 import { Controller, Injectable, Logger, Res, Sse, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { Observable, Subject, filter, map, merge, timer } from 'rxjs';
-import { CurrentUser } from '../../../common/decorators/current-user.decorator.js';
-import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard.js';
-import type { AuthenticatedUser } from '../../auth/types/authenticated-user.types.js';
 import type {
   ConversationUpdatedEvent,
   NewMessageEvent,
@@ -34,6 +31,9 @@ import type {
   SseEventType,
   SyncCompleteEvent,
 } from '../dto/inbox.dto.js';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator.js';
+import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard.js';
+import type { AuthenticatedUser } from '../../auth/types/authenticated-user.types.js';
 
 // ─── Event emitter (singleton injectable) ────────────────────────────────────
 
@@ -86,11 +86,12 @@ export class InboxSseController {
    * GET /inbox/events
    *
    * Opens a persistent SSE stream for the authenticated user.
-   * The frontend connects with cookies:
-   *   new EventSource(`${API_URL}/inbox/events`, { withCredentials: true })
+   * The frontend connects with: new EventSource('/api/inbox/events', { withCredentials: true })
+   *
+   * Note: In production, userId comes from the JWT guard via @CurrentUser().
    */
-  @Sse('events')
   @UseGuards(JwtAuthGuard)
+  @Sse('events')
   stream(
     @CurrentUser() user: AuthenticatedUser,
     @Res({ passthrough: true }) res: Response,

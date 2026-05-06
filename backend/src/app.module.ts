@@ -23,10 +23,13 @@ import { ThrottlerBehindProxyGuard } from './common/guards/throttler-behind-prox
 import envConfig from './config/env.config.js';
 import { ValidationSchema } from './config/validation.js';
 import { PrismaModule } from './database/prisma.module.js';
+import { AiModule } from './features/ai/ai.module.js';
 import { AuthModule } from './features/auth/auth.module.js';
 import { FacebookModule } from './features/facebook/facebook.module.js';
-import { UsersModule } from './features/users/users.module.js';
+import { InboxEventsModule } from './features/inbox/inbox-events.module.js';
 import { InboxModule } from './features/inbox/inbox.module.js';
+import { QueueModule } from './features/queue/queue.module.js';
+import { UsersModule } from './features/users/users.module.js';
 
 @Module({
   imports: [
@@ -49,6 +52,10 @@ import { InboxModule } from './features/inbox/inbox.module.js';
     UsersModule,
     AuthModule,
     FacebookModule,
+    InboxEventsModule,
+    QueueModule,
+    FacebookModule,
+    AiModule,
     InboxModule,
   ],
   controllers: [AppController],

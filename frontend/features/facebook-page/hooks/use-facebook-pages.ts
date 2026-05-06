@@ -27,7 +27,7 @@ import { getTokenHealth } from "../types/facebook.types";
 
 function formatLastSync(isoDate: string | null | undefined): string {
   if (!isoDate) return "Jamais synchronisée";
-  return new Date(isoDate).toLocaleString("fr-FR", {
+  return new Date(isoDate).toLocaleDateString("fr-FR", {
     day:    "2-digit",
     month:  "short",
     hour:   "2-digit",
@@ -168,11 +168,7 @@ export function useFacebookPages(): UseFacebookPagesResult {
           conversationsSynced = convsResult.value.synced;
         }
         if (postsResult.status === "fulfilled") {
-          postsSynced =
-            postsResult.value.status === "skipped" ||
-            postsResult.value.code === "MISSING_PERMISSION"
-              ? -1
-              : postsResult.value.synced;
+          postsSynced = postsResult.value.synced;
         }
 
         const graphInfo =

@@ -82,6 +82,7 @@ export function FacebookPageCard({
   };
 
   const health = page.tokenHealth;
+  const isHealthy = health === "valid";
 
   return (
     <>
@@ -225,12 +226,9 @@ export function FacebookPageCard({
             <StatCell
               icon={<IconPhotoFilled className="h-3.5 w-3.5" />}
               label="Posts sync."
-              value={
-                lastSummary?.posts === -1
-                  ? "N/A"
-                  : page.postsSynced > 0
-                    ? String(page.postsSynced)
-                    : "—"
+              value={page.postsSynced > 0
+                ? String(page.postsSynced)
+                : "—"
               }
             />
           </div>
@@ -239,11 +237,6 @@ export function FacebookPageCard({
           <p className="text-[10px] text-muted-foreground/70 mt-3 tracking-tight">
             Dernière sync : {page.lastSync}
           </p>
-          {lastSummary && (
-            <p className="text-[10px] text-muted-foreground/70 mt-1 tracking-tight">
-              Résultat : {formatSyncSummary(lastSummary)}
-            </p>
-          )}
 
           {/* ── Sync result banner ── */}
           {justSynced && lastSummary && (
@@ -381,17 +374,4 @@ function formatCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
   return n.toLocaleString("fr-FR");
-}
-
-function formatSyncSummary(summary: SyncSummary): string {
-  const convs = summary.conversations >= 0
-    ? `${summary.conversations} conv.`
-    : "Convs : erreur";
-  const posts = summary.posts >= 0
-    ? `${summary.posts} posts`
-    : "Posts : permission requise";
-  return `${convs} · ${posts} · ${summary.timestamp.toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
 }

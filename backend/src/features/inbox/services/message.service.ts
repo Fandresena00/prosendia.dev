@@ -16,10 +16,11 @@
  *     image message attachments (one message per image)
  */
 
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { FacebookGraphClient } from '../../facebook/clients/facebook-graph.client.js';
-import { FacebookApiError } from '../../facebook/clients/facebook-graph.errors.js';
 import { FacebookAccountService } from '../../facebook/services/facebook-account.service.js';
 import type {
   GetMessagesQueryDto,
@@ -30,6 +31,12 @@ import type {
 @Injectable()
 export class MessageService {
   private readonly logger = new Logger(MessageService.name);
+  private readonly tempUploadsDir = path.join(
+    process.cwd(),
+    'uploads',
+    'inbox',
+    'temp',
+  );
 
   constructor(
     private readonly prisma: PrismaService,
@@ -95,12 +102,10 @@ export class MessageService {
       userId,
     );
 
-    const fbResult = await this.sendToFacebook(() =>
-      this.graphClient.sendTextMessage(
-        conv.clientPsid!,
-        text,
-        conn.decryptedToken,
-      ),
+    const fbResult = await this.graphClient.sendTextMessage(
+      conv.clientPsid!,
+      text,
+      conn.decryptedToken,
     );
 
     const msg = await this.prisma.message.create({
@@ -142,12 +147,10 @@ export class MessageService {
     const results: MessageResponseDto[] = [];
 
     for (const url of imageUrls) {
-      const fbResult = await this.sendToFacebook(() =>
-        this.graphClient.sendImageMessage(
-          conv.clientPsid!,
-          url,
-          conn.decryptedToken,
-        ),
+      const fbResult = await this.sendImageWithFallback(
+        conv.clientPsid!,
+        url,
+        conn.decryptedToken,
       );
       const msg = await this.prisma.message.create({
         data: {
@@ -163,12 +166,10 @@ export class MessageService {
 
     // Optional text caption after images
     if (caption?.trim()) {
-      const fbResult = await this.sendToFacebook(() =>
-        this.graphClient.sendTextMessage(
-          conv.clientPsid!,
-          caption,
-          conn.decryptedToken,
-        ),
+      const fbResult = await this.graphClient.sendTextMessage(
+        conv.clientPsid!,
+        caption,
+        conn.decryptedToken,
       );
       const msg = await this.prisma.message.create({
         data: {
@@ -206,24 +207,21 @@ export class MessageService {
 
     // Facebook file attachment — use image message with file URL
     // (FB supports generic file attachments via /messages with type:file)
-    const response = await this.sendToFacebook(() =>
-      this.graphClient.post<{
-        message_id: string;
-        recipient_id: string;
-      }>(
-        '/me/messages',
-        {
-          messaging_type: 'RESPONSE',
-          recipient: { id: conv.clientPsid },
-          message: {
-            attachment: {
-              type: 'file',
-              payload: { url: fileUrl, is_reusable: false },
-            },
+    const response = await this.graphClient.post<{
+      message_id: string;
+      recipient_id: string;
+    }>(
+      '/me/messages',
+      {
+        recipient: { id: conv.clientPsid },
+        message: {
+          attachment: {
+            type: 'file',
+            payload: { url: fileUrl, is_reusable: false },
           },
         },
-        { access_token: conn.decryptedToken },
-      ),
+      },
+      { access_token: conn.decryptedToken },
     );
 
     const msg = await this.prisma.message.create({
@@ -269,26 +267,75 @@ export class MessageService {
     });
   }
 
-  private async sendToFacebook<T>(operation: () => Promise<T>): Promise<T> {
+  private async sendImageWithFallback(
+    recipientPsid: string,
+    imageUrl: string,
+    pageAccessToken: string,
+  ) {
     try {
-      return await operation();
+      return await this.graphClient.sendImageMessage(
+        recipientPsid,
+        imageUrl,
+        pageAccessToken,
+      );
     } catch (error) {
-      if (error instanceof FacebookApiError) {
-        if (
-          error.code === 10 ||
-          error.message.toLowerCase().includes('délai autorisé') ||
-          error.message.toLowerCase().includes('allowed window')
-        ) {
-          throw new BadRequestException(
-            'Facebook refuse cet envoi car la conversation est hors de la fenêtre Messenger autorisée. Le client doit envoyer un nouveau message avant que vous puissiez répondre.',
-          );
-        }
+      if (!this.isRobotsMediaError(error)) throw error;
 
-        throw new BadRequestException(error.message);
-      }
+      const localTempPath = this.resolveTempUploadPath(imageUrl);
+      if (!localTempPath) throw error;
 
-      throw error;
+      const fileBuffer = await fs.readFile(localTempPath);
+      const result = await this.graphClient.sendImageMessageFromFile(
+        recipientPsid,
+        fileBuffer,
+        path.basename(localTempPath),
+        this.mimeFromExtension(localTempPath),
+        pageAccessToken,
+      );
+
+      // Clean up temp file after successful send
+      await fs
+        .unlink(localTempPath)
+        .catch((err) =>
+          this.logger.warn(
+            `Failed to clean temp file ${localTempPath}: ${err.message}`,
+          ),
+        );
+
+      return result;
     }
+  }
+
+  private resolveTempUploadPath(imageUrl: string): string | null {
+    try {
+      const url = new URL(imageUrl);
+      const marker = '/uploads/inbox/temp/';
+      const index = url.pathname.indexOf(marker);
+      if (index < 0) return null;
+
+      const filename = path.basename(url.pathname.slice(index + marker.length));
+      const resolved = path.resolve(this.tempUploadsDir, filename);
+      if (!resolved.startsWith(this.tempUploadsDir)) return null;
+      return resolved;
+    } catch {
+      return null;
+    }
+  }
+
+  private isRobotsMediaError(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+    return (
+      msg.includes('robots.txt') ||
+      msg.includes('n’autorise pas le téléchargement')
+    );
+  }
+
+  private mimeFromExtension(filePath: string): string {
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext === '.png') return 'image/png';
+    if (ext === '.webp') return 'image/webp';
+    if (ext === '.gif') return 'image/gif';
+    return 'image/jpeg';
   }
 
   private toDto(msg: any): MessageResponseDto {

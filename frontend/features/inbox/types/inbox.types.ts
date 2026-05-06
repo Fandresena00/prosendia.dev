@@ -41,8 +41,8 @@ export interface PresetPhoto {
 }
 
 export interface PhotoPreset {
-  /** numeric id for list keys */
-  id: number;
+  /** Backend ChatResource UUID */
+  id: string;
   name: string;
   description: string;
   photos: PresetPhoto[];
@@ -79,7 +79,7 @@ export interface Conv {
   clientPsid: string | null;
   client: string;
   initials: string;
-  avatarUrl: string | null;
+  avatarUrl?: string | null;
   lastMessage: string;
   time: string;
   mode: ConvMode;
@@ -99,7 +99,6 @@ export interface Account {
   pageType: string;
   verified: boolean;
   pageId: string;
-  avatarUrl: string;
 }
 
 // ─── API response shapes ──────────────────────────────────────────────────────
@@ -165,4 +164,19 @@ export interface SyncCompleteSsePayload {
   businessProfileId: string;
   newMessages: number;
   newConversations: number;
+}
+
+export interface ReferencePresetApiResponse {
+  id: string;
+  businessProfileId: string;
+  name: string;
+  description: string | null;
+  images: Array<{
+    id: string;
+    url: string;
+    description: string;
+    sortOrder: number;
+  }>;
+  createdAt: string;
+  updatedAt: string;
 }

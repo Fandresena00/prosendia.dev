@@ -7,14 +7,11 @@
 
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
-import {
-  buildPaginationMeta,
-  PaginatedResponseDto,
-} from '../../facebook/dto/shared/pagination.dto.js';
 import type {
   ConversationResponseDto,
   ListConversationsQueryDto,
 } from '../dto/inbox.dto.js';
+import { buildPaginationMeta, type PaginatedResponseDto } from '../../facebook/dto/shared/pagination.dto.js';
 
 @Injectable()
 export class ConversationService {
@@ -76,16 +73,9 @@ export class ConversationService {
   ): Promise<ConversationResponseDto> {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, businessProfile: { userId } },
-      include: {
-        _count: {
-          select: {
-            messages: { where: { status: { not: 'READ' }, sender: 'CLIENT' } },
-          },
-        },
-      },
+      include: { _count: { select: { messages: { where: { status: { not: 'READ' }, sender: 'CLIENT' } } } } },
     });
-    if (!conv)
-      throw new NotFoundException(`Conversation ${conversationId} not found.`);
+    if (!conv) throw new NotFoundException(`Conversation ${conversationId} not found.`);
     return this.toDto(conv);
   }
 
@@ -95,8 +85,7 @@ export class ConversationService {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, businessProfile: { userId } },
     });
-    if (!conv)
-      throw new NotFoundException(`Conversation ${conversationId} not found.`);
+    if (!conv) throw new NotFoundException(`Conversation ${conversationId} not found.`);
 
     await this.prisma.message.updateMany({
       where: { conversationId, sender: 'CLIENT', status: { not: 'READ' } },
@@ -114,8 +103,7 @@ export class ConversationService {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, businessProfile: { userId } },
     });
-    if (!conv)
-      throw new NotFoundException(`Conversation ${conversationId} not found.`);
+    if (!conv) throw new NotFoundException(`Conversation ${conversationId} not found.`);
 
     const updated = await this.prisma.conversation.update({
       where: { id: conversationId },
@@ -123,13 +111,7 @@ export class ConversationService {
         handoverStatus: status,
         humanTookOverAt: status === 'HUMAN' ? new Date() : undefined,
       },
-      include: {
-        _count: {
-          select: {
-            messages: { where: { status: { not: 'READ' }, sender: 'CLIENT' } },
-          },
-        },
-      },
+      include: { _count: { select: { messages: { where: { status: { not: 'READ' }, sender: 'CLIENT' } } } } },
     });
 
     return this.toDto(updated);
@@ -139,17 +121,17 @@ export class ConversationService {
 
   private toDto(conv: any): ConversationResponseDto {
     return {
-      id: conv.id,
+      id:                conv.id,
       businessProfileId: conv.businessProfileId,
-      externalId: conv.externalId,
-      clientPsid: conv.clientPsid,
-      clientName: conv.clientName,
-      clientAvatarUrl: conv.clientAvatarUrl,
-      lastMessage: conv.lastMessage,
-      lastMessageAt: conv.lastMessageAt,
-      handoverStatus: conv.handoverStatus,
-      unreadCount: conv._count?.messages ?? 0,
-      updatedAt: conv.updatedAt,
+      externalId:        conv.externalId,
+      clientPsid:        conv.clientPsid,
+      clientName:        conv.clientName,
+      clientAvatarUrl:   conv.clientAvatarUrl,
+      lastMessage:       conv.lastMessage,
+      lastMessageAt:     conv.lastMessageAt,
+      handoverStatus:    conv.handoverStatus,
+      unreadCount:       conv._count?.messages ?? 0,
+      updatedAt:         conv.updatedAt,
     };
   }
 }

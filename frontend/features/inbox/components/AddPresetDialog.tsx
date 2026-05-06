@@ -54,7 +54,7 @@ export function AddPresetDialog({ open, onClose, onAdd }: AddPresetDialogProps) 
     onClose();
   };
 
-  const canAdd = name.trim() && description.trim();
+  const canAdd = name.trim() && description.trim() && photos.length > 0;
 
   const addPhotos = (incoming: FileList | null) => {
     if (!incoming) return;

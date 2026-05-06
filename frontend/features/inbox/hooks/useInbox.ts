@@ -15,25 +15,28 @@
  *  - Reference image uploads go to backend; all other attachments go direct to FB
  */
 
+import { ApiError, AuthenticationError, NetworkError } from "@/lib/errors";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
+  createReferencePreset,
+  deleteReferencePreset,
   fetchAccounts,
   fetchConversations,
   fetchMessages,
+  fetchReferencePresets,
   mapConversation,
   markConversationRead,
   sendFileMessage,
   sendImagesMessage,
   sendTextMessage,
   setHandover,
-  triggerSync,
-  uploadReferenceImages,
 } from "../services/inbox.service";
 import type {
   Account,
   Conv,
-  ConvMode,
   ConversationUpdatedSsePayload,
+  ConvMode,
   FileAttachment,
   MessageApiResponse,
   Msg,
@@ -156,6 +159,7 @@ export function useInbox() {
   const [showList, setShowList] = useState(true);
   const [loadingConvs, setLoadingConvs] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [uiError, setUiError] = useState<string | null>(null);
 
   // ── Messages ────────────────────────────────────────────────────────────
   const [msgMap, setMsgMap] = useState<Record<string, Msg[]>>({});
@@ -193,76 +197,71 @@ export function useInbox() {
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const selectedRef = useRef<Conv | null>(null);
 
   // ── Pending file refs for send ────────────────────────────────────────────
   const pendingPhotoFilesRef = useRef<File[]>([]);
   const pendingFileRef = useRef<File | null>(null);
 
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
   // ─── Load accounts on mount ──────────────────────────────────────────────
   useEffect(() => {
-    let ignore = false;
-
     fetchAccounts()
       .then((accs) => {
-        if (ignore) return;
         setAccounts(accs);
-        if (accs.length > 0) {
-          setActiveAcc(accs[0]);
-        } else {
-          setLoadingConvs(false);
-        }
+        if (accs.length > 0) setActiveAcc(accs[0]);
       })
-      .catch(() => {
-        if (ignore) return;
-        setAccounts([]);
-        setActiveAcc(null);
-        setLoadingConvs(false);
+      .catch((e: unknown) => {
+        const msg =
+          e instanceof AuthenticationError
+            ? "Session expirée. Veuillez vous reconnecter."
+            : e instanceof NetworkError
+              ? "Impossible de contacter le serveur."
+              : e instanceof ApiError
+                ? e.message
+                : "Erreur lors du chargement des pages.";
+        setUiError(msg);
+        toast.error(msg);
       });
-
-    return () => {
-      ignore = true;
-    };
   }, []);
 
   // ─── Load conversations when active account changes ──────────────────────
   useEffect(() => {
     if (!activeAcc) return;
-    let ignore = false;
-
     setLoadingConvs(true);
     setConvs([]);
     setSelected(null);
+    setPresets([]);
 
     fetchConversations({ businessProfileId: activeAcc.id, pageSize: 30 })
       .then(({ data }) => {
-        if (ignore) return;
         setConvs(data);
         if (data.length > 0) setSelected(data[0]);
       })
+      .catch((e: unknown) => {
+        const msg =
+          e instanceof NetworkError
+            ? "Impossible de charger les conversations."
+            : e instanceof ApiError
+              ? e.message
+              : "Erreur lors du chargement des conversations.";
+        setUiError(msg);
+        toast.error(msg);
+      })
+      .finally(() => setLoadingConvs(false));
+  }, [activeAcc, activeAcc?.id]);
+
+  useEffect(() => {
+    if (!activeAcc) return;
+    fetchReferencePresets(activeAcc.id)
+      .then(setPresets)
       .catch(() => {
-        if (ignore) return;
-        setConvs([]);
-        setSelected(null);
-      })
-      .finally(() => {
-        if (!ignore) setLoadingConvs(false);
+        toast.error("Impossible de charger les images de référence.");
       });
-
-    triggerSync(activeAcc.id)
-      .then(() =>
-        fetchConversations({ businessProfileId: activeAcc.id, pageSize: 30 }),
-      )
-      .then(({ data }) => {
-        if (ignore) return;
-        setConvs(data);
-        setSelected((current) => current ?? data[0] ?? null);
-      })
-      .catch(() => undefined);
-
-    return () => {
-      ignore = true;
-    };
-  }, [activeAcc]);
+  }, [activeAcc, activeAcc?.id]);
 
   // ─── Filtered conversations ──────────────────────────────────────────────
   const filteredConvs = useMemo(() => {
@@ -279,33 +278,32 @@ export function useInbox() {
   useEffect(() => {
     if (!selected) return;
     if (msgMap[selected.id]) return; // Already loaded
-    let ignore = false;
 
     setLoadingMsgs(true);
     fetchMessages(selected.id, { limit: MSG_PAGE_SIZE })
       .then((page) => {
-        if (ignore) return;
         // Backend returns newest-first; reverse for chronological display
         const ordered = [...page.messages].reverse().map(apiMsgToUiMsg);
         setMsgMap((p) => ({ ...p, [selected.id]: ordered }));
         setCursorMap((p) => ({ ...p, [selected.id]: page.nextCursor }));
         setHasMoreMap((p) => ({ ...p, [selected.id]: page.hasMore }));
         markConversationRead(selected.id).catch(() => undefined);
+        setConvs((prev) =>
+          prev.map((c) => (c.id === selected.id ? { ...c, unread: 0 } : c)),
+        );
       })
-      .catch(() => {
-        if (ignore) return;
-        setMsgMap((p) => ({ ...p, [selected.id]: [] }));
-        setCursorMap((p) => ({ ...p, [selected.id]: null }));
-        setHasMoreMap((p) => ({ ...p, [selected.id]: false }));
+      .catch((e: unknown) => {
+        const msg =
+          e instanceof NetworkError
+            ? "Impossible de charger les messages."
+            : e instanceof ApiError
+              ? e.message
+              : "Erreur lors du chargement des messages.";
+        setUiError(msg);
+        toast.error(msg);
       })
-      .finally(() => {
-        if (!ignore) setLoadingMsgs(false);
-      });
-
-    return () => {
-      ignore = true;
-    };
-  }, [selected, msgMap]);
+      .finally(() => setLoadingMsgs(false));
+  }, [msgMap, selected, selected?.id]);
 
   // ─── Scroll to bottom on new messages ────────────────────────────────────
   const msgs = selected ? (msgMap[selected.id] ?? []) : [];
@@ -333,8 +331,15 @@ export function useInbox() {
       }));
       setCursorMap((p) => ({ ...p, [selected.id]: page.nextCursor }));
       setHasMoreMap((p) => ({ ...p, [selected.id]: page.hasMore }));
-    } catch {
-      setHasMoreMap((p) => ({ ...p, [selected.id]: false }));
+    } catch (e: unknown) {
+      const msg =
+        e instanceof NetworkError
+          ? "Impossible de charger plus de messages."
+          : e instanceof ApiError
+            ? e.message
+            : "Erreur lors du chargement des messages.";
+      setUiError(msg);
+      toast.error(msg);
     } finally {
       setLoadingMsgs(false);
     }
@@ -347,6 +352,13 @@ export function useInbox() {
         const uiMsg = apiMsgToUiMsg(apiMsg);
         setMsgMap((p) => {
           const existing = p[conversationId] ?? [];
+          if (
+            existing.some(
+              (m) => m.id === uiMsg.id || m.externalId === uiMsg.externalId,
+            )
+          ) {
+            return p;
+          }
           // Remove optimistic duplicate if present
           const withoutOptimistic = existing.filter(
             (m) => !(m.pending && m.externalId == null),
@@ -354,30 +366,47 @@ export function useInbox() {
           return { ...p, [conversationId]: [...withoutOptimistic, uiMsg] };
         });
         // Update conversation last message
+        const isSelected = selectedRef.current?.id === conversationId;
+        const unreadIncrement =
+          apiMsg.sender === "CLIENT" && !isSelected ? 1 : 0;
         setConvs((prev) =>
           prev.map((c) =>
             c.id === conversationId
               ? {
                   ...c,
                   lastMessage: apiMsg.content ?? "📷",
-                  unread: c.unread + 1,
+                  unread: c.unread + unreadIncrement,
                 }
               : c,
           ),
         );
+        if (isSelected) {
+          markConversationRead(conversationId).catch(() => undefined);
+          setConvs((prev) =>
+            prev.map((c) =>
+              c.id === conversationId ? { ...c, unread: 0 } : c,
+            ),
+          );
+        }
       },
       [],
     ),
 
     onConversationUpdated: useCallback(
       ({ conversation }: ConversationUpdatedSsePayload) => {
+        const mapped = mapConversation(conversation);
         setConvs((prev) =>
           prev.some((c) => c.id === conversation.id)
-            ? prev.map((c) =>
-                c.id === conversation.id ? mapConversation(conversation) : c,
-              )
-            : [mapConversation(conversation), ...prev],
+            ? prev
+                .map((c) => (c.id === conversation.id ? mapped : c))
+                .sort((a, b) => {
+                  if (a.id === mapped.id) return -1;
+                  if (b.id === mapped.id) return 1;
+                  return 0;
+                })
+            : [mapped, ...prev],
         );
+        setSelected((prev) => (prev?.id === conversation.id ? mapped : prev));
       },
       [],
     ),
@@ -516,6 +545,8 @@ export function useInbox() {
 
       // Ad-hoc photo files — upload to get a temp URL, then send to FB
       if (photoFilesToSend.length > 0) {
+        const form = new FormData();
+        photoFilesToSend.forEach((f) => form.append("file", f));
         // We upload one by one via the temp endpoint and collect URLs
         const { getTempUploadUrl } = await import("../services/inbox.service");
         const imageUrls: string[] = [];
@@ -545,7 +576,7 @@ export function useInbox() {
           m.pending ? { ...m, pending: false } : m,
         ),
       }));
-    } catch {
+    } catch (e: unknown) {
       // Mark optimistic messages as failed
       setMsgMap((p) => ({
         ...p,
@@ -553,6 +584,14 @@ export function useInbox() {
           m.pending ? { ...m, pending: false, failed: true } : m,
         ),
       }));
+      const msg =
+        e instanceof ApiError
+          ? e.message
+          : e instanceof NetworkError
+            ? "Envoi impossible: serveur injoignable."
+            : "Erreur lors de l’envoi du message.";
+      setUiError(msg);
+      toast.error(msg);
     }
   }, [
     canSend,
@@ -567,31 +606,31 @@ export function useInbox() {
   // ─── Presets ──────────────────────────────────────────────────────────────
   const addPreset = useCallback(
     async (p: Omit<PhotoPreset, "id"> & { files?: File[] }) => {
-      // Upload reference images to backend if files are provided
-      let referenceImageUrls: string[] = [];
-      if (p.files?.length) {
-        referenceImageUrls = await uploadReferenceImages(p.files);
-      }
-      setPresets((prev) => [
-        ...prev,
-        {
-          ...p,
-          id: Date.now(),
-          referenceImageUrls,
-          // Update photos with backend URLs
-          photos: p.photos.map((ph, i) => ({
-            ...ph,
-            objectUrl: referenceImageUrls[i] ?? ph.objectUrl,
-          })),
-        },
-      ]);
+      if (!activeAcc || !p.files?.length) return;
+      const preset = await createReferencePreset({
+        businessProfileId: activeAcc.id,
+        name: p.name,
+        description: p.description,
+        files: p.files,
+      });
+      setPresets((prev) => [preset, ...prev]);
     },
-    [],
+    [activeAcc],
   );
 
-  const removePreset = useCallback((id: number) => {
-    setPresets((prev) => prev.filter((p) => p.id !== id));
-  }, []);
+  const removePreset = useCallback(
+    (id: string) => {
+      setPresets((prev) => prev.filter((p) => p.id !== id));
+      deleteReferencePreset(id).catch(() => {
+        toast.error("Impossible de supprimer cette image de référence.");
+        if (activeAcc)
+          fetchReferencePresets(activeAcc.id)
+            .then(setPresets)
+            .catch(() => undefined);
+      });
+    },
+    [activeAcc],
+  );
 
   // ─── Emoji ────────────────────────────────────────────────────────────────
   const handleEmojiSelect = useCallback((emoji: { native: string }) => {
@@ -651,5 +690,6 @@ export function useInbox() {
     handleEmojiSelect,
     // expose for ConvList
     PHOTO_GRADS,
+    uiError,
   };
 }

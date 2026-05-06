@@ -1,7 +1,6 @@
 'use client';
 
 import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -14,6 +13,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
 import { Bot, MoreHorizontal } from 'lucide-react';
 import type { Account, Conv } from '../types/inbox.types';
@@ -55,12 +55,11 @@ export function ConvList({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="w-full flex items-center gap-2.5 rounded-xl border border-border/50 bg-secondary/30 px-3 py-2 hover:bg-accent/60 transition-colors">
-                <Avatar size="sm" className={`h-7 w-7 ${activeAcc.color}`}>
-                  <AvatarImage src={activeAcc.avatarUrl} alt={activeAcc.name} />
-                  <AvatarFallback className="text-xs font-bold">
-                    {activeAcc.initials}
-                  </AvatarFallback>
-                </Avatar>
+                <div
+                  className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${activeAcc.color}`}
+                >
+                  {activeAcc.initials}
+                </div>
                 <div className="flex-1 text-left min-w-0">
                   <p className="text-xs font-semibold truncate">{activeAcc.name}</p>
                   <p className="text-[10px] text-muted-foreground">{activeAcc.pageType}</p>
@@ -93,12 +92,11 @@ export function ConvList({
                   onClick={() => onChangeAcc(acc)}
                   className="gap-2.5 cursor-pointer"
                 >
-                  <Avatar size="sm" className={`h-7 w-7 ${acc.color}`}>
-                    <AvatarImage src={acc.avatarUrl} alt={acc.name} />
-                    <AvatarFallback className="text-xs font-bold">
-                      {acc.initials}
-                    </AvatarFallback>
-                  </Avatar>
+                  <div
+                    className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${acc.color}`}
+                  >
+                    {acc.initials}
+                  </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate">{acc.name}</p>
                     <p className="text-[10px] text-muted-foreground">{acc.pageType}</p>
@@ -149,7 +147,7 @@ export function ConvList({
                   <div className="flex items-center gap-3">
                     {/* Avatar */}
                     <div className="relative shrink-0">
-                      <Avatar size="lg" className="h-10 w-10">
+                      <Avatar className="h-10 w-10">
                         <AvatarImage src={c.avatarUrl ?? undefined} alt={c.client} />
                         <AvatarFallback
                           className={`text-sm font-bold ${

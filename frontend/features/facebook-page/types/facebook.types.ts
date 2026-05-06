@@ -83,12 +83,7 @@ export const oauthCallbackResponseSchema = z.object({
 
 // ─── Sync ─────────────────────────────────────────────────────────────────────
 
-export const syncResultSchema = z.object({
-  synced: z.number(),
-  status: z.enum(["success", "skipped"]).optional(),
-  code: z.string().optional(),
-  message: z.string().optional(),
-});
+export const syncResultSchema = z.object({ synced: z.number() });
 
 /** Per-page sync summary stored in the hook — tracks counts and partial failures. */
 export interface SyncSummary {

@@ -31,6 +31,10 @@ export const ValidationSchema = Joi.object({
     'string.uri': 'FRONTEND_URL must be a valid URI',
     'any.required': 'FRONTEND_URL is required',
   }),
+  APP_URL: Joi.string().uri().default(Joi.ref('FRONTEND_URL')).messages({
+    'string.uri': 'APP_URL must be a valid URI',
+  }),
+  APP_TITLE: Joi.string().min(1).default('VendeoAI'),
 
   // ── JWT ───────────────────────────────────────────────────────────────────
   JWT_SECRET: Joi.string().min(32).required().messages({
@@ -45,6 +49,12 @@ export const ValidationSchema = Joi.object({
   // ── JWT TTLs ──────────────────────────────────────────────────────────────
   JWT_EXPIRATION: Joi.string().default('15m'),
   JWT_REFRESH_EXPIRATION: Joi.string().default('7d'),
+
+  // ── AI / OpenRouter ───────────────────────────────────────────────────────
+  OPENROUTER_API_KEY: Joi.string().required().messages({
+    'any.required': 'OPENROUTER_API_KEY is required',
+    'string.empty': 'OPENROUTER_API_KEY cannot be empty',
+  }),
 
   // ── Facebook ─────────────────────────────────────────
 

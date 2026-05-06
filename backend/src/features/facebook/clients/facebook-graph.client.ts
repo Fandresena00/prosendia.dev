@@ -67,21 +67,17 @@ export interface FbConversation {
 
 export interface FbMessage {
   readonly id: string;
-  readonly message?: string;
+  readonly message: string;
   readonly from: { id: string; name: string; email?: string };
   readonly to: { data: ReadonlyArray<{ id: string; name: string }> };
   readonly created_time: string;
   readonly attachments?: {
-    data: ReadonlyArray<{ id: string; image_data?: { url: string }; mime_type: string }>;
+    data: ReadonlyArray<{
+      id: string;
+      image_data?: { url: string };
+      mime_type: string;
+    }>;
   };
-}
-
-export interface FbUserProfile {
-  readonly id: string;
-  readonly first_name?: string;
-  readonly last_name?: string;
-  readonly name?: string;
-  readonly profile_pic?: string;
 }
 
 export interface TokenDebugData {
@@ -108,6 +104,13 @@ export interface FbSendMessageResponse {
   readonly message_id: string;
 }
 
+export interface FbMessengerUserProfile {
+  readonly name?: string;
+  readonly first_name?: string;
+  readonly last_name?: string;
+  readonly profile_pic?: string;
+}
+
 // ─── Internal types ───────────────────────────────────────────────────────────
 
 interface GraphRequestConfig {
@@ -132,10 +135,7 @@ export class FacebookGraphClient {
 
   // ─── Generic request methods ──────────────────────────────────────────────
 
-  async get<T>(
-    endpoint: string,
-    params?: Record<string, unknown>,
-  ): Promise<T> {
+  async get<T>(endpoint: string, params?: Record<string, unknown>): Promise<T> {
     return this.executeWithRetry<T>({ method: 'GET', endpoint, params });
   }
 
@@ -172,7 +172,9 @@ export class FacebookGraphClient {
         }
       }
 
-      this.logger.debug(`→ ${config.method} ${config.endpoint} (attempt ${attempt})`);
+      this.logger.debug(
+        `→ ${config.method} ${config.endpoint} (attempt ${attempt})`,
+      );
 
       const response = await fetch(url.toString(), {
         method: config.method,
@@ -196,7 +198,12 @@ export class FacebookGraphClient {
       }
 
       if (!response.ok) {
-        const err: { isFetchError: true; status: number; data: unknown; message: string } = {
+        const err: {
+          isFetchError: true;
+          status: number;
+          data: unknown;
+          message: string;
+        } = {
           isFetchError: true,
           status: response.status,
           data: body,
@@ -241,7 +248,8 @@ export class FacebookGraphClient {
 
     // Typed retryable Facebook errors (rate limit / server temporary)
     if (
-      (error instanceof FacebookRateLimitError || error instanceof FacebookTemporaryError) &&
+      (error instanceof FacebookRateLimitError ||
+        error instanceof FacebookTemporaryError) &&
       attempt <= GRAPH_RETRY.MAX_ATTEMPTS
     ) {
       const delay = this.backoffDelay(attempt, error);
@@ -302,10 +310,7 @@ export class FacebookGraphClient {
     );
   }
 
-  private backoffDelay(
-    attempt: number,
-    error?: unknown,
-  ): number {
+  private backoffDelay(attempt: number, error?: unknown): number {
     const base =
       error instanceof FacebookRateLimitError
         ? GRAPH_RETRY.BASE_DELAY_MS * 2
@@ -326,22 +331,28 @@ export class FacebookGraphClient {
     code: string,
     redirectUri: string,
   ): Promise<string> {
-    const data = await this.get<{ access_token: string }>('/oauth/access_token', {
-      client_id: this.appId,
-      client_secret: this.appSecret,
-      redirect_uri: redirectUri,
-      code,
-    });
+    const data = await this.get<{ access_token: string }>(
+      '/oauth/access_token',
+      {
+        client_id: this.appId,
+        client_secret: this.appSecret,
+        redirect_uri: redirectUri,
+        code,
+      },
+    );
     return data.access_token;
   }
 
   async extendToken(shortLivedToken: string): Promise<string> {
-    const data = await this.get<{ access_token: string }>('/oauth/access_token', {
-      grant_type: 'fb_exchange_token',
-      client_id: this.appId,
-      client_secret: this.appSecret,
-      fb_exchange_token: shortLivedToken,
-    });
+    const data = await this.get<{ access_token: string }>(
+      '/oauth/access_token',
+      {
+        grant_type: 'fb_exchange_token',
+        client_id: this.appId,
+        client_secret: this.appSecret,
+        fb_exchange_token: shortLivedToken,
+      },
+    );
     return data.access_token;
   }
 
@@ -426,12 +437,15 @@ export class FacebookGraphClient {
     accessToken: string,
     limit = 10,
   ): Promise<FbPost[]> {
-    const result = await this.get<FbPaginatedResponse<FbPost>>(`/${pageId}/posts`, {
-      access_token: accessToken,
-      limit,
-      fields:
-        'id,message,full_picture,permalink_url,created_time,reactions.summary(true),comments.summary(true),shares',
-    });
+    const result = await this.get<FbPaginatedResponse<FbPost>>(
+      `/${pageId}/posts`,
+      {
+        access_token: accessToken,
+        limit,
+        fields:
+          'id,message,full_picture,permalink_url,created_time,reactions.summary(true),comments.summary(true),shares',
+      },
+    );
     return result.data;
   }
 
@@ -475,11 +489,7 @@ export class FacebookGraphClient {
   ): Promise<FbSendMessageResponse> {
     return this.post<FbSendMessageResponse>(
       '/me/messages',
-      {
-        messaging_type: 'RESPONSE',
-        recipient: { id: recipientPsid },
-        message: { text },
-      },
+      { recipient: { id: recipientPsid }, message: { text } },
       { access_token: pageAccessToken },
     );
   }
@@ -492,7 +502,6 @@ export class FacebookGraphClient {
     return this.post<FbSendMessageResponse>(
       '/me/messages',
       {
-        messaging_type: 'RESPONSE',
         recipient: { id: recipientPsid },
         message: {
           attachment: {
@@ -505,14 +514,58 @@ export class FacebookGraphClient {
     );
   }
 
-  async getMessengerUserProfile(
-    psid: string,
+  async sendImageMessageFromFile(
+    recipientPsid: string,
+    fileBuffer: Buffer,
+    fileName: string,
+    mimeType: string,
     pageAccessToken: string,
-  ): Promise<FbUserProfile> {
-    return this.get<FbUserProfile>(`/${psid}`, {
-      access_token: pageAccessToken,
-      fields: 'first_name,last_name,name,profile_pic',
+  ): Promise<FbSendMessageResponse> {
+    const url = this.buildUrl('/me/messages');
+    url.searchParams.set('access_token', pageAccessToken);
+
+    const form = new FormData();
+    form.set('recipient', JSON.stringify({ id: recipientPsid }));
+    form.set(
+      'message',
+      JSON.stringify({
+        attachment: {
+          type: 'image',
+          payload: { is_reusable: false },
+        },
+      }),
+    );
+    form.set(
+      'filedata',
+      new Blob([new Uint8Array(fileBuffer)], { type: mimeType }),
+      fileName,
+    );
+
+    this.logger.debug('→ POST /me/messages (multipart file upload)');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      body: form,
     });
+    const body: unknown = await response.json().catch(() => ({}));
+
+    if (
+      typeof body === 'object' &&
+      body !== null &&
+      'error' in body &&
+      (body as Record<string, unknown>).error
+    ) {
+      throw mapGraphApiError(
+        (body as { error: Parameters<typeof mapGraphApiError>[0] }).error,
+      );
+    }
+    if (!response.ok) {
+      throw new Error(
+        `Graph multipart upload failed with HTTP ${response.status}`,
+      );
+    }
+
+    this.logger.debug('✓ POST /me/messages (multipart file upload)');
+    return body as FbSendMessageResponse;
   }
 
   /** Mark a message as seen (sender action). */
@@ -527,55 +580,47 @@ export class FacebookGraphClient {
     );
   }
 
+  async getMessengerUserProfile(
+    psid: string,
+    pageAccessToken: string,
+  ): Promise<FbMessengerUserProfile> {
+    return this.get<FbMessengerUserProfile>(`/${psid}`, {
+      access_token: pageAccessToken,
+      fields: 'name,first_name,last_name,profile_pic',
+    });
+  }
+
   async getConversations(
     pageId: string,
     accessToken: string,
-    limit = 100,
+    limit = 20,
   ): Promise<FbConversation[]> {
-    const conversations: FbConversation[] = [];
-    let after: string | undefined;
-
-    do {
-      const result = await this.get<FbPaginatedResponse<FbConversation>>(
-        `/${pageId}/conversations`,
-        {
-          access_token: accessToken,
-          platform: 'messenger',
-          limit,
-          after,
-          fields:
-            'id,updated_time,participants,messages.limit(1){id,message,from,created_time,attachments}',
-        },
-      );
-      conversations.push(...result.data);
-      after = result.paging?.cursors?.after;
-    } while (after);
-
-    return conversations;
+    const result = await this.get<FbPaginatedResponse<FbConversation>>(
+      `/${pageId}/conversations`,
+      {
+        access_token: accessToken,
+        platform: 'messenger',
+        limit,
+        fields:
+          'id,updated_time,participants,messages{id,message,from,created_time}',
+      },
+    );
+    return result.data;
   }
 
   async getConversationMessages(
     conversationId: string,
     accessToken: string,
-    limit = 100,
+    limit = 25,
   ): Promise<FbMessage[]> {
-    const messages: FbMessage[] = [];
-    let after: string | undefined;
-
-    do {
-      const result = await this.get<FbPaginatedResponse<FbMessage>>(
-        `/${conversationId}/messages`,
-        {
-          access_token: accessToken,
-          limit,
-          after,
-          fields: 'id,message,from,to,created_time,attachments',
-        },
-      );
-      messages.push(...result.data);
-      after = result.paging?.cursors?.after;
-    } while (after);
-
-    return messages;
+    const result = await this.get<FbPaginatedResponse<FbMessage>>(
+      `/${conversationId}/messages`,
+      {
+        access_token: accessToken,
+        limit,
+        fields: 'id,message,from,to,created_time,attachments',
+      },
+    );
+    return result.data;
   }
 }

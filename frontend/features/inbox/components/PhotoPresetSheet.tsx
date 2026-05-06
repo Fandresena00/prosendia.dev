@@ -16,7 +16,7 @@ interface PhotoPresetSheetProps {
   presets:         PhotoPreset[];
   onSelectPreset:  (p: PhotoPreset) => void;
   onOpenAdd:       () => void;
-  onRemovePreset?: (id: number) => void;
+  onRemovePreset?: (id: string) => void;
 }
 
 export function PhotoPresetSheet({

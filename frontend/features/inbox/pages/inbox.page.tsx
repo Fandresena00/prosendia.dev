@@ -26,8 +26,13 @@ import { ConvList } from '../components/ConvList';
 import { useInbox } from '../hooks/useInbox';
 import type { PhotoPreset } from '../types/inbox.types';
 
-export function InboxPage() {
-  const inbox = useInbox();
+interface InboxPageProps {
+  /** Current authenticated user ID — passed from the app auth context */
+  userId?: string;
+}
+
+export function InboxPage({ userId }: InboxPageProps) {
+  const inbox = useInbox(userId);
 
   // Guard: no selected conversation yet (loading or empty inbox)
   const showChat = !!inbox.selected;

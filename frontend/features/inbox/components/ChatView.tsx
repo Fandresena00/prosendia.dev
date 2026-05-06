@@ -1,18 +1,18 @@
-'use client';
+"use client";
 
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Textarea } from '@/components/ui/textarea';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   IconCamera,
   IconFile,
   IconInfoCircle,
   IconSend,
-} from '@tabler/icons-react';
-import { ChevronLeft, Loader2 } from 'lucide-react';
-import type { RefObject } from 'react';
+} from "@tabler/icons-react";
+import { ChevronLeft, Loader2 } from "lucide-react";
+import type { RefObject } from "react";
 import type {
   Conv,
   ConvMode,
@@ -20,53 +20,53 @@ import type {
   Msg,
   PhotoAttachment,
   PhotoPreset,
-} from '../types/inbox.types';
-import { groupByDate } from '../utils/inbox.utils';
-import { AttachmentPreview } from './AttachmentPreview';
-import { EmojiPickerPopover } from './EmojiPickerPopover';
-import { MessageRow } from './MessageRow';
-import { ModeToggle } from './ModeToggle';
-import { PhotoPresetSheet } from './PhotoPresetSheet';
+} from "../types/inbox.types";
+import { groupByDate } from "../utils/inbox.utils";
+import { AttachmentPreview } from "./AttachmentPreview";
+import { EmojiPickerPopover } from "./EmojiPickerPopover";
+import { MessageRow } from "./MessageRow";
+import { ModeToggle } from "./ModeToggle";
+import { PhotoPresetSheet } from "./PhotoPresetSheet";
 
 interface ChatViewProps {
-  selected:    Conv;
-  onBack:      () => void;
-  isOnline:    boolean;
-  convMode:    ConvMode;
+  selected: Conv;
+  onBack: () => void;
+  isOnline: boolean;
+  convMode: ConvMode;
   onModeChange: (mode: ConvMode) => void;
 
   // Messages
-  msgs:         Msg[];
-  hasMore:      boolean;
-  loadingMsgs:  boolean;
-  onLoadMore:   () => void;
+  msgs: Msg[];
+  hasMore: boolean;
+  loadingMsgs: boolean;
+  onLoadMore: () => void;
 
   // Attachments
-  pendingPhotos:       PhotoAttachment[];
-  pendingFile:         FileAttachment | null;
-  pendingPreset:       PhotoPreset | null;
-  onRemovePhoto:       (i: number) => void;
-  onRemoveFile:        () => void;
+  pendingPhotos: PhotoAttachment[];
+  pendingFile: FileAttachment | null;
+  pendingPreset: PhotoPreset | null;
+  onRemovePhoto: (i: number) => void;
+  onRemoveFile: () => void;
   onRemovePendingPreset: () => void;
 
   // Presets
-  presets:        PhotoPreset[];
+  presets: PhotoPreset[];
   onSelectPreset: (p: PhotoPreset) => void;
   onOpenAddPreset: () => void;
-  onRemovePreset: (id: number) => void;
+  onRemovePreset: (id: string) => void;
 
   // Input
-  message:         string;
+  message: string;
   onMessageChange: (v: string) => void;
-  canSend:         boolean;
-  onSend:          () => void;
-  onEmojiSelect:   (e: { native: string }) => void;
+  canSend: boolean;
+  onSend: () => void;
+  onEmojiSelect: (e: { native: string }) => void;
 
   // Refs
-  photoRef:     RefObject<HTMLInputElement | null>;
-  fileRef:      RefObject<HTMLInputElement | null>;
-  bottomRef:    RefObject<HTMLDivElement | null>;
-  textareaRef:  RefObject<HTMLTextAreaElement | null>;
+  photoRef: RefObject<HTMLInputElement | null>;
+  fileRef: RefObject<HTMLInputElement | null>;
+  bottomRef: RefObject<HTMLDivElement | null>;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
   onPhotoFiles: (files: FileList | null) => void;
   onFileSelect: (files: FileList | null) => void;
 
@@ -74,22 +74,44 @@ interface ChatViewProps {
 }
 
 export function ChatView({
-  selected, onBack, isOnline,
-  convMode, onModeChange,
-  msgs, hasMore, loadingMsgs, onLoadMore,
-  pendingPhotos, pendingFile, pendingPreset,
-  onRemovePhoto, onRemoveFile, onRemovePendingPreset,
-  presets, onSelectPreset, onOpenAddPreset, onRemovePreset,
-  message, onMessageChange, canSend, onSend, onEmojiSelect,
-  photoRef, fileRef, bottomRef, textareaRef,
-  onPhotoFiles, onFileSelect,
-  className = '',
+  selected,
+  onBack,
+  isOnline,
+  convMode,
+  onModeChange,
+  msgs,
+  hasMore,
+  loadingMsgs,
+  onLoadMore,
+  pendingPhotos,
+  pendingFile,
+  pendingPreset,
+  onRemovePhoto,
+  onRemoveFile,
+  onRemovePendingPreset,
+  presets,
+  onSelectPreset,
+  onOpenAddPreset,
+  onRemovePreset,
+  message,
+  onMessageChange,
+  canSend,
+  onSend,
+  onEmojiSelect,
+  photoRef,
+  fileRef,
+  bottomRef,
+  textareaRef,
+  onPhotoFiles,
+  onFileSelect,
+  className = "",
 }: ChatViewProps) {
   const grouped = groupByDate(msgs);
 
   return (
-    <div className={`flex flex-col flex-1 min-w-0 overflow-hidden ${className}`}>
-
+    <div
+      className={`flex flex-col flex-1 min-w-0 overflow-hidden ${className}`}
+    >
       {/* ── Header ── */}
       <ChatHeader
         conv={selected}
@@ -109,7 +131,6 @@ export function ChatView({
       {/* ── Messages ── */}
       <ScrollArea className="flex-1 min-h-0 bg-background">
         <div className="px-4 py-4 max-w-full">
-
           {/* Load-older button */}
           {hasMore && (
             <div className="flex justify-center mb-4">
@@ -136,7 +157,7 @@ export function ChatView({
                   msg={msg}
                   prevMsg={messages[mi - 1]}
                   nextMsg={messages[mi + 1]}
-                  clientInitials={selected.initials[0]}
+                  clientInitials={selected.initials}
                   clientAvatarUrl={selected.avatarUrl}
                 />
               ))}
@@ -171,7 +192,10 @@ export function ChatView({
             accept="image/*"
             multiple
             className="hidden"
-            onChange={(e) => { onPhotoFiles(e.target.files); e.target.value = ''; }}
+            onChange={(e) => {
+              onPhotoFiles(e.target.files);
+              e.target.value = "";
+            }}
           />
 
           {/* File */}
@@ -184,7 +208,10 @@ export function ChatView({
             ref={fileRef}
             type="file"
             className="hidden"
-            onChange={(e) => { onFileSelect(e.target.files); e.target.value = ''; }}
+            onChange={(e) => {
+              onFileSelect(e.target.files);
+              e.target.value = "";
+            }}
           />
 
           {/* Emoji */}
@@ -199,7 +226,7 @@ export function ChatView({
             rows={1}
             className="flex-1 resize-none text-sm min-h-9 max-h-36 rounded-2xl border-0 bg-[#F0F2F5] dark:bg-[#3A3B3C] focus-visible:ring-1 focus-visible:ring-primary/50 py-2 px-4 leading-relaxed"
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 onSend();
               }
@@ -224,20 +251,27 @@ export function ChatView({
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
 interface ChatHeaderProps {
-  conv:           Conv;
-  isOnline:       boolean;
-  convMode:       ConvMode;
-  onModeChange:   (mode: ConvMode) => void;
-  onBack:         () => void;
-  presets:        PhotoPreset[];
+  conv: Conv;
+  isOnline: boolean;
+  convMode: ConvMode;
+  onModeChange: (mode: ConvMode) => void;
+  onBack: () => void;
+  presets: PhotoPreset[];
   onSelectPreset: (p: PhotoPreset) => void;
   onOpenAddPreset: () => void;
-  onRemovePreset: (id: number) => void;
+  onRemovePreset: (id: string) => void;
 }
 
 function ChatHeader({
-  conv, isOnline, convMode, onModeChange, onBack,
-  presets, onSelectPreset, onOpenAddPreset, onRemovePreset,
+  conv,
+  isOnline,
+  convMode,
+  onModeChange,
+  onBack,
+  presets,
+  onSelectPreset,
+  onOpenAddPreset,
+  onRemovePreset,
 }: ChatHeaderProps) {
   return (
     <div className="flex items-center justify-between gap-3 border-b border-border/40 px-4 h-14 shrink-0 bg-background/80 backdrop-blur-sm">
@@ -267,7 +301,7 @@ function ChatHeader({
         <div className="min-w-0">
           <p className="text-sm font-semibold truncate">{conv.client}</p>
           <p className="text-[11px] text-muted-foreground">
-            {isOnline ? 'En ligne' : 'Vu récemment'}
+            {isOnline ? "En ligne" : "Vu récemment"}
           </p>
         </div>
       </div>
@@ -306,9 +340,9 @@ function IconButton({
   onClick,
   icon,
 }: {
-  label:   string;
+  label: string;
   onClick: () => void;
-  icon:    React.ReactNode;
+  icon: React.ReactNode;
 }) {
   return (
     <button
@@ -328,11 +362,13 @@ function MessagesSkeleton() {
       {Array.from({ length: 4 }).map((_, i) => (
         <div
           key={i}
-          className={`flex items-end gap-2 ${i % 2 === 0 ? 'justify-start' : 'justify-end'}`}
+          className={`flex items-end gap-2 ${i % 2 === 0 ? "justify-start" : "justify-end"}`}
         >
-          {i % 2 === 0 && <Skeleton className="h-8 w-8 rounded-full shrink-0" />}
+          {i % 2 === 0 && (
+            <Skeleton className="h-8 w-8 rounded-full shrink-0" />
+          )}
           <Skeleton
-            className={`h-10 rounded-2xl ${i % 2 === 0 ? 'w-48' : 'w-40'}`}
+            className={`h-10 rounded-2xl ${i % 2 === 0 ? "w-48" : "w-40"}`}
           />
         </div>
       ))}

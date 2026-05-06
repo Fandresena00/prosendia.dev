@@ -1,3 +1,13 @@
+/**
+ * @file features/facebook/services/webhook.service.ts
+ *
+ * Processes real-time Facebook webhook payloads.
+ * On inbound CLIENT message in AI mode:
+ *   1. Sets conversation.needsAiReply = true
+ *   2. Enqueues ai.reply job via AiQueueProducer (crash-safe, deduplicated)
+ *   3. Emits SSE events to connected inbox clients
+ */
+
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
 import {
@@ -5,6 +15,7 @@ import {
   WebhookEventType,
 } from '../../../generated/prisma/enums.js';
 import { InboxEventEmitter } from '../../inbox/gateways/inbox-sse.gateway.js';
+import { AiQueueProducer } from '../../queue/producers/ai-queue.producer.js';
 import { FacebookGraphClient } from '../clients/facebook-graph.client.js';
 import { FacebookAccountService } from './facebook-account.service.js';
 import { TokenService } from './token.service.js';
@@ -19,7 +30,6 @@ export interface FbMessagingEntry {
     attachments?: Array<{ type: string; payload: { url?: string } }>;
   };
 }
-
 export interface FbFeedValue {
   item?: string;
   verb?: string;
@@ -29,14 +39,12 @@ export interface FbFeedValue {
   from?: { id: string; name: string };
   created_time?: number;
 }
-
 export interface FbWebhookEntry {
   id: string;
   time?: number;
   messaging?: FbMessagingEntry[];
   changes?: Array<{ field: string; value: FbFeedValue }>;
 }
-
 export interface FbWebhookPayload {
   object: string;
   entry: FbWebhookEntry[];
@@ -52,15 +60,15 @@ export class WebhookService {
     private readonly tokenService: TokenService,
     private readonly emitter: InboxEventEmitter,
     private readonly graphClient: FacebookGraphClient,
+    private readonly aiQueue: AiQueueProducer,
   ) {}
 
   async dispatchPayload(payload: FbWebhookPayload): Promise<void> {
     if (payload.object !== 'page') return;
     for (const entry of payload.entry) {
-      void this.processEntry(entry).catch((err: Error) =>
+      void this.processEntry(entry).catch((err: unknown) =>
         this.logger.error(
-          `Error processing entry for page ${entry.id}: ${err.message}`,
-          err.stack,
+          `Error processing page ${entry.id}: ${err instanceof Error ? err.message : String(err)}`,
         ),
       );
     }
@@ -72,23 +80,18 @@ export class WebhookService {
       this.logger.debug(`No active connection for page ${entry.id}`);
       return;
     }
-
     const tokenUsable = await this.tokenService.isTokenUsable(entry.id);
     if (!tokenUsable) {
-      this.logger.warn(`Token unusable for page ${entry.id} — skipping`);
+      this.logger.warn(`Token unusable for page ${entry.id}`);
       return;
     }
-
     for (const event of entry.messaging ?? []) {
-      if (event.message && event.sender.id !== entry.id) {
+      if (event.message && event.sender.id !== entry.id)
         await this.handleMessage(conn.id, entry.id, event);
-      }
     }
-
     for (const change of entry.changes ?? []) {
-      if (change.field === 'feed') {
+      if (change.field === 'feed')
         await this.handleFeedChange(conn.id, entry.id, change.value);
-      }
     }
   }
 
@@ -99,14 +102,10 @@ export class WebhookService {
   ): Promise<void> {
     const mid = event.message?.mid;
     if (!mid) return;
-
-    const isDuplicate = await this.recordEvent(
-      connectionId,
-      mid,
-      WebhookEventType.MESSAGE,
-      event,
-    );
-    if (isDuplicate) return;
+    if (
+      await this.recordEvent(connectionId, mid, WebhookEventType.MESSAGE, event)
+    )
+      return;
 
     this.logger.log(
       `DM — page: ${pageId}, sender: ${event.sender.id}, mid: ${mid}`,
@@ -121,51 +120,33 @@ export class WebhookService {
     });
     if (!conn) return;
 
-    const clientProfile = await this.getClientProfile(
+    const clientProfile = await this.fetchClientProfile(
       event.sender.id,
       pageId,
     );
+    const conversation = await this.upsertConversation(
+      conn.businessProfileId,
+      event.sender.id,
+      clientProfile,
+      event.message?.text ?? null,
+      event.timestamp,
+    );
 
-    const existingConversation = await this.prisma.conversation.findFirst({
-      where: {
-        businessProfileId: conn.businessProfileId,
-        OR: [{ externalId: event.sender.id }, { clientPsid: event.sender.id }],
-      },
-    });
+    const createdAt = new Date(event.timestamp);
 
-    const conversation = existingConversation
-      ? await this.prisma.conversation.update({
-          where: { id: existingConversation.id },
-          data: {
-            clientPsid: event.sender.id,
-            clientName:
-              clientProfile?.name ?? existingConversation.clientName,
-            clientAvatarUrl:
-              clientProfile?.profile_pic ??
-              existingConversation.clientAvatarUrl,
-            lastMessage: event.message?.text ?? null,
-            lastMessageAt: new Date(event.timestamp),
-          },
-        })
-      : await this.prisma.conversation.create({
-          data: {
-            businessProfileId: conn.businessProfileId,
-            externalId: event.sender.id,
-            clientPsid: event.sender.id,
-            clientName: clientProfile?.name ?? null,
-            clientAvatarUrl: clientProfile?.profile_pic ?? null,
-            lastMessage: event.message?.text ?? null,
-            lastMessageAt: new Date(event.timestamp),
-          },
-        });
-
+    // Create the message in DB
+    const attachment = event.message?.attachments?.[0];
+    const imageUrl =
+      attachment?.type === 'image' ? attachment.payload?.url : null;
     const message = await this.prisma.message.create({
       data: {
         conversationId: conversation.id,
+        externalId: mid,
         sender: 'CLIENT',
         content: event.message?.text ?? null,
-        externalId: mid,
+        imageUrl,
         status: 'DELIVERED',
+        createdAt,
       },
     });
 
@@ -173,7 +154,7 @@ export class WebhookService {
       connectionId,
       mid,
       WebhookEventType.MESSAGE,
-      message.id,
+      conversation.id,
     );
 
     this.emitter.newMessage(conn.businessProfile.userId, {
@@ -181,17 +162,16 @@ export class WebhookService {
       message: {
         id: message.id,
         conversationId: conversation.id,
-        sender: message.sender,
+        sender: 'CLIENT',
         content: message.content,
         imageUrl: message.imageUrl,
-        fileUrl: message.fileUrl,
+        fileUrl: null,
         referenceImageUrls: [],
-        status: message.status,
-        externalId: message.externalId,
-        createdAt: message.createdAt,
+        status: 'DELIVERED',
+        externalId: mid,
+        createdAt,
       },
     });
-
     this.emitter.conversationUpdated(conn.businessProfile.userId, {
       conversation: {
         id: conversation.id,
@@ -207,6 +187,21 @@ export class WebhookService {
         updatedAt: conversation.updatedAt,
       },
     });
+
+    if (conversation.handoverStatus === 'AI') {
+      await this.prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { needsAiReply: true },
+      });
+      await this.aiQueue.enqueueAiReply({
+        conversationId: conversation.id,
+        inboundMessageId: mid,
+        businessProfileId: conn.businessProfileId,
+        userId: conn.businessProfile.userId,
+        inboundText: event.message?.text ?? undefined,
+        inboundCreatedAt: createdAt.toISOString(),
+      });
+    }
   }
 
   private async handleFeedChange(
@@ -218,17 +213,16 @@ export class WebhookService {
     const commentId = value.comment_id;
     if (!commentId || !value.message) return;
     if (value.from?.id === pageId) return;
-
-    const isDuplicate = await this.recordEvent(
-      connectionId,
-      commentId,
-      WebhookEventType.FEED_COMMENT,
-      value,
-    );
-    if (isDuplicate) return;
-
+    if (
+      await this.recordEvent(
+        connectionId,
+        commentId,
+        WebhookEventType.FEED_COMMENT,
+        value,
+      )
+    )
+      return;
     this.logger.log(`Comment — page: ${pageId}, comment: ${commentId}`);
-
     if (!value.post_id) {
       await this.markEventFailed(
         connectionId,
@@ -238,7 +232,6 @@ export class WebhookService {
       );
       return;
     }
-
     const post = await this.prisma.facebookPost.findUnique({
       where: { externalId: value.post_id },
     });
@@ -251,7 +244,6 @@ export class WebhookService {
       );
       return;
     }
-
     const comment = await this.prisma.postComment.upsert({
       where: { externalId: commentId },
       create: {
@@ -267,7 +259,6 @@ export class WebhookService {
       },
       update: { message: value.message, lastSyncedAt: new Date() },
     });
-
     await this.markEventProcessed(
       connectionId,
       commentId,
@@ -276,23 +267,59 @@ export class WebhookService {
     );
   }
 
-  private async getClientProfile(
+  private async upsertConversation(
+    businessProfileId: string,
+    clientPsid: string,
+    clientProfile: { name: string | null; profile_pic: string | null } | null,
+    lastMessage: string | null,
+    timestamp: number,
+  ) {
+    const existing = await this.prisma.conversation.findFirst({
+      where: {
+        businessProfileId,
+        OR: [{ externalId: clientPsid }, { clientPsid }],
+      },
+    });
+    if (existing) {
+      return this.prisma.conversation.update({
+        where: { id: existing.id },
+        data: {
+          clientPsid,
+          clientName: clientProfile?.name ?? existing.clientName,
+          clientAvatarUrl:
+            clientProfile?.profile_pic ?? existing.clientAvatarUrl,
+          lastMessage,
+          lastMessageAt: new Date(timestamp),
+        },
+      });
+    }
+    return this.prisma.conversation.create({
+      data: {
+        businessProfileId,
+        externalId: clientPsid,
+        clientPsid,
+        clientName: clientProfile?.name ?? null,
+        clientAvatarUrl: clientProfile?.profile_pic ?? null,
+        lastMessage,
+        lastMessageAt: new Date(timestamp),
+      },
+    });
+  }
+
+  private async fetchClientProfile(
     psid: string,
     pageId: string,
   ): Promise<{ name: string | null; profile_pic: string | null } | null> {
     try {
       const account = await this.accounts.getByPageId(pageId);
       if (!account) return null;
-
       const profile = await this.graphClient.getMessengerUserProfile(
         psid,
         account.decryptedToken,
       );
-
       const name =
         profile.name ??
         [profile.first_name, profile.last_name].filter(Boolean).join(' ');
-
       return {
         name: name.trim() || null,
         profile_pic: profile.profile_pic ?? null,
@@ -311,7 +338,6 @@ export class WebhookService {
     const existing = await this.prisma.webhookEvent.findUnique({
       where: { externalId_eventType: { externalId, eventType } },
     });
-
     if (existing) {
       if (existing.status === WebhookEventStatus.PROCESSED) {
         this.logger.debug(`Duplicate ${eventType} ${externalId} — skipped`);
@@ -323,7 +349,6 @@ export class WebhookService {
       });
       return false;
     }
-
     await this.prisma.webhookEvent.create({
       data: {
         facebookConnectionId: connectionId,

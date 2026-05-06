@@ -1,6 +1,19 @@
-import { Module } from '@nestjs/common';
+/**
+ * @file features/facebook/facebook.module.ts
+ *
+ * Dependency graph (no cycles):
+ *   QueueModule      → (no feature modules)
+ *   InboxEventsModule → (no deps)
+ *   FacebookModule   → QueueModule, InboxEventsModule, forwardRef(InboxSyncModule)
+ *   InboxSyncModule  → forwardRef(FacebookModule), PrismaModule, InboxEventsModule
+ *   AiModule         → QueueModule, InboxEventsModule
+ */
+
+import { Module, forwardRef } from '@nestjs/common';
 import { PrismaModule } from '../../database/prisma.module.js';
 import { InboxEventsModule } from '../inbox/inbox-events.module.js';
+import { InboxSyncModule } from '../inbox/inbox-sync.module.js';
+import { QueueModule } from '../queue/queue.module.js';
 import { FacebookGraphClient } from './clients/facebook-graph.client.js';
 import { FacebookController } from './facebook.controller.js';
 import { TokenEncryptionService } from './security/token-encryption.service.js';
@@ -11,25 +24,30 @@ import { FacebookMessagingService } from './services/facebook-messaging.service.
 import { FacebookSyncService } from './services/facebook-sync.service.js';
 import { TokenService } from './services/token.service.js';
 import { WebhookService } from './services/webhook.service.js';
+import { FacebookSyncWorker, TokenValidateWorker } from './workers/facebook.worker.js';
 
 @Module({
-  imports: [PrismaModule, InboxEventsModule],
+  imports: [
+    PrismaModule,
+    QueueModule,
+    InboxEventsModule,
+    forwardRef(() => InboxSyncModule),
+  ],
   controllers: [FacebookController],
   providers: [
-    // Infrastructure
     FacebookGraphClient,
     TokenEncryptionService,
     WebhookSignatureGuard,
-    // Services
     TokenService,
     FacebookAccountService,
     FacebookAuthService,
     FacebookSyncService,
     FacebookMessagingService,
     WebhookService,
+    FacebookSyncWorker,
+    TokenValidateWorker,
   ],
   exports: [
-    // Exported for use by other modules (e.g. AI reply automation, analytics)
     FacebookAccountService,
     FacebookGraphClient,
     FacebookMessagingService,

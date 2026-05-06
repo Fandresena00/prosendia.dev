@@ -154,6 +154,45 @@ export class UploadReferenceImagesResponseDto {
   urls!: string[];
 }
 
+export class ReferenceImageDto {
+  id!: string;
+  url!: string;
+  description!: string;
+  sortOrder!: number;
+}
+
+export class ReferencePresetDto {
+  id!: string;
+  businessProfileId!: string;
+  name!: string;
+  description!: string | null;
+  images!: ReferenceImageDto[];
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export class ListReferencePresetsQueryDto {
+  @IsString()
+  @IsNotEmpty()
+  businessProfileId!: string;
+}
+
+export class CreateReferencePresetDto {
+  @IsString()
+  @IsNotEmpty()
+  businessProfileId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
+  description!: string;
+}
+
 // ─── Handover ─────────────────────────────────────────────────────────────────
 
 export class SetHandoverDto {

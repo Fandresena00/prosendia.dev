@@ -64,6 +64,37 @@ export class FacebookMessagingService {
     };
   }
 
+  async sendImageMessage(
+    businessProfileId: string,
+    userId: string,
+    recipientPsid: string,
+    imageUrl: string,
+  ): Promise<SendMessageResponseDto> {
+    const conn = await this.accounts.requireByProfileId(businessProfileId, userId);
+
+    const result = await this.graphClient.sendImageMessage(
+      recipientPsid,
+      imageUrl,
+      conn.decryptedToken,
+    );
+
+    await this.persistOutboundImage(
+      businessProfileId,
+      recipientPsid,
+      imageUrl,
+      result.message_id,
+    );
+
+    this.logger.log(
+      `Sent image mid=${result.message_id} to PSID=${recipientPsid} via page=${conn.pageId}`,
+    );
+
+    return {
+      recipientId: result.recipient_id,
+      messageId: result.message_id,
+    };
+  }
+
   // ─── Comments ─────────────────────────────────────────────────────────────
 
   /**
@@ -130,6 +161,45 @@ export class FacebookMessagingService {
         conversationId: conversation.id,
         sender: 'PAGE',
         content: text,
+        externalId: externalMessageId,
+        status: 'SENT',
+      },
+    });
+  }
+
+  private async persistOutboundImage(
+    businessProfileId: string,
+    clientPsid: string,
+    imageUrl: string,
+    externalMessageId: string,
+  ): Promise<void> {
+    const now = new Date();
+
+    const conversation = await this.prisma.conversation.upsert({
+      where: {
+        businessProfileId_externalId: {
+          businessProfileId,
+          externalId: clientPsid,
+        },
+      },
+      create: {
+        businessProfileId,
+        externalId: clientPsid,
+        clientPsid,
+        lastMessage: `Image: ${imageUrl}`,
+        lastMessageAt: now,
+      },
+      update: {
+        lastMessage: `Image: ${imageUrl}`,
+        lastMessageAt: now,
+      },
+    });
+
+    await this.prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        sender: 'PAGE',
+        imageUrl,
         externalId: externalMessageId,
         status: 'SENT',
       },

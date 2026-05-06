@@ -17,9 +17,19 @@ import type {
   ConversationApiResponse,
   MessageApiResponse,
   MessagesPageApiResponse,
+  PhotoPreset,
+  ReferencePresetApiResponse,
 } from '../types/inbox.types';
 
 const BASE = '/inbox';
+const PHOTO_GRADS = [
+  'from-blue-500/40 to-indigo-600/30',
+  'from-violet-500/40 to-purple-600/30',
+  'from-emerald-500/40 to-teal-600/30',
+  'from-amber-500/40 to-orange-600/30',
+  'from-rose-500/40 to-pink-600/30',
+  'from-cyan-500/40 to-sky-600/30',
+];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -44,6 +54,12 @@ function getInitials(name: string | null): string {
     .toUpperCase();
 }
 
+function normalizeAvatarUrl(url: string | null): string | null {
+  if (!url) return null;
+  if (url.startsWith('http://')) return `https://${url.slice('http://'.length)}`;
+  return url;
+}
+
 export function mapConversation(c: ConversationApiResponse): Conv {
   return {
     id:               c.id,
@@ -52,7 +68,7 @@ export function mapConversation(c: ConversationApiResponse): Conv {
     clientPsid:       c.clientPsid,
     client:           c.clientName ?? c.clientPsid ?? 'Inconnu',
     initials:         getInitials(c.clientName),
-    avatarUrl:        c.clientAvatarUrl,
+    avatarUrl:        normalizeAvatarUrl(c.clientAvatarUrl),
     lastMessage:      c.lastMessage ?? '',
     time:             formatTime(c.lastMessageAt),
     mode:             c.handoverStatus === 'AI' ? 'ai' : 'human',
@@ -84,7 +100,6 @@ export async function fetchAccounts(): Promise<Account[]> {
       pageType: 'Page Facebook',
       verified: c.tokenStatus === 'VALID',
       pageId:   c.pageId,
-      avatarUrl: `https://graph.facebook.com/${c.pageId}/picture?type=large`,
     }));
 }
 
@@ -186,6 +201,53 @@ export async function uploadReferenceImages(files: File[]): Promise<string[]> {
     // apiClient must NOT set Content-Type here — let the browser set multipart boundary
   });
   return res.urls;
+}
+
+function mapReferencePreset(p: ReferencePresetApiResponse): PhotoPreset {
+  return {
+    id: p.id,
+    name: p.name,
+    description: p.description ?? '',
+    referenceImageUrls: p.images.map((image) => image.url),
+    photos: p.images.map((image, index) => ({
+      id: image.id,
+      objectUrl: image.url,
+      gradient: PHOTO_GRADS[index % PHOTO_GRADS.length],
+    })),
+  };
+}
+
+export async function fetchReferencePresets(
+  businessProfileId: string,
+): Promise<PhotoPreset[]> {
+  const qs = new URLSearchParams({ businessProfileId });
+  const res = await apiClient<ReferencePresetApiResponse[]>(
+    `${BASE}/reference-presets?${qs}`,
+  );
+  return res.map(mapReferencePreset);
+}
+
+export async function createReferencePreset(params: {
+  businessProfileId: string;
+  name: string;
+  description: string;
+  files: File[];
+}): Promise<PhotoPreset> {
+  const form = new FormData();
+  form.append('businessProfileId', params.businessProfileId);
+  form.append('name', params.name);
+  form.append('description', params.description);
+  for (const file of params.files) form.append('images', file);
+
+  const res = await apiClient<ReferencePresetApiResponse>(
+    `${BASE}/reference-presets`,
+    { method: 'POST', body: form },
+  );
+  return mapReferencePreset(res);
+}
+
+export async function deleteReferencePreset(id: string): Promise<void> {
+  await apiClient(`${BASE}/reference-presets/${id}`, { method: 'DELETE' });
 }
 
 /**

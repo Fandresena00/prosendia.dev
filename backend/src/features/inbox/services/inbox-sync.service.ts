@@ -12,39 +12,29 @@
  * Use @nestjs/schedule for the cron in the real app.
  */
 
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
+import {
+  WebhookEventStatus,
+  WebhookEventType,
+} from '../../../generated/prisma/enums.js';
 import { FacebookGraphClient } from '../../facebook/clients/facebook-graph.client.js';
-import type { FbConversation, FbMessage } from '../../facebook/clients/facebook-graph.client.js';
 import { FacebookAccountService } from '../../facebook/services/facebook-account.service.js';
-import type { ConversationResponseDto, MessageResponseDto, SyncCompleteEvent } from '../dto/inbox.dto.js';
+import { AiQueueProducer } from '../../queue/producers/ai-queue.producer.js';
+import type { SyncCompleteEvent } from '../dto/inbox.dto.js';
 import { InboxEventEmitter } from '../gateways/inbox-sse.gateway.js';
 
 @Injectable()
-export class InboxSyncService implements OnModuleInit, OnModuleDestroy {
+export class InboxSyncService {
   private readonly logger = new Logger(InboxSyncService.name);
-  private syncTimer: NodeJS.Timeout | undefined;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly graphClient: FacebookGraphClient,
     private readonly accounts: FacebookAccountService,
     private readonly emitter: InboxEventEmitter,
+    private readonly aiQueue: AiQueueProducer,
   ) {}
-
-  onModuleInit(): void {
-    this.syncTimer = setInterval(() => {
-      void this.syncAllProfiles();
-    }, 60_000);
-
-    setTimeout(() => {
-      void this.syncAllProfiles();
-    }, 5_000);
-  }
-
-  onModuleDestroy(): void {
-    if (this.syncTimer) clearInterval(this.syncTimer);
-  }
 
   /**
    * Sync all conversations for a business profile.
@@ -68,7 +58,7 @@ export class InboxSyncService implements OnModuleInit, OnModuleDestroy {
     const fbConvs = await this.graphClient.getConversations(
       conn.pageId,
       conn.decryptedToken,
-      100,
+      25,
     );
 
     let newConversations = 0;
@@ -78,17 +68,19 @@ export class InboxSyncService implements OnModuleInit, OnModuleDestroy {
       const client = fbConv.participants?.data.find(
         (p) => p.id !== conn.pageId,
       );
-      const clientProfile = client?.id
-        ? await this.getClientProfile(client.id, conn.decryptedToken)
-        : null;
+      const clientPsid = client?.id;
+      if (!clientPsid) continue;
 
+      const clientProfile = await this.safeFetchClientProfile(
+        clientPsid,
+        conn.decryptedToken,
+      );
+
+      // Upsert conversation
       const existing = await this.prisma.conversation.findFirst({
         where: {
           businessProfileId,
-          OR: [
-            { externalId: fbConv.id },
-            ...(client?.id ? [{ clientPsid: client.id }, { externalId: client.id }] : []),
-          ],
+          OR: [{ externalId: clientPsid }, { clientPsid: clientPsid }],
         },
       });
 
@@ -96,22 +88,25 @@ export class InboxSyncService implements OnModuleInit, OnModuleDestroy {
         ? await this.prisma.conversation.update({
             where: { id: existing.id },
             data: {
-              externalId: fbConv.id,
-              clientPsid: client?.id ?? existing.clientPsid,
+              externalId: clientPsid,
+              clientPsid: clientPsid,
               clientName:
                 clientProfile?.name ?? client?.name ?? existing.clientName,
               clientAvatarUrl:
-                clientProfile?.profile_pic ?? existing.clientAvatarUrl,
+                this.normalizeAvatarUrl(clientProfile?.profile_pic) ??
+                existing.clientAvatarUrl,
               lastMessageAt: new Date(fbConv.updated_time),
             },
           })
         : await this.prisma.conversation.create({
             data: {
               businessProfileId,
-              externalId: fbConv.id,
-              clientPsid: client?.id ?? null,
+              externalId: clientPsid,
+              clientPsid: clientPsid,
               clientName: clientProfile?.name ?? client?.name ?? null,
-              clientAvatarUrl: clientProfile?.profile_pic ?? null,
+              clientAvatarUrl: this.normalizeAvatarUrl(
+                clientProfile?.profile_pic,
+              ),
               lastMessageAt: new Date(fbConv.updated_time),
             },
           });
@@ -119,90 +114,173 @@ export class InboxSyncService implements OnModuleInit, OnModuleDestroy {
       if (!existing) newConversations++;
 
       // ── 2. Sync messages for each conversation ────────────────────────
-      const messages = await this.graphClient.getConversationMessages(
+      const fbMsgs = await this.graphClient.getConversationMessages(
         fbConv.id,
         conn.decryptedToken,
-        100,
+        25,
       );
-
-      const orderedMessages = [...messages].sort(
+      const ordered = [...fbMsgs].sort(
         (a, b) =>
-          new Date(a.created_time).getTime() - new Date(b.created_time).getTime(),
+          new Date(a.created_time).getTime() -
+          new Date(b.created_time).getTime(),
       );
 
-      let lastStoredMessage: MessageResponseDto | null = null;
+      let lastPreview: string | null = null;
+      let lastAt: Date | null = null;
 
-      if (orderedMessages.length > 0) {
-        for (const fbMsg of orderedMessages) {
-          // Skip if already stored
+      for (const fbMsg of ordered) {
+        const sender = fbMsg.from.id === conn.pageId ? 'PAGE' : 'CLIENT';
+        const attachment = fbMsg.attachments?.data?.[0];
+        const imageUrl = attachment?.image_data?.url ?? null;
+        const content = fbMsg.message ?? null;
+
+        if (sender === 'CLIENT') {
           const exists = await this.prisma.message.findUnique({
             where: { externalId: fbMsg.id },
           });
           if (exists) continue;
 
-          const sender = fbMsg.from.id === conn.pageId ? 'PAGE' : 'CLIENT';
-          const attachment = fbMsg.attachments?.data[0];
           const stored = await this.prisma.message.create({
             data: {
               conversationId: conv.id,
               externalId: fbMsg.id,
               sender,
-              content: fbMsg.message ?? null,
-              imageUrl: attachment?.image_data?.url ?? null,
-              fileUrl: attachment && !attachment.image_data?.url ? attachment.id : null,
+              content,
+              imageUrl,
               status: 'DELIVERED',
               createdAt: new Date(fbMsg.created_time),
             },
           });
 
-          newMessages++;
-          lastStoredMessage = this.toMessageDto(stored);
+          const duplicate = await this.prisma.webhookEvent.findUnique({
+            where: {
+              externalId_eventType: {
+                externalId: fbMsg.id,
+                eventType: WebhookEventType.MESSAGE,
+              },
+            },
+          });
+          if (duplicate?.status === WebhookEventStatus.PROCESSED) continue;
 
-          // Emit SSE new_message event to the page owner
-          const userProfile = await this.prisma.businessProfile.findUnique({
-            where: { id: businessProfileId },
-            select: { userId: true },
+          await this.prisma.webhookEvent.upsert({
+            where: {
+              externalId_eventType: {
+                externalId: fbMsg.id,
+                eventType: WebhookEventType.MESSAGE,
+              },
+            },
+            create: {
+              facebookConnectionId: conn.id,
+              externalId: fbMsg.id,
+              eventType: WebhookEventType.MESSAGE,
+              status: WebhookEventStatus.PROCESSED,
+              rawPayload: fbMsg as object,
+              attempts: 1,
+              resultEntityId: conv.id,
+              processedAt: new Date(),
+            },
+            update: {
+              status: WebhookEventStatus.PROCESSED,
+              rawPayload: fbMsg as object,
+              resultEntityId: conv.id,
+              processedAt: new Date(),
+            },
           });
 
-          if (userProfile) {
-            this.emitter.newMessage(userProfile.userId, {
+          newMessages++;
+          lastPreview = this.messagePreview(stored);
+          lastAt = stored.createdAt;
+
+          this.emitter.newMessage(userId, {
+            conversationId: conv.id,
+            message: {
+              id: stored.id,
               conversationId: conv.id,
-              message: lastStoredMessage,
+              sender,
+              content: stored.content,
+              imageUrl: stored.imageUrl,
+              fileUrl: null,
+              referenceImageUrls: [],
+              status: 'DELIVERED',
+              externalId: fbMsg.id,
+              createdAt: stored.createdAt,
+            },
+          });
+
+          if (conv.handoverStatus === 'AI' && content?.trim()) {
+            await this.prisma.conversation.update({
+              where: { id: conv.id },
+              data: { needsAiReply: true },
+            });
+            await this.aiQueue.enqueueAiReply({
+              conversationId: conv.id,
+              inboundMessageId: fbMsg.id,
+              businessProfileId,
+              userId,
+              inboundText: content,
+              inboundCreatedAt: lastAt.toISOString(),
             });
           }
+          continue;
         }
 
-        const latest = orderedMessages[orderedMessages.length - 1];
-        await this.prisma.conversation.update({
-          where: { id: conv.id },
+        const exists = await this.prisma.message.findUnique({
+          where: { externalId: fbMsg.id },
+        });
+        if (exists) continue;
+
+        const stored = await this.prisma.message.create({
           data: {
-            lastMessage: this.messagePreview(latest),
-            lastMessageAt: new Date(latest.created_time),
+            conversationId: conv.id,
+            externalId: fbMsg.id,
+            sender,
+            content,
+            imageUrl,
+            status: 'DELIVERED',
+            createdAt: new Date(fbMsg.created_time),
+          },
+        });
+
+        newMessages++;
+        lastPreview = this.messagePreview(stored);
+        lastAt = stored.createdAt;
+
+        this.emitter.newMessage(userId, {
+          conversationId: conv.id,
+          message: {
+            id: stored.id,
+            conversationId: conv.id,
+            sender: stored.sender,
+            content: stored.content,
+            imageUrl: stored.imageUrl,
+            fileUrl: stored.fileUrl,
+            referenceImageUrls: [],
+            status: stored.status,
+            externalId: stored.externalId,
+            createdAt: stored.createdAt,
           },
         });
       }
 
-      const refreshed = await this.prisma.conversation.findUnique({
-        where: { id: conv.id },
-        include: {
-          _count: {
-            select: {
-              messages: {
-                where: { status: { not: 'READ' }, sender: 'CLIENT' },
-              },
-            },
+      if (lastAt) {
+        await this.prisma.conversation.update({
+          where: { id: conv.id },
+          data: { lastMessage: lastPreview, lastMessageAt: lastAt },
+        });
+        this.emitter.conversationUpdated(userId, {
+          conversation: {
+            id: conv.id,
+            businessProfileId: conv.businessProfileId,
+            externalId: conv.externalId,
+            clientPsid: conv.clientPsid,
+            clientName: conv.clientName,
+            clientAvatarUrl: conv.clientAvatarUrl,
+            lastMessage: lastPreview,
+            lastMessageAt: lastAt,
+            handoverStatus: conv.handoverStatus,
+            unreadCount: 0,
+            updatedAt: new Date(),
           },
-        },
-      });
-
-      const profile = await this.prisma.businessProfile.findUnique({
-        where: { id: businessProfileId },
-        select: { userId: true },
-      });
-
-      if (refreshed && profile) {
-        this.emitter.conversationUpdated(profile.userId, {
-          conversation: this.toConversationDto(refreshed),
         });
       }
     }
@@ -234,6 +312,45 @@ export class InboxSyncService implements OnModuleInit, OnModuleDestroy {
     return result;
   }
 
+  private messagePreview(msg: {
+    content: string | null;
+    imageUrl: string | null;
+    fileUrl: string | null;
+  }): string {
+    if (msg.content?.trim()) return msg.content;
+    if (msg.imageUrl) return '📷 Photo';
+    if (msg.fileUrl) return '📎 Fichier';
+    return '';
+  }
+
+  private async safeFetchClientProfile(
+    psid: string,
+    pageAccessToken: string,
+  ): Promise<{ name: string | null; profile_pic: string | null } | null> {
+    try {
+      const profile = await this.graphClient.getMessengerUserProfile(
+        psid,
+        pageAccessToken,
+      );
+      const name =
+        profile.name ??
+        [profile.first_name, profile.last_name].filter(Boolean).join(' ');
+      return {
+        name: name.trim() || null,
+        profile_pic: this.normalizeAvatarUrl(profile.profile_pic),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private normalizeAvatarUrl(url?: string | null): string | null {
+    if (!url?.trim()) return null;
+    if (url.startsWith('http://'))
+      return `https://${url.slice('http://'.length)}`;
+    return url;
+  }
+
   /**
    * Sync all active profiles for all users.
    * Called by the cron job every 60 seconds.
@@ -256,71 +373,30 @@ export class InboxSyncService implements OnModuleInit, OnModuleDestroy {
         }),
       ),
     );
+
+    // Clean up old webhook events periodically
+    await this.cleanupOldWebhookEvents().catch((err) =>
+      this.logger.warn(`Cleanup failed: ${err.message}`),
+    );
   }
 
-  private messagePreview(message: FbMessage): string {
-    if (message.message?.trim()) return message.message;
-    const attachment = message.attachments?.data[0];
-    if (!attachment) return '';
-    if (attachment.image_data?.url) return '📷 Photo';
-    return '📎 Pièce jointe';
-  }
+  /**
+   * Clean up old processed webhook events to prevent database bloat.
+   * Deletes events older than 7 days that are in PROCESSED status.
+   */
+  async cleanupOldWebhookEvents(): Promise<void> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
 
-  private async getClientProfile(
-    psid: string,
-    pageAccessToken: string,
-  ): Promise<{ name: string | null; profile_pic: string | null } | null> {
-    try {
-      const profile = await this.graphClient.getMessengerUserProfile(
-        psid,
-        pageAccessToken,
-      );
-      const fullName =
-        profile.name ??
-        [profile.first_name, profile.last_name].filter(Boolean).join(' ');
+    const deleted = await this.prisma.webhookEvent.deleteMany({
+      where: {
+        status: WebhookEventStatus.PROCESSED,
+        processedAt: { lt: cutoff },
+      },
+    });
 
-      return {
-        name: fullName.trim() || null,
-        profile_pic: profile.profile_pic ?? null,
-      };
-    } catch (error) {
-      this.logger.debug(
-        `Unable to fetch Messenger profile for ${psid}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return null;
+    if (deleted.count > 0) {
+      this.logger.log(`Cleaned up ${deleted.count} old webhook events`);
     }
-  }
-
-  private toMessageDto(msg: any): MessageResponseDto {
-    return {
-      id: msg.id,
-      conversationId: msg.conversationId,
-      sender: msg.sender,
-      content: msg.content,
-      imageUrl: msg.imageUrl,
-      fileUrl: msg.fileUrl,
-      referenceImageUrls: [],
-      status: msg.status,
-      externalId: msg.externalId,
-      createdAt: msg.createdAt,
-    };
-  }
-
-  private toConversationDto(conv: any): ConversationResponseDto {
-    return {
-      id: conv.id,
-      businessProfileId: conv.businessProfileId,
-      externalId: conv.externalId,
-      clientPsid: conv.clientPsid,
-      clientName: conv.clientName,
-      clientAvatarUrl: conv.clientAvatarUrl,
-      lastMessage: conv.lastMessage,
-      lastMessageAt: conv.lastMessageAt,
-      handoverStatus: conv.handoverStatus,
-      unreadCount: conv._count?.messages ?? 0,
-      updatedAt: conv.updatedAt,
-    };
   }
 }
