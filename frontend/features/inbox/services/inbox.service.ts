@@ -2,12 +2,15 @@
  * @file features/inbox/services/inbox.service.ts
  *
  * All HTTP calls for the inbox feature.
- * Routes through apiClient (handles JWT auth + refresh).
+ * Routes through apiClient (handles JWT auth + token refresh).
  *
- * For message attachments that are NOT reference images:
- *   → Upload directly to Facebook via the Graph API (never stored in backend)
- * For reference images (presets):
- *   → POST /inbox/uploads/reference → stored in backend → permanent URL returned
+ * CHANGES:
+ *   - fetchAccounts: added avatarUrl from Facebook Graph CDN for page profile pictures.
+ *     Facebook provides a public redirect URL: graph.facebook.com/{pageId}/picture
+ *     No access token required for public pages.
+ *   - normalizeAvatarUrl: extracted as a module-level helper used by both
+ *     mapConversation and fetchAccounts.
+ *   - mapConversation: uses normalizeAvatarUrl for client avatar URLs.
  */
 
 import { apiClient } from '@/lib/api-client';
@@ -21,8 +24,9 @@ import type {
   ReferencePresetApiResponse,
 } from '../types/inbox.types';
 
-const BASE = '/inbox';
-const PHOTO_GRADS = [
+const INBOX_API_BASE = '/inbox';
+
+const PHOTO_GRADIENT_PALETTE = [
   'from-blue-500/40 to-indigo-600/30',
   'from-violet-500/40 to-purple-600/30',
   'from-emerald-500/40 to-teal-600/30',
@@ -31,75 +35,96 @@ const PHOTO_GRADS = [
   'from-cyan-500/40 to-sky-600/30',
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Shared helpers ────────────────────────────────────────────────────────────
 
-function formatTime(isoDate: string | null): string {
-  if (!isoDate) return '';
-  const d = new Date(isoDate);
-  const now = new Date();
-  const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
-  if (diffDays === 0)
-    return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  if (diffDays === 1) return 'Hier';
-  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+/**
+ * Normalizes a Facebook CDN image URL:
+ * - Upgrades http:// to https:// (Facebook CDN sometimes returns http)
+ * - Returns null for empty/null inputs
+ */
+function normalizeAvatarUrl(rawUrl: string | null | undefined): string | null {
+  if (!rawUrl) return null;
+  if (rawUrl.startsWith('http://')) return `https://${rawUrl.slice(7)}`;
+  return rawUrl;
 }
 
-function getInitials(name: string | null): string {
-  if (!name) return '?';
-  return name
+function formatConversationTime(isoDateString: string | null): string {
+  if (!isoDateString) return '';
+  const messageDate = new Date(isoDateString);
+  const today       = new Date();
+  const diffDays    = Math.floor((today.getTime() - messageDate.getTime()) / 86_400_000);
+  if (diffDays === 0)
+    return messageDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  if (diffDays === 1) return 'Hier';
+  return messageDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+}
+
+function buildInitials(displayName: string | null): string {
+  if (!displayName) return '?';
+  return displayName
     .split(' ')
-    .map((w) => w[0])
+    .map((word) => word[0])
     .slice(0, 2)
     .join('')
     .toUpperCase();
 }
 
-function normalizeAvatarUrl(url: string | null): string | null {
-  if (!url) return null;
-  if (url.startsWith('http://')) return `https://${url.slice('http://'.length)}`;
-  return url;
+/**
+ * Returns the public Facebook CDN URL for a page's profile picture.
+ * This is a redirect URL — no access token required for public pages.
+ * Format: https://graph.facebook.com/{pageId}/picture?type=large
+ */
+function buildFacebookPagePictureUrl(pageId: string): string {
+  return `https://graph.facebook.com/${pageId}/picture?type=large`;
 }
 
-export function mapConversation(c: ConversationApiResponse): Conv {
+export function mapConversation(apiConversation: ConversationApiResponse): Conv {
   return {
-    id:               c.id,
-    businessProfileId: c.businessProfileId,
-    externalId:       c.externalId,
-    clientPsid:       c.clientPsid,
-    client:           c.clientName ?? c.clientPsid ?? 'Inconnu',
-    initials:         getInitials(c.clientName),
-    avatarUrl:        normalizeAvatarUrl(c.clientAvatarUrl),
-    lastMessage:      c.lastMessage ?? '',
-    time:             formatTime(c.lastMessageAt),
-    mode:             c.handoverStatus === 'AI' ? 'ai' : 'human',
-    unread:           c.unreadCount,
-    online:           false,
-    handoverStatus:   c.handoverStatus,
+    id:                apiConversation.id,
+    businessProfileId: apiConversation.businessProfileId,
+    externalId:        apiConversation.externalId,
+    clientPsid:        apiConversation.clientPsid,
+    client:            apiConversation.clientName ?? apiConversation.clientPsid ?? 'Inconnu',
+    initials:          buildInitials(apiConversation.clientName),
+    avatarUrl:         normalizeAvatarUrl(apiConversation.clientAvatarUrl),
+    lastMessage:       apiConversation.lastMessage ?? '',
+    time:              formatConversationTime(apiConversation.lastMessageAt),
+    mode:              apiConversation.handoverStatus === 'AI' ? 'ai' : 'human',
+    unread:            apiConversation.unreadCount,
+    online:            false,
+    handoverStatus:    apiConversation.handoverStatus,
   };
 }
 
 // ─── Accounts (Facebook Pages) ────────────────────────────────────────────────
 
 export async function fetchAccounts(): Promise<Account[]> {
-  const data = await apiClient<{ data: Array<{
-    id: string;
-    businessProfileId?: string;
-    pageId: string;
-    pageName: string;
-    instagramAccountId?: string | null;
-    tokenStatus: string;
-    isActive: boolean;
-  }> }>('/facebook/connections');
-  return data.data
-    .filter((c) => c.isActive)
-    .map((c, i): Account => ({
-      id:       c.businessProfileId ?? c.id,
-      name:     c.pageName,
-      initials: getInitials(c.pageName),
-      color:    i % 2 === 0 ? 'bg-primary/15 text-primary' : 'bg-violet-500/15 text-violet-500',
+  const response = await apiClient<{
+    data: Array<{
+      id:                   string;
+      businessProfileId?:   string;
+      pageId:               string;
+      pageName:             string;
+      instagramAccountId?:  string | null;
+      tokenStatus:          string;
+      isActive:             boolean;
+    }>;
+  }>('/facebook/connections');
+
+  return response.data
+    .filter((connection) => connection.isActive)
+    .map((connection, index): Account => ({
+      id:       connection.businessProfileId ?? connection.id,
+      name:     connection.pageName,
+      initials: buildInitials(connection.pageName),
+      color:    index % 2 === 0
+        ? 'bg-primary/15 text-primary'
+        : 'bg-violet-500/15 text-violet-500',
       pageType: 'Page Facebook',
-      verified: c.tokenStatus === 'VALID',
-      pageId:   c.pageId,
+      verified: connection.tokenStatus === 'VALID',
+      pageId:   connection.pageId,
+      // FIX: Build page avatar URL from Facebook CDN (no token needed for public pages)
+      avatarUrl: buildFacebookPagePictureUrl(connection.pageId),
     }));
 }
 
@@ -107,48 +132,55 @@ export async function fetchAccounts(): Promise<Account[]> {
 
 export async function fetchConversations(params: {
   businessProfileId?: string;
-  search?: string;
-  page?: number;
-  pageSize?: number;
+  search?:            string;
+  page?:              number;
+  pageSize?:          number;
 }): Promise<{ data: Conv[]; total: number }> {
-  const qs = new URLSearchParams();
-  if (params.businessProfileId) qs.set('businessProfileId', params.businessProfileId);
-  if (params.search)            qs.set('search', params.search);
-  if (params.page)              qs.set('page', String(params.page));
-  if (params.pageSize)          qs.set('pageSize', String(params.pageSize));
+  const queryString = new URLSearchParams();
+  if (params.businessProfileId) queryString.set('businessProfileId', params.businessProfileId);
+  if (params.search)            queryString.set('search', params.search);
+  if (params.page)              queryString.set('page', String(params.page));
+  if (params.pageSize)          queryString.set('pageSize', String(params.pageSize));
 
-  const res = await apiClient<{ data: ConversationApiResponse[]; pagination: { total: number } }>(
-    `${BASE}/conversations?${qs}`,
-  );
-  return { data: res.data.map(mapConversation), total: res.pagination.total };
+  const response = await apiClient<{
+    data:       ConversationApiResponse[];
+    pagination: { total: number };
+  }>(`${INBOX_API_BASE}/conversations?${queryString}`);
+
+  return {
+    data:  response.data.map(mapConversation),
+    total: response.pagination.total,
+  };
 }
 
 export async function markConversationRead(conversationId: string): Promise<void> {
-  await apiClient(`${BASE}/conversations/${conversationId}/read`, { method: 'POST' });
+  await apiClient(`${INBOX_API_BASE}/conversations/${conversationId}/read`, {
+    method: 'POST',
+  });
 }
 
 export async function setHandover(
   conversationId: string,
-  status: 'AI' | 'HUMAN' | 'RESOLVED',
+  status:         'AI' | 'HUMAN' | 'RESOLVED',
 ): Promise<Conv> {
-  const res = await apiClient<ConversationApiResponse>(
-    `${BASE}/conversations/${conversationId}/handover`,
+  const response = await apiClient<ConversationApiResponse>(
+    `${INBOX_API_BASE}/conversations/${conversationId}/handover`,
     { method: 'POST', body: JSON.stringify({ conversationId, status }) },
   );
-  return mapConversation(res);
+  return mapConversation(response);
 }
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
 
 export async function fetchMessages(
   conversationId: string,
-  opts: { before?: string; limit?: number } = {},
+  options: { before?: string; limit?: number } = {},
 ): Promise<MessagesPageApiResponse> {
-  const qs = new URLSearchParams();
-  if (opts.before) qs.set('before', opts.before);
-  if (opts.limit)  qs.set('limit',  String(opts.limit));
+  const queryString = new URLSearchParams();
+  if (options.before) queryString.set('before', options.before);
+  if (options.limit)  queryString.set('limit',  String(options.limit));
   return apiClient<MessagesPageApiResponse>(
-    `${BASE}/conversations/${conversationId}/messages?${qs}`,
+    `${INBOX_API_BASE}/conversations/${conversationId}/messages?${queryString}`,
   );
 }
 
@@ -156,63 +188,71 @@ export async function fetchMessages(
 
 export async function sendTextMessage(
   conversationId: string,
-  text: string,
+  text:           string,
 ): Promise<MessageApiResponse> {
-  return apiClient<MessageApiResponse>(`${BASE}/messages/text`, {
+  return apiClient<MessageApiResponse>(`${INBOX_API_BASE}/messages/text`, {
     method: 'POST',
-    body: JSON.stringify({ conversationId, text }),
+    body:   JSON.stringify({ conversationId, text }),
   });
 }
 
 export async function sendImagesMessage(
   conversationId: string,
-  imageUrls: string[],
-  caption?: string,
+  imageUrls:      string[],
+  caption?:       string,
 ): Promise<MessageApiResponse[]> {
-  return apiClient<MessageApiResponse[]>(`${BASE}/messages/images`, {
+  return apiClient<MessageApiResponse[]>(`${INBOX_API_BASE}/messages/images`, {
     method: 'POST',
-    body: JSON.stringify({ conversationId, imageUrls, caption }),
+    body:   JSON.stringify({ conversationId, imageUrls, caption }),
   });
 }
 
 export async function sendFileMessage(
   conversationId: string,
-  fileUrl: string,
-  fileName: string,
+  fileUrl:        string,
+  fileName:       string,
 ): Promise<MessageApiResponse> {
-  return apiClient<MessageApiResponse>(`${BASE}/messages/file`, {
+  return apiClient<MessageApiResponse>(`${INBOX_API_BASE}/messages/file`, {
     method: 'POST',
-    body: JSON.stringify({ conversationId, fileUrl, fileName }),
+    body:   JSON.stringify({ conversationId, fileUrl, fileName }),
   });
 }
 
-// ─── Reference image upload ────────────────────────────────────────────────────
+// ─── Temp file upload (for ad-hoc photo/file sends) ──────────────────────────
 
 /**
- * Upload reference images to the backend (persistent storage).
- * Returns permanent backend-hosted URLs.
+ * Uploads a file to the backend as a temporary public file.
+ * Returns a publicly-accessible HTTPS URL that Facebook can download
+ * when sending the file via the Graph API.
+ *
+ * The backend serves these files at: {BACKEND_URL}/uploads/{filename}
+ * The URL is valid for a short window (backend should clean up old temp files).
+ *
+ * Do NOT use this for reference preset images — use createReferencePreset() instead.
  */
-export async function uploadReferenceImages(files: File[]): Promise<string[]> {
-  const form = new FormData();
-  for (const f of files) form.append('images', f);
-  const res = await apiClient<{ urls: string[] }>(`${BASE}/uploads/reference`, {
+export async function getTempUploadUrl(file: File): Promise<string> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiClient<{ url: string }>(`${INBOX_API_BASE}/uploads/temp`, {
     method: 'POST',
-    body: form,
-    // apiClient must NOT set Content-Type here — let the browser set multipart boundary
+    body:   formData,
+    // Do NOT set Content-Type — let the browser set multipart/form-data with boundary
   });
-  return res.urls;
+  return response.url;
 }
 
-function mapReferencePreset(p: ReferencePresetApiResponse): PhotoPreset {
+// ─── Reference presets ────────────────────────────────────────────────────────
+
+function mapReferencePresetApiResponse(apiPreset: ReferencePresetApiResponse): PhotoPreset {
   return {
-    id: p.id,
-    name: p.name,
-    description: p.description ?? '',
-    referenceImageUrls: p.images.map((image) => image.url),
-    photos: p.images.map((image, index) => ({
-      id: image.id,
+    id:                  apiPreset.id,
+    name:                apiPreset.name,
+    description:         apiPreset.description ?? '',
+    referenceImageUrls:  apiPreset.images.map((image) => image.url),
+    photos:              apiPreset.images.map((image, index) => ({
+      id:        image.id,
       objectUrl: image.url,
-      gradient: PHOTO_GRADS[index % PHOTO_GRADS.length],
+      gradient:  PHOTO_GRADIENT_PALETTE[index % PHOTO_GRADIENT_PALETTE.length],
     })),
   };
 }
@@ -220,53 +260,40 @@ function mapReferencePreset(p: ReferencePresetApiResponse): PhotoPreset {
 export async function fetchReferencePresets(
   businessProfileId: string,
 ): Promise<PhotoPreset[]> {
-  const qs = new URLSearchParams({ businessProfileId });
-  const res = await apiClient<ReferencePresetApiResponse[]>(
-    `${BASE}/reference-presets?${qs}`,
+  const queryString = new URLSearchParams({ businessProfileId });
+  const response = await apiClient<ReferencePresetApiResponse[]>(
+    `${INBOX_API_BASE}/reference-presets?${queryString}`,
   );
-  return res.map(mapReferencePreset);
+  return response.map(mapReferencePresetApiResponse);
 }
 
 export async function createReferencePreset(params: {
   businessProfileId: string;
-  name: string;
-  description: string;
-  files: File[];
+  name:              string;
+  description:       string;
+  files:             File[];
 }): Promise<PhotoPreset> {
-  const form = new FormData();
-  form.append('businessProfileId', params.businessProfileId);
-  form.append('name', params.name);
-  form.append('description', params.description);
-  for (const file of params.files) form.append('images', file);
+  const formData = new FormData();
+  formData.append('businessProfileId', params.businessProfileId);
+  formData.append('name',              params.name);
+  formData.append('description',       params.description);
+  for (const file of params.files) formData.append('images', file);
 
-  const res = await apiClient<ReferencePresetApiResponse>(
-    `${BASE}/reference-presets`,
-    { method: 'POST', body: form },
+  const response = await apiClient<ReferencePresetApiResponse>(
+    `${INBOX_API_BASE}/reference-presets`,
+    { method: 'POST', body: formData },
   );
-  return mapReferencePreset(res);
+  return mapReferencePresetApiResponse(response);
 }
 
-export async function deleteReferencePreset(id: string): Promise<void> {
-  await apiClient(`${BASE}/reference-presets/${id}`, { method: 'DELETE' });
-}
-
-/**
- * Get a temporary public URL for a blob: file so Facebook can download it.
- * Strategy: upload to the backend as a temp file, get back a short-lived URL.
- * This URL is passed directly to the Facebook Graph API.
- */
-export async function getTempUploadUrl(file: File): Promise<string> {
-  const form = new FormData();
-  form.append('file', file);
-  const res = await apiClient<{ url: string }>(`${BASE}/uploads/temp`, {
-    method: 'POST',
-    body: form,
+export async function deleteReferencePreset(presetId: string): Promise<void> {
+  await apiClient(`${INBOX_API_BASE}/reference-presets/${presetId}`, {
+    method: 'DELETE',
   });
-  return res.url;
 }
 
 // ─── Manual sync ──────────────────────────────────────────────────────────────
 
-export async function triggerSync(businessProfileId: string): Promise<void> {
-  await apiClient(`${BASE}/sync/${businessProfileId}`, { method: 'POST' });
+export async function triggerManualSync(businessProfileId: string): Promise<void> {
+  await apiClient(`${INBOX_API_BASE}/sync/${businessProfileId}`, { method: 'POST' });
 }

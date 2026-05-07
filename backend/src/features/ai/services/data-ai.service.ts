@@ -1,24 +1,18 @@
 /**
  * @file features/ai/services/data-ai.service.ts
  *
- * DataAI — lightweight background AI for conversation summarisation.
+ * DataAI — background AI for conversation summarisation.
  *
- * Purpose:
- *   Compress conversation history into a short summary so that ReplyAI never
- *   needs to read the full message list. This keeps token usage low even for
- *   long-running conversations.
- *
- * Trigger:
- *   Called by ReplyAI after every reply, when the number of new client messages
- *   since the last summary reaches `summaryEveryN` (default: 10).
- *
- * Model:
- *   Uses a cheap/fast model (e.g. Llama 3.1 8B free) — quality requirements
- *   are low because the summary is only read by another AI, not a human.
+ * CHANGES:
+ *   - DATA_AI_MODEL and AI_CONTEXT_CONFIG constants replace inlined magic numbers.
+ *   - Variable names made more explicit (modelConfig → summaryModelConfig, etc.).
+ *   - summaryEveryN fallback now uses AI_CONTEXT_CONFIG.SUMMARY_EVERY_N_MESSAGES.
+ *   - temperature fallback now uses DATA_AI_MODEL.TEMPERATURE.
  */
 
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
+import { AI_CONTEXT_CONFIG, DATA_AI_MODEL } from '../config/ai-models.config.js';
 import { OpenRouterClient } from '../clients/openrouter.client.js';
 import { PromptBuilderService, type ContextMessage } from './prompt-builder.service.js';
 
@@ -27,145 +21,168 @@ export class DataAiService {
   private readonly logger = new Logger(DataAiService.name);
 
   constructor(
-    private readonly prisma:   PrismaService,
-    private readonly openRouter: OpenRouterClient,
-    private readonly builder:  PromptBuilderService,
+    private readonly prisma:           PrismaService,
+    private readonly openRouterClient: OpenRouterClient,
+    private readonly promptBuilder:    PromptBuilderService,
   ) {}
 
-  // ─── Check and summarise ──────────────────────────────────────────────────
+  // ─── Check threshold and summarise if needed ──────────────────────────────
 
   /**
    * Called after each AI reply.
-   * Counts unsummarised client messages. If ≥ summaryEveryN, generates a new summary.
+   * Counts unsummarised client messages.
+   * If the count reaches the threshold, generates and stores a new summary.
    * Fire-and-forget — errors are caught and logged, never re-thrown.
    */
   async maybeGenerateSummary(conversationId: string): Promise<void> {
     try {
-      await this.attemptSummary(conversationId);
+      await this.attemptSummaryIfThresholdReached(conversationId);
     } catch (err) {
       this.logger.error(
-        `Summary generation failed for conv ${conversationId}: ${(err as Error).message}`,
+        `Summary generation failed for conversation=${conversationId}: ${(err as Error).message}`,
       );
     }
   }
 
-  // ─── Core summarisation ───────────────────────────────────────────────────
+  // ─── Core summarisation logic ─────────────────────────────────────────────
 
-  private async attemptSummary(conversationId: string): Promise<void> {
+  private async attemptSummaryIfThresholdReached(conversationId: string): Promise<void> {
     const conversation = await this.prisma.conversation.findUnique({
       where:   { id: conversationId },
-      include: { businessProfile: { include: { aiConfig: true, aiModelConfig: true } } },
+      include: {
+        businessProfile: {
+          include: { aiConfig: true, aiModelConfig: true },
+        },
+      },
     });
     if (!conversation) return;
 
-    const aiConfig    = conversation.businessProfile.aiConfig;
-    const modelConfig = conversation.businessProfile.aiModelConfig;
-    if (!aiConfig || !modelConfig) return;
+    const aiConfig           = conversation.businessProfile.aiConfig;
+    const summaryModelConfig = conversation.businessProfile.aiModelConfig;
+    if (!aiConfig || !summaryModelConfig) return;
 
-    const summaryEveryN = aiConfig.summaryEveryN ?? 10;
+    // Use DB config, fall back to the central constant
+    const summaryEveryNMessages = aiConfig.summaryEveryN
+      ?? AI_CONTEXT_CONFIG.SUMMARY_EVERY_N_MESSAGES;
 
-    // Find the last summary to know where we left off
-    const lastSummary = await this.prisma.conversationSummary.findFirst({
+    // Determine the cutoff point for "unsummarised" messages
+    const mostRecentSummary = await this.prisma.conversationSummary.findFirst({
       where:   { conversationId },
       orderBy: { createdAt: 'desc' },
     });
 
-    // Count client messages that have NOT been summarised yet
-    const unsummarisedCount = await this.prisma.message.count({
+    const unsummarisedClientMessageCount = await this.prisma.message.count({
       where: {
         conversationId,
         sender: 'CLIENT',
-        ...(lastSummary?.upToMessageId
-          ? { createdAt: { gt: await this.getMessageDate(lastSummary.upToMessageId) } }
+        ...(mostRecentSummary?.upToMessageId
+          ? {
+              createdAt: {
+                gt: await this.getMessageCreatedAt(mostRecentSummary.upToMessageId),
+              },
+            }
           : {}),
       },
     });
 
-    if (unsummarisedCount < summaryEveryN) return;
+    if (unsummarisedClientMessageCount < summaryEveryNMessages) return;
 
     this.logger.log(
-      `Generating summary for conv ${conversationId} (${unsummarisedCount} unsummarised msgs)`,
+      `Generating summary for conversation=${conversationId} ` +
+      `(${unsummarisedClientMessageCount} unsummarised messages)`,
     );
 
-    await this.generateSummary(conversationId, conversation.clientName, modelConfig, lastSummary?.upToMessageId ?? undefined);
+    await this.generateSummary(
+      conversationId,
+      conversation.clientName,
+      summaryModelConfig,
+      mostRecentSummary?.upToMessageId ?? undefined,
+    );
   }
 
+  /**
+   * Generates and persists a new conversation summary.
+   * Called directly by AiSummaryWorker (via the job queue).
+   */
   async generateSummary(
-    conversationId:   string,
-    clientName:       string | null,
-    modelConfig:      { summaryModelId: string; summaryMaxTokens: number },
-    afterMessageId?:  string,
+    conversationId:     string,
+    clientName:         string | null,
+    summaryModelConfig: { summaryModelId: string; summaryMaxTokens: number },
+    afterMessageId?:    string,
   ): Promise<void> {
-    // Fetch messages to summarise (everything after the last summary)
-    const afterDate = afterMessageId
-      ? await this.getMessageDate(afterMessageId)
+    const cutoffDate = afterMessageId
+      ? await this.getMessageCreatedAt(afterMessageId)
       : undefined;
 
-    const messages = await this.prisma.message.findMany({
+    const messagesToSummarise = await this.prisma.message.findMany({
       where: {
         conversationId,
-        ...(afterDate ? { createdAt: { gt: afterDate } } : {}),
+        ...(cutoffDate ? { createdAt: { gt: cutoffDate } } : {}),
       },
       orderBy: { createdAt: 'asc' },
     });
 
-    if (messages.length === 0) return;
+    if (messagesToSummarise.length === 0) return;
 
-    const contextMessages: ContextMessage[] = messages.map((m) => ({
-      sender:   this.mapSender(m.sender),
-      content:  m.content,
-      imageUrl: m.imageUrl,
+    const contextMessages: ContextMessage[] = messagesToSummarise.map((msg) => ({
+      sender:   this.mapSenderToContextRole(msg.sender),
+      content:  msg.content,
+      imageUrl: msg.imageUrl,
     }));
 
-    const prompt = this.builder.buildSummaryPrompt(contextMessages, clientName);
+    const summaryPrompt = this.promptBuilder.buildSummaryPrompt(contextMessages, clientName);
 
-    const result = await this.openRouter.complete({
-      model:       modelConfig.summaryModelId,
-      messages:    [{ role: 'user', content: prompt }],
-      maxTokens:   modelConfig.summaryMaxTokens,
-      temperature: 0.3, // Low temperature — summaries must be factual
+    const summaryResult = await this.openRouterClient.complete({
+      model:       summaryModelConfig.summaryModelId,
+      messages:    [{ role: 'user', content: summaryPrompt }],
+      maxTokens:   summaryModelConfig.summaryMaxTokens,
+      // Use the config constant — summaries must be factual, not creative
+      temperature: DATA_AI_MODEL.TEMPERATURE,
     });
 
-    const lastMsg = messages[messages.length - 1];
+    const lastSummarisedMessage = messagesToSummarise[messagesToSummarise.length - 1];
 
     await this.prisma.conversationSummary.create({
       data: {
         conversationId,
-        summary:         result.content,
-        upToMessageId:   lastMsg.id,
-        messagesCovered: messages.filter((m) => m.sender === 'CLIENT').length,
-        modelId:         result.model,
-        tokensUsed:      result.totalTokens,
+        summary:         summaryResult.content,
+        upToMessageId:   lastSummarisedMessage.id,
+        messagesCovered: messagesToSummarise.filter((m) => m.sender === 'CLIENT').length,
+        modelId:         summaryResult.model,
+        tokensUsed:      summaryResult.totalTokens,
       },
     });
 
     this.logger.log(
-      `Summary saved for conv ${conversationId} — ` +
-      `${result.totalTokens}t, model=${result.model}`,
+      `Summary saved for conversation=${conversationId} — ` +
+      `tokens=${summaryResult.totalTokens} model=${summaryResult.model}`,
     );
   }
 
-  // ─── Get latest summary ───────────────────────────────────────────────────
+  // ─── Read latest summary ──────────────────────────────────────────────────
 
   async getLatestSummary(conversationId: string): Promise<string | null> {
-    const summary = await this.prisma.conversationSummary.findFirst({
+    const latestSummary = await this.prisma.conversationSummary.findFirst({
       where:   { conversationId },
       orderBy: { createdAt: 'desc' },
     });
-    return summary?.summary ?? null;
+    return latestSummary?.summary ?? null;
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
-  private async getMessageDate(messageId: string): Promise<Date> {
-    const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
-    return msg?.createdAt ?? new Date(0);
+  private async getMessageCreatedAt(messageId: string): Promise<Date> {
+    const message = await this.prisma.message.findUnique({
+      where:  { id: messageId },
+      select: { createdAt: true },
+    });
+    return message?.createdAt ?? new Date(0);
   }
 
-  private mapSender(sender: string): ContextMessage['sender'] {
-    if (sender === 'CLIENT') return 'client';
-    if (sender === 'AI')     return 'ai';
-    if (sender === 'PAGE')   return 'page';
+  private mapSenderToContextRole(dbSender: string): ContextMessage['sender'] {
+    if (dbSender === 'CLIENT') return 'client';
+    if (dbSender === 'AI')     return 'ai';
+    if (dbSender === 'PAGE')   return 'page';
     return 'human';
   }
 }

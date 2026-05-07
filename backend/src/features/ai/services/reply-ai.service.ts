@@ -1,11 +1,13 @@
 /**
- * @file features/ai/services/reply-ai.service.ts  [queue-integrated version]
+ * @file features/ai/services/reply-ai.service.ts
  *
- * Changes from previous version:
- *   - DataAI is no longer called directly (fire-and-forget removed)
- *   - After a successful reply, enqueues ai.summarize via AiQueueProducer
- *   - resumeAiForConversation() enqueues ai.reply via queue instead of calling directly
- *   - All other logic is unchanged
+ * Orchestrates customer-facing AI replies for Facebook Messenger conversations.
+ *
+ * CHANGES:
+ *   - Model ID, max tokens, and temperature now fall back to REPLY_AI_MODEL
+ *     constants from ai-models.config.ts instead of inlined magic strings.
+ *   - MAX_CONTEXT_MESSAGES falls back to AI_CONTEXT_CONFIG constant.
+ *   - Variable names made more explicit throughout (modelId → replyModelId, etc.).
  */
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -13,6 +15,7 @@ import { PrismaService } from '../../../database/prisma.service.js';
 import { FacebookMessagingService } from '../../facebook/services/facebook-messaging.service.js';
 import { InboxEventEmitter } from '../../inbox/gateways/inbox-sse.gateway.js';
 import { AiQueueProducer } from '../../queue/producers/ai-queue.producer.js';
+import { AI_CONTEXT_CONFIG, REPLY_AI_MODEL } from '../config/ai-models.config.js';
 import { OpenRouterClient } from '../clients/openrouter.client.js';
 import {
   PromptBuilderService,
@@ -24,16 +27,16 @@ import {
 // ─── Internal types ───────────────────────────────────────────────────────────
 
 interface ParsedAiReply {
-  text:             string;
+  replyText:        string;
   imageUrls:        string[];
   shouldEscalate:   boolean;
   escalationReason: string | null;
 }
 
-interface ReplyTrigger {
-  inboundMessageId?: string;
-  inboundText?: string;
-  inboundCreatedAt?: string;
+interface ReplyJobTrigger {
+  inboundMessageId?:  string;
+  inboundText?:       string;
+  inboundCreatedAt?:  string;
 }
 
 // ─── Service ──────────────────────────────────────────────────────────────────
@@ -43,41 +46,40 @@ export class ReplyAiService {
   private readonly logger = new Logger(ReplyAiService.name);
 
   constructor(
-    private readonly prisma:      PrismaService,
-    private readonly openRouter:  OpenRouterClient,
-    private readonly builder:     PromptBuilderService,
-    private readonly messaging:   FacebookMessagingService,
-    private readonly emitter:     InboxEventEmitter,
-    // Queue producer replaces the direct DataAiService call
-    private readonly aiQueue:     AiQueueProducer,
+    private readonly prisma:            PrismaService,
+    private readonly openRouterClient:  OpenRouterClient,
+    private readonly promptBuilder:     PromptBuilderService,
+    private readonly facebookMessaging: FacebookMessagingService,
+    private readonly sseEmitter:        InboxEventEmitter,
+    private readonly aiJobQueue:        AiQueueProducer,
   ) {}
 
   // ─── Entry point (called by AiReplyWorker) ────────────────────────────────
 
-  async replyToConversation(conversationId: string, trigger?: ReplyTrigger): Promise<void> {
+  async replyToConversation(
+    conversationId: string,
+    trigger?: ReplyJobTrigger,
+  ): Promise<void> {
     try {
-      await this.doReply(conversationId, trigger);
+      await this.executeReply(conversationId, trigger);
     } catch (err) {
       this.logger.error(
-        `ReplyAI failed for conv ${conversationId}: ${(err as Error).message}`,
+        `ReplyAI failed for conversation=${conversationId}: ${(err as Error).message}`,
         (err as Error).stack,
       );
-      await this.clearNeedsReply(conversationId);
-      // Re-throw so the queue worker can mark the job as FAILED and retry
-      throw err;
+      await this.clearNeedsReplyFlag(conversationId);
+      throw err; // Re-throw so the queue worker marks the job FAILED for retry
     }
   }
 
-  // ─── Human → AI switch ────────────────────────────────────────────────────
+  // ─── Human → AI mode switch ───────────────────────────────────────────────
 
   /**
    * Called when a human agent switches back to AI mode via POST /ai/conversations/:id/resume.
    *
-   * Behaviour:
-   *   1. Switch handoverStatus to AI
-   *   2. Fetch the last message
-   *   3. If last message is from CLIENT (unanswered) → enqueue ai.reply job
-   *   4. Emit SSE conversation_updated
+   * 1. Sets handoverStatus = AI
+   * 2. If the last message is from the CLIENT (unanswered) → enqueues an ai.reply job
+   * 3. Emits SSE conversation_updated so the inbox UI updates the mode badge immediately
    */
   async resumeAiForConversation(
     conversationId: string,
@@ -88,70 +90,69 @@ export class ReplyAiService {
     });
     if (!conversation) return;
 
-    // Switch to AI mode
     await this.prisma.conversation.update({
       where: { id: conversationId },
       data:  { handoverStatus: 'AI', humanTookOverAt: null },
     });
 
-    // Fetch the most recent message
-    const lastMessage = await this.prisma.message.findFirst({
+    const mostRecentMessage = await this.prisma.message.findFirst({
       where:   { conversationId },
       orderBy: { createdAt: 'desc' },
     });
 
-    // Only enqueue a reply if the last message is from the client (unanswered)
-    if (lastMessage?.sender === 'CLIENT') {
+    // Only enqueue a reply if the last message is from the client (still unanswered)
+    if (mostRecentMessage?.sender === 'CLIENT') {
       this.logger.log(
-        `Resuming AI for conv ${conversationId} — last msg is CLIENT, enqueueing reply`,
+        `Resuming AI for conversation=${conversationId} — last message is from CLIENT, enqueueing reply`,
       );
-
       await this.prisma.conversation.update({
         where: { id: conversationId },
         data:  { needsAiReply: true },
       });
-
-      await this.aiQueue.enqueueAiReply({
+      await this.aiJobQueue.enqueueAiReply({
         conversationId,
-        inboundMessageId:  lastMessage.id,
+        inboundMessageId:  mostRecentMessage.id,
         businessProfileId: conversation.businessProfileId,
         userId,
       });
     } else {
       this.logger.log(
-        `Resuming AI for conv ${conversationId} — last msg is not CLIENT, no reply needed`,
+        `Resuming AI for conversation=${conversationId} — last message is not CLIENT, no reply needed`,
       );
     }
 
-    // Emit SSE so the inbox UI updates the mode badge immediately
-    const profile = await this.prisma.businessProfile.findUnique({
+    // Emit SSE so the inbox UI updates the conversation mode badge immediately
+    const businessProfile = await this.prisma.businessProfile.findUnique({
       where:  { id: conversation.businessProfileId },
       select: { userId: true },
     });
-
-    if (profile) {
-      this.emitter.conversationUpdated(profile.userId, {
+    if (businessProfile) {
+      this.sseEmitter.conversationUpdated(businessProfile.userId, {
         conversation: {
-          id:               conversation.id,
+          id:                conversation.id,
           businessProfileId: conversation.businessProfileId,
-          externalId:       conversation.externalId,
-          clientPsid:       conversation.clientPsid,
-          clientName:       conversation.clientName,
-          clientAvatarUrl:  conversation.clientAvatarUrl,
-          lastMessage:      conversation.lastMessage,
-          lastMessageAt:    conversation.lastMessageAt,
-          handoverStatus:   'AI',
-          unreadCount:      0,
-          updatedAt:        new Date(),
+          externalId:        conversation.externalId,
+          clientPsid:        conversation.clientPsid,
+          clientName:        conversation.clientName,
+          clientAvatarUrl:   conversation.clientAvatarUrl,
+          lastMessage:       conversation.lastMessage,
+          lastMessageAt:     conversation.lastMessageAt,
+          handoverStatus:    'AI',
+          unreadCount:       0,
+          updatedAt:         new Date(),
         },
       });
     }
   }
 
-  // ─── Core reply logic ──────────────────────────────────────────────────────
+  // ─── Core reply execution ─────────────────────────────────────────────────
 
-  private async doReply(conversationId: string, trigger?: ReplyTrigger): Promise<void> {
-    // ── 1. Load conversation with full config ──────────────────────────────
+  private async executeReply(
+    conversationId: string,
+    trigger?: ReplyJobTrigger,
+  ): Promise<void> {
+
+    // ── 1. Load the conversation with all related config ───────────────────
     const conversation = await this.prisma.conversation.findUnique({
       where:   { id: conversationId },
       include: {
@@ -168,56 +169,63 @@ export class ReplyAiService {
       },
     });
 
-    if (!conversation)                              return;
-    if (conversation.handoverStatus !== 'AI')       return;
-    if (!conversation.businessProfile.aiConfig?.autoReply) return;
+    if (!conversation)                                       return;
+    if (conversation.handoverStatus !== 'AI')               return;
+    if (!conversation.businessProfile.aiConfig?.autoReply)  return;
 
     const aiConfig    = conversation.businessProfile.aiConfig;
     const modelConfig = conversation.businessProfile.aiModelConfig;
 
-    // ── 2. Find the inbound message ────────────────────────────────────────
-    const storedInbound = await this.prisma.message.findFirst({
-      where:   { conversationId, sender: 'CLIENT' },
-      orderBy: { createdAt: 'desc' },
-    });
+    // ── 2. Resolve the inbound message to reply to ─────────────────────────
+    // Prefer the text from the job trigger (already available in memory).
+    // Fall back to a DB lookup if the trigger has no text (e.g. image-only message).
     const inboundMessage = trigger?.inboundText?.trim()
       ? {
-          id: trigger.inboundMessageId ?? `fb-${Date.now()}`,
-          content: trigger.inboundText.trim(),
-          createdAt: trigger.inboundCreatedAt ? new Date(trigger.inboundCreatedAt) : new Date(),
+          id:        trigger.inboundMessageId ?? `trigger-${Date.now()}`,
+          content:   trigger.inboundText.trim(),
+          createdAt: trigger.inboundCreatedAt
+            ? new Date(trigger.inboundCreatedAt)
+            : new Date(),
         }
-      : storedInbound;
+      : await this.prisma.message.findFirst({
+          where:   { conversationId, sender: 'CLIENT' },
+          orderBy: { createdAt: 'desc' },
+        });
 
+    // Nothing to reply to (e.g. image-only message with no caption)
     if (!inboundMessage?.content) {
-      await this.clearNeedsReply(conversationId);
+      await this.clearNeedsReplyFlag(conversationId);
       return;
     }
 
-    // ── 3. Apply reply delay ───────────────────────────────────────────────
-    const delayMs = (aiConfig.replyDelaySeconds ?? 0) * 1000;
-    if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+    // ── 3. Apply the configured reply delay ────────────────────────────────
+    const replyDelayMs = (aiConfig.replyDelaySeconds ?? 0) * 1_000;
+    if (replyDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, replyDelayMs));
 
-    // ── 4. Blocked keyword check ───────────────────────────────────────────
-    const blocked   = (aiConfig.blockedKeywords as string[]) ?? [];
-    const lowerText = inboundMessage.content.toLowerCase();
-    const hitKeyword = blocked.find((kw) => lowerText.includes(kw.toLowerCase()));
-
-    if (hitKeyword) {
-      await this.escalate(
+    // ── 4. Blocked keyword check — escalate immediately if matched ─────────
+    const blockedKeywords = (aiConfig.blockedKeywords as string[]) ?? [];
+    const lowercaseInbound = inboundMessage.content.toLowerCase();
+    const matchedKeyword = blockedKeywords.find(
+      (keyword) => lowercaseInbound.includes(keyword.toLowerCase()),
+    );
+    if (matchedKeyword) {
+      await this.escalateToHuman(
         conversationId,
         inboundMessage.id,
-        `Blocked keyword: "${hitKeyword}"`,
-        modelConfig?.replyModelId ?? 'none',
+        `Blocked keyword matched: "${matchedKeyword}"`,
+        modelConfig?.replyModelId ?? REPLY_AI_MODEL.MODEL_ID,
       );
       return;
     }
 
-    // ── 5. Build reference images ──────────────────────────────────────────
+    // ── 5. Build reference images from active ChatResources ───────────────
     const referenceImages: ReferenceImage[] = conversation.businessProfile.chatResources
-      .flatMap((r) => r.images.map((img) => ({ url: img.url, description: img.description })));
+      .flatMap((resource) =>
+        resource.images.map((image) => ({ url: image.url, description: image.description })),
+      );
 
-    // ── 6. Build business context ──────────────────────────────────────────
-    const ctx: BusinessContext = {
+    // ── 6. Build the business context object for the prompt ────────────────
+    const businessContext: BusinessContext = {
       businessName:        conversation.businessProfile.name,
       businessType:        conversation.businessProfile.businessType,
       description:         conversation.businessProfile.description,
@@ -227,257 +235,269 @@ export class ReplyAiService {
       systemPrompt:        aiConfig.systemPrompt,
       inboxInstructions:   aiConfig.inboxInstructions,
       personalizeGreeting: aiConfig.personalizeGreeting,
-      blockedKeywords:     blocked,
+      blockedKeywords,
       allowedTopics:       (aiConfig.allowedTopics as string[]) ?? [],
       escalationThreshold: aiConfig.escalationThreshold ?? 0.6,
     };
 
-    const systemPrompt = this.builder.buildReplySystemPrompt(ctx, referenceImages);
+    const replySystemPrompt = this.promptBuilder.buildReplySystemPrompt(
+      businessContext,
+      referenceImages,
+    );
 
-    // ── 7. Load summary + recent messages ──────────────────────────────────
+    // ── 7. Load latest conversation summary + recent message context ────────
     const latestSummary = await this.prisma.conversationSummary.findFirst({
       where:   { conversationId },
       orderBy: { createdAt: 'desc' },
       select:  { summary: true },
     });
 
-    const maxMsgs   = aiConfig.maxContextMessages ?? 8;
-    const recentRaw = await this.prisma.message.findMany({
+    const maxContextMessages = aiConfig.maxContextMessages ?? AI_CONTEXT_CONFIG.MAX_CONTEXT_MESSAGES;
+    const recentMessagesRaw = await this.prisma.message.findMany({
       where:   { conversationId },
       orderBy: { createdAt: 'desc' },
-      take:    maxMsgs + 1,
+      take:    maxContextMessages + 1, // +1 so we can exclude the inbound message itself
     });
 
-    const contextMsgs: ContextMessage[] = recentRaw
+    const contextMessages: ContextMessage[] = recentMessagesRaw
       .reverse()
-      .filter((m) => m.id !== inboundMessage.id)
-      .slice(-maxMsgs)
-      .map((m) => ({
-        sender:   this.mapSender(m.sender),
-        content:  m.content,
-        imageUrl: m.imageUrl,
+      .filter((msg) => msg.id !== inboundMessage.id)
+      .slice(-maxContextMessages)
+      .map((msg) => ({
+        sender:   this.mapSenderToContextRole(msg.sender),
+        content:  msg.content,
+        imageUrl: msg.imageUrl,
       }));
 
-    // ── 8. Build prompt messages ───────────────────────────────────────────
-    const messages = this.builder.buildReplyMessages(
-      systemPrompt,
+    // ── 8. Assemble the full prompt message array ──────────────────────────
+    const promptMessages = this.promptBuilder.buildReplyMessages(
+      replySystemPrompt,
       latestSummary?.summary ?? null,
-      contextMsgs,
+      contextMessages,
       inboundMessage.content,
     );
 
-    // ── 9. Call OpenRouter ─────────────────────────────────────────────────
-    const modelId     = modelConfig?.replyModelId    ?? 'anthropic/claude-3.5-haiku';
-    const maxTokens   = modelConfig?.replyMaxTokens  ?? aiConfig.maxReplyTokens ?? 400;
-    const temperature = modelConfig?.replyTemperature ?? 0.7;
+    // ── 9. Call the Reply AI model via OpenRouter ──────────────────────────
+    // Fallback order: DB model config → AI_MODELS constants
+    const replyModelId    = modelConfig?.replyModelId     ?? REPLY_AI_MODEL.MODEL_ID;
+    const replyMaxTokens  = modelConfig?.replyMaxTokens   ?? REPLY_AI_MODEL.MAX_TOKENS;
+    const replyTemperature = modelConfig?.replyTemperature ?? REPLY_AI_MODEL.TEMPERATURE;
 
-    const start = Date.now();
-
-    const result = await this.openRouter.complete({
-      model: modelId,
-      messages,
-      maxTokens,
-      temperature,
+    const replyStartTime = Date.now();
+    const openRouterResult = await this.openRouterClient.complete({
+      model:       replyModelId,
+      messages:    promptMessages,
+      maxTokens:   replyMaxTokens,
+      temperature: replyTemperature,
     });
+    const replyLatencyMs = Date.now() - replyStartTime;
 
-    const latencyMs = Date.now() - start;
+    // ── 10. Parse the raw AI output ────────────────────────────────────────
+    const parsedReply = this.parseRawAiReply(openRouterResult.content);
 
-    // ── 10. Parse and dispatch ─────────────────────────────────────────────
-    const parsed = this.parseReply(result.content);
-
-    if (parsed.shouldEscalate) {
-      await this.persistLog({
+    if (parsedReply.shouldEscalate) {
+      await this.persistAiReplyLog({
         conversationId,
         inboundMessageId: inboundMessage.id,
         decision:         'ESCALATED',
-        modelId:          result.model,
-        promptTokens:     result.promptTokens,
-        replyTokens:      result.replyTokens,
-        latencyMs,
-        escalationReason: parsed.escalationReason,
+        modelId:          openRouterResult.model,
+        promptTokens:     openRouterResult.promptTokens,
+        replyTokens:      openRouterResult.replyTokens,
+        latencyMs:        replyLatencyMs,
+        escalationReason: parsedReply.escalationReason,
       });
-      await this.escalate(
+      await this.escalateToHuman(
         conversationId,
         inboundMessage.id,
-        parsed.escalationReason ?? 'AI decided escalation',
-        result.model,
+        parsedReply.escalationReason ?? 'AI decided to escalate',
+        openRouterResult.model,
       );
       return;
     }
 
-    // ── 11. Send images ────────────────────────────────────────────────────
-    const profile = await this.prisma.businessProfile.findUnique({
+    // ── 11. Resolve business profile userId for Facebook API calls ─────────
+    const businessProfile = await this.prisma.businessProfile.findUnique({
       where:  { id: conversation.businessProfileId },
       select: { userId: true },
     });
-    if (!profile || !conversation.clientPsid) {
-      await this.clearNeedsReply(conversationId);
+    if (!businessProfile || !conversation.clientPsid) {
+      await this.clearNeedsReplyFlag(conversationId);
       return;
     }
 
-    for (const imageUrl of parsed.imageUrls) {
+    // ── 12. Send any image URLs extracted from the AI reply ────────────────
+    for (const imageUrl of parsedReply.imageUrls) {
       try {
-        const sentImage = await this.messaging.sendImageMessage(
+        const sentImageResult = await this.facebookMessaging.sendImageMessage(
           conversation.businessProfileId,
-          profile.userId,
+          businessProfile.userId,
           conversation.clientPsid,
           imageUrl,
         );
-        const imageMessage = await this.prisma.message.findUnique({
-          where: { externalId: sentImage.messageId },
+        const savedImageMessage = await this.prisma.message.findUnique({
+          where: { externalId: sentImageResult.messageId },
         });
-        if (imageMessage) {
+        if (savedImageMessage) {
           await this.prisma.message.update({
-            where: { id: imageMessage.id },
-            data:  { sender: 'AI', aiModel: result.model, aiTokensUsed: result.totalTokens },
+            where: { id: savedImageMessage.id },
+            data:  { sender: 'AI', aiModel: openRouterResult.model, aiTokensUsed: openRouterResult.totalTokens },
           });
-          this.emitter.newMessage(profile.userId, {
+          this.sseEmitter.newMessage(businessProfile.userId, {
             conversationId,
             message: {
-              id: imageMessage.id,
+              id:                 savedImageMessage.id,
               conversationId,
-              sender: 'AI',
-              content: imageMessage.content,
-              imageUrl: imageMessage.imageUrl,
-              fileUrl: imageMessage.fileUrl,
+              sender:             'AI',
+              content:            savedImageMessage.content,
+              imageUrl:           savedImageMessage.imageUrl,
+              fileUrl:            savedImageMessage.fileUrl,
               referenceImageUrls: [],
-              status: imageMessage.status,
-              externalId: imageMessage.externalId,
-              createdAt: imageMessage.createdAt,
+              status:             savedImageMessage.status,
+              externalId:         savedImageMessage.externalId,
+              createdAt:          savedImageMessage.createdAt,
             },
           });
         }
-      } catch (imgErr) {
-        this.logger.warn(`Failed to send image message: ${(imgErr as Error).message}`);
+      } catch (imageErr) {
+        this.logger.warn(
+          `Failed to send AI image message to conv=${conversationId}: ${(imageErr as Error).message}`,
+        );
       }
     }
 
-    // ── 12. Send text reply ────────────────────────────────────────────────
-    if (parsed.text.trim()) {
-      const sentMessage = await this.messaging.sendMessage(
+    // ── 13. Send the text reply ────────────────────────────────────────────
+    if (parsedReply.replyText.trim()) {
+      const sentTextResult = await this.facebookMessaging.sendMessage(
         conversation.businessProfileId,
-        profile.userId,
+        businessProfile.userId,
         conversation.clientPsid,
-        parsed.text.trim(),
+        parsedReply.replyText.trim(),
       );
-
       await this.prisma.message.updateMany({
-        where: { externalId: sentMessage.messageId },
-        data:  { sender: 'AI', aiModel: result.model, aiTokensUsed: result.totalTokens },
+        where: { externalId: sentTextResult.messageId },
+        data:  { sender: 'AI', aiModel: openRouterResult.model, aiTokensUsed: openRouterResult.totalTokens },
       });
-      const replyMessage = await this.prisma.message.findUnique({
-        where: { externalId: sentMessage.messageId },
+      const savedTextMessage = await this.prisma.message.findUnique({
+        where: { externalId: sentTextResult.messageId },
       });
-      if (replyMessage) {
-        this.emitter.newMessage(profile.userId, {
+      if (savedTextMessage) {
+        this.sseEmitter.newMessage(businessProfile.userId, {
           conversationId,
           message: {
-            id: replyMessage.id,
+            id:                 savedTextMessage.id,
             conversationId,
-            sender: 'AI',
-            content: replyMessage.content,
-            imageUrl: replyMessage.imageUrl,
-            fileUrl: replyMessage.fileUrl,
+            sender:             'AI',
+            content:            savedTextMessage.content,
+            imageUrl:           savedTextMessage.imageUrl,
+            fileUrl:            savedTextMessage.fileUrl,
             referenceImageUrls: [],
-            status: replyMessage.status,
-            externalId: replyMessage.externalId,
-            createdAt: replyMessage.createdAt,
+            status:             savedTextMessage.status,
+            externalId:         savedTextMessage.externalId,
+            createdAt:          savedTextMessage.createdAt,
           },
         });
       }
     }
 
-    // ── 13. Persist audit log ──────────────────────────────────────────────
-    await this.persistLog({
+    // ── 14. Persist the audit log entry ────────────────────────────────────
+    await this.persistAiReplyLog({
       conversationId,
       inboundMessageId: inboundMessage.id,
       decision:         'REPLIED',
-      modelId:          result.model,
-      promptTokens:     result.promptTokens,
-      replyTokens:      result.replyTokens,
-      latencyMs,
-      replyText:        parsed.text.trim() || null,
+      modelId:          openRouterResult.model,
+      promptTokens:     openRouterResult.promptTokens,
+      replyTokens:      openRouterResult.replyTokens,
+      latencyMs:        replyLatencyMs,
+      replyText:        parsedReply.replyText.trim() || null,
     });
 
-    // ── 14. Clear flag ─────────────────────────────────────────────────────
-    await this.clearNeedsReply(conversationId);
+    // ── 15. Clear the needsAiReply flag ────────────────────────────────────
+    await this.clearNeedsReplyFlag(conversationId);
 
-    // ── 15. Enqueue DataAI summary via queue (replaces fire-and-forget) ────
-    await this.aiQueue.enqueueAiSummarize({
+    // ── 16. Enqueue DataAI summarisation job (background, non-blocking) ────
+    await this.aiJobQueue.enqueueAiSummarize({
       conversationId,
       businessProfileId: conversation.businessProfileId,
     });
 
     this.logger.log(
-      `AI reply sent — conv=${conversationId} ` +
-      `${result.totalTokens}t ${latencyMs}ms model=${result.model}`,
+      `AI reply sent — conversation=${conversationId} ` +
+      `tokens=${openRouterResult.totalTokens} latency=${replyLatencyMs}ms model=${openRouterResult.model}`,
     );
   }
 
   // ─── Escalation ───────────────────────────────────────────────────────────
 
-  private async escalate(
-    conversationId:   string,
-    inboundMessageId: string,
-    reason:           string,
-    modelId:          string,
+  private async escalateToHuman(
+    conversationId:    string,
+    inboundMessageId:  string,
+    escalationReason:  string,
+    aiModelId:         string,
   ): Promise<void> {
-    const conversation = await this.prisma.conversation.update({
+    const updatedConversation = await this.prisma.conversation.update({
       where:   { id: conversationId },
       data:    { handoverStatus: 'HUMAN', humanTookOverAt: new Date(), needsAiReply: false },
       include: { businessProfile: { select: { userId: true } } },
     });
 
-    this.logger.log(`Conv ${conversationId} escalated → HUMAN: ${reason}`);
+    this.logger.log(
+      `Conversation=${conversationId} escalated to HUMAN — reason: ${escalationReason}`,
+    );
 
-    this.emitter.conversationUpdated(conversation.businessProfile.userId, {
+    this.sseEmitter.conversationUpdated(updatedConversation.businessProfile.userId, {
       conversation: {
-        id:               conversation.id,
-        businessProfileId: conversation.businessProfileId,
-        externalId:       conversation.externalId,
-        clientPsid:       conversation.clientPsid,
-        clientName:       conversation.clientName,
-        clientAvatarUrl:  conversation.clientAvatarUrl,
-        lastMessage:      conversation.lastMessage,
-        lastMessageAt:    conversation.lastMessageAt,
-        handoverStatus:   'HUMAN',
-        unreadCount:      1,
-        updatedAt:        conversation.updatedAt,
+        id:                updatedConversation.id,
+        businessProfileId: updatedConversation.businessProfileId,
+        externalId:        updatedConversation.externalId,
+        clientPsid:        updatedConversation.clientPsid,
+        clientName:        updatedConversation.clientName,
+        clientAvatarUrl:   updatedConversation.clientAvatarUrl,
+        lastMessage:       updatedConversation.lastMessage,
+        lastMessageAt:     updatedConversation.lastMessageAt,
+        handoverStatus:    'HUMAN',
+        unreadCount:       1,
+        updatedAt:         updatedConversation.updatedAt,
       },
     });
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
-  private parseReply(raw: string): ParsedAiReply {
-    const trimmed = raw.trim();
+  /**
+   * Parses the raw AI model output.
+   * Handles two response formats:
+   *   "ESCALATE: <reason>"      → escalation signal
+   *   "[IMAGE: https://...]"    → embedded image reference (extracted and removed)
+   */
+  private parseRawAiReply(rawOutput: string): ParsedAiReply {
+    const trimmedOutput = rawOutput.trim();
 
-    if (trimmed.toUpperCase().startsWith('ESCALATE:')) {
+    if (trimmedOutput.toUpperCase().startsWith('ESCALATE:')) {
       return {
-        text:             '',
+        replyText:        '',
         imageUrls:        [],
         shouldEscalate:   true,
-        escalationReason: trimmed.slice('ESCALATE:'.length).trim() || 'AI escalation',
+        escalationReason: trimmedOutput.slice('ESCALATE:'.length).trim() || 'AI escalation',
       };
     }
 
-    const imagePattern = /\[IMAGE:\s*(https?:\/\/[^\]]+)\]/gi;
-    const imageUrls:    string[] = [];
+    const imageTagPattern = /\[IMAGE:\s*(https?:\/\/[^\]]+)\]/gi;
+    const extractedImageUrls: string[] = [];
     let match: RegExpExecArray | null;
 
-    while ((match = imagePattern.exec(trimmed)) !== null) {
-      imageUrls.push(match[1].trim());
+    while ((match = imageTagPattern.exec(trimmedOutput)) !== null) {
+      extractedImageUrls.push(match[1].trim());
     }
 
     return {
-      text:             trimmed.replace(imagePattern, '').trim(),
-      imageUrls,
+      replyText:        trimmedOutput.replace(imageTagPattern, '').trim(),
+      imageUrls:        extractedImageUrls,
       shouldEscalate:   false,
       escalationReason: null,
     };
   }
 
-  private async persistLog(data: {
+  private async persistAiReplyLog(data: {
     conversationId:    string;
     inboundMessageId?: string;
     decision:          string;
@@ -491,31 +511,31 @@ export class ReplyAiService {
   }): Promise<void> {
     await this.prisma.aiReplyLog.create({
       data: {
-        conversationId:    data.conversationId,
-        inboundMessageId:  data.inboundMessageId ?? null,
-        decision:          data.decision as never,
-        modelId:           data.modelId,
-        promptTokens:      data.promptTokens ?? 0,
-        replyTokens:       data.replyTokens  ?? 0,
-        latencyMs:         data.latencyMs    ?? 0,
-        replyText:         data.replyText    ?? null,
-        escalationReason:  data.escalationReason ?? null,
-        errorMessage:      data.errorMessage     ?? null,
+        conversationId:   data.conversationId,
+        inboundMessageId: data.inboundMessageId ?? null,
+        decision:         data.decision as never,
+        modelId:          data.modelId,
+        promptTokens:     data.promptTokens     ?? 0,
+        replyTokens:      data.replyTokens      ?? 0,
+        latencyMs:        data.latencyMs         ?? 0,
+        replyText:        data.replyText         ?? null,
+        escalationReason: data.escalationReason  ?? null,
+        errorMessage:     data.errorMessage      ?? null,
       },
     });
   }
 
-  private async clearNeedsReply(conversationId: string): Promise<void> {
+  private async clearNeedsReplyFlag(conversationId: string): Promise<void> {
     await this.prisma.conversation.update({
       where: { id: conversationId },
       data:  { needsAiReply: false },
     });
   }
 
-  private mapSender(sender: string): ContextMessage['sender'] {
-    if (sender === 'CLIENT') return 'client';
-    if (sender === 'AI')     return 'ai';
-    if (sender === 'PAGE')   return 'page';
+  private mapSenderToContextRole(dbSender: string): ContextMessage['sender'] {
+    if (dbSender === 'CLIENT') return 'client';
+    if (dbSender === 'AI')     return 'ai';
+    if (dbSender === 'PAGE')   return 'page';
     return 'human';
   }
 }

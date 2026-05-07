@@ -1,15 +1,20 @@
 /**
  * @file features/inbox/hooks/use-inbox-sse.ts
  *
- * Connects to the SSE endpoint and dispatches typed events to callbacks.
- * Handles automatic reconnection (EventSource does this natively).
+ * Opens a Server-Sent Events connection to the NestJS backend inbox stream
+ * and dispatches typed events to caller-provided callbacks.
  *
- * Usage:
- *   useInboxSse(userId, {
- *     onNewMessage: (payload) => { ... },
- *     onConversationUpdated: (payload) => { ... },
- *     onSyncComplete: (payload) => { ... },
- *   });
+ * EventSource reconnects automatically on network errors (browser behaviour).
+ *
+ * CHANGES:
+ *   - SSE URL now uses NEXT_PUBLIC_API_URL environment variable instead of a
+ *     relative path. A relative `/api/...` path hits Next.js API routes, not
+ *     the NestJS backend. The full backend URL is required for SSE.
+ *   - Variable names made more explicit.
+ *
+ * Required env var:
+ *   NEXT_PUBLIC_API_URL=https://api.vendeoai.com/api   (production)
+ *   NEXT_PUBLIC_API_URL=http://localhost:5000/api       (development)
  */
 
 "use client";
@@ -23,57 +28,68 @@ import type {
 } from "../types/inbox.types";
 
 interface InboxSseCallbacks {
-  onNewMessage?: (payload: NewMessageSsePayload) => void;
+  onNewMessage?:          (payload: NewMessageSsePayload)          => void;
   onConversationUpdated?: (payload: ConversationUpdatedSsePayload) => void;
-  onSyncComplete?: (payload: SyncCompleteSsePayload) => void;
+  onSyncComplete?:        (payload: SyncCompleteSsePayload)        => void;
 }
 
-export function useInboxSse(callbacks: InboxSseCallbacks): void {
-  // Keep a stable ref so the effect doesn't re-run when callbacks change
-  const cbRef = useRef(callbacks);
+/**
+ * The NestJS backend URL for SSE.
+ * NEXT_PUBLIC_API_URL must include the /api prefix.
+ * Example: http://localhost:5000/api
+ */
+const BACKEND_API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000/api';
 
+export function useInboxSse(callbacks: InboxSseCallbacks): void {
+  // Stable ref so the effect doesn't re-run when callbacks change identity
+  const callbacksRef = useRef(callbacks);
   useEffect(() => {
-    cbRef.current = callbacks;
+    callbacksRef.current = callbacks;
   }, [callbacks]);
 
   useEffect(() => {
-    const url = `/api/inbox/events`;
-    const source = new EventSource(url, { withCredentials: true });
+    const sseUrl = `${BACKEND_API_BASE_URL}/inbox/events`;
+    const eventSource = new EventSource(sseUrl, { withCredentials: true });
 
-    source.onmessage = (event: MessageEvent<string>) => {
+    eventSource.onmessage = (rawEvent: MessageEvent<string>) => {
       try {
-        const parsed: SseEvent = JSON.parse(event.data);
+        const parsedEvent: SseEvent = JSON.parse(rawEvent.data);
 
-        switch (parsed.type) {
-          case "new_message":
-            cbRef.current.onNewMessage?.(parsed.data as NewMessageSsePayload);
-            break;
-          case "conversation_updated":
-            cbRef.current.onConversationUpdated?.(
-              parsed.data as ConversationUpdatedSsePayload,
+        switch (parsedEvent.type) {
+          case 'new_message':
+            callbacksRef.current.onNewMessage?.(
+              parsedEvent.data as NewMessageSsePayload,
             );
             break;
-          case "sync_complete":
-            cbRef.current.onSyncComplete?.(
-              parsed.data as SyncCompleteSsePayload,
+
+          case 'conversation_updated':
+            callbacksRef.current.onConversationUpdated?.(
+              parsedEvent.data as ConversationUpdatedSsePayload,
             );
             break;
-          case "ping":
-            // Keepalive — no action needed
+
+          case 'sync_complete':
+            callbacksRef.current.onSyncComplete?.(
+              parsedEvent.data as SyncCompleteSsePayload,
+            );
+            break;
+
+          case 'ping':
+            // Server keepalive — no action needed
             break;
         }
       } catch {
-        // Malformed event — ignore
+        // Malformed JSON event — ignore silently
       }
     };
 
-    source.onerror = () => {
-      // EventSource reconnects automatically after error
-      // Log is noisy in dev so intentionally omitted
+    eventSource.onerror = () => {
+      // EventSource will automatically attempt to reconnect — no manual action needed
     };
 
     return () => {
-      source.close();
+      eventSource.close();
     };
-  }, []);
+  }, []); // Empty deps — connect once, callbacks accessed via ref
 }

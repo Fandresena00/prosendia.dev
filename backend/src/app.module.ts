@@ -2,15 +2,17 @@
  * @file src/app.module.ts
  * @description Root application module.
  *
- * Global infrastructure via DI tokens (testable, overridable):
- *   APP_FILTER ×2 → AllExceptionsFilter (outer), HttpExceptionFilter (inner)
- *   APP_GUARD     → ThrottlerBehindProxyGuard
- *   APP_PIPE      → ValidationPipe
+ * CHANGE: Added ScheduleModule.forRoot() to enable @Cron decorators.
+ * Required by TempFileCleanupService (inbox temp file cleanup every 10 min).
+ *
+ * Install the package if not already present:
+ *   pnpm add @nestjs/schedule
  */
 
 import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_PIPE } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
@@ -40,9 +42,11 @@ import { UsersModule } from './features/users/users.module.js';
       load: [envConfig],
       validationSchema: ValidationSchema,
     }),
+    // Enables @Cron, @Interval, @Timeout decorators across all modules
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot({
       throttlers: [
-        { name: 'short', ttl: 60_000, limit: 100 },
+        { name: 'short',  ttl: 60_000,  limit: 100 },
         { name: 'medium', ttl: 600_000, limit: 500 },
       ],
       errorMessage: 'Too many requests, please try again later.',
@@ -54,7 +58,6 @@ import { UsersModule } from './features/users/users.module.js';
     FacebookModule,
     InboxEventsModule,
     QueueModule,
-    FacebookModule,
     AiModule,
     InboxModule,
   ],

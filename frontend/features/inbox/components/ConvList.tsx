@@ -1,5 +1,15 @@
 'use client';
 
+/**
+ * @file features/inbox/components/ConvList.tsx
+ *
+ * CHANGES:
+ *   - Account switcher: replaced color initials div with Avatar component
+ *     to display the Facebook page profile picture when available.
+ *   - Falls back to color + initials if avatarUrl is missing (new pages, etc.).
+ */
+
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,7 +23,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
 import { Bot, MoreHorizontal } from 'lucide-react';
 import type { Account, Conv } from '../types/inbox.types';
@@ -55,27 +64,20 @@ export function ConvList({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="w-full flex items-center gap-2.5 rounded-xl border border-border/50 bg-secondary/30 px-3 py-2 hover:bg-accent/60 transition-colors">
-                <div
-                  className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${activeAcc.color}`}
-                >
-                  {activeAcc.initials}
-                </div>
+                {/* FIX: Show Facebook page avatar when available */}
+                <PageAvatar
+                  name={activeAcc.name}
+                  initials={activeAcc.initials}
+                  avatarUrl={activeAcc.avatarUrl}
+                  colorClass={activeAcc.color}
+                  size="sm"
+                />
                 <div className="flex-1 text-left min-w-0">
                   <p className="text-xs font-semibold truncate">{activeAcc.name}</p>
                   <p className="text-[10px] text-muted-foreground">{activeAcc.pageType}</p>
                 </div>
                 {activeAcc.verified && (
-                  <svg
-                    className="h-3.5 w-3.5 text-primary shrink-0"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
+                  <VerifiedBadge />
                 )}
                 <IconChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               </button>
@@ -92,11 +94,13 @@ export function ConvList({
                   onClick={() => onChangeAcc(acc)}
                   className="gap-2.5 cursor-pointer"
                 >
-                  <div
-                    className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${acc.color}`}
-                  >
-                    {acc.initials}
-                  </div>
+                  <PageAvatar
+                    name={acc.name}
+                    initials={acc.initials}
+                    avatarUrl={acc.avatarUrl}
+                    colorClass={acc.color}
+                    size="sm"
+                  />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate">{acc.name}</p>
                     <p className="text-[10px] text-muted-foreground">{acc.pageType}</p>
@@ -134,32 +138,32 @@ export function ConvList({
               Aucune conversation trouvée
             </p>
           ) : (
-            convs.map((c) => {
-              const isSel = selected?.id === c.id;
+            convs.map((conv) => {
+              const isSelected = selected?.id === conv.id;
               return (
                 <button
-                  key={c.id}
-                  onClick={() => onSelect(c)}
+                  key={conv.id}
+                  onClick={() => onSelect(conv)}
                   className={`w-full text-left rounded-xl p-2.5 transition-all ${
-                    isSel ? 'bg-primary/8' : 'hover:bg-accent/60'
+                    isSelected ? 'bg-primary/8' : 'hover:bg-accent/60'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    {/* Avatar */}
+                    {/* Client avatar */}
                     <div className="relative shrink-0">
                       <Avatar className="h-10 w-10">
-                        <AvatarImage src={c.avatarUrl ?? undefined} alt={c.client} />
+                        <AvatarImage src={conv.avatarUrl ?? undefined} alt={conv.client} />
                         <AvatarFallback
                           className={`text-sm font-bold ${
-                            isSel
+                            isSelected
                               ? 'bg-primary/20 text-primary'
                               : 'bg-secondary text-foreground'
                           }`}
                         >
-                          {c.initials}
+                          {conv.initials}
                         </AvatarFallback>
                       </Avatar>
-                      {c.online && (
+                      {conv.online && (
                         <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 border-2 border-background" />
                       )}
                     </div>
@@ -167,47 +171,39 @@ export function ConvList({
                     {/* Content */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline justify-between gap-1">
-                        <p
-                          className={`text-xs truncate ${
-                            c.unread > 0 ? 'font-bold' : 'font-medium'
-                          }`}
-                        >
-                          {c.client}
+                        <p className={`text-xs truncate ${conv.unread > 0 ? 'font-bold' : 'font-medium'}`}>
+                          {conv.client}
                         </p>
-                        <span
-                          className={`text-[10px] shrink-0 ${
-                            c.unread > 0 ? 'text-primary font-semibold' : 'text-muted-foreground'
-                          }`}
-                        >
-                          {c.time}
+                        <span className={`text-[10px] shrink-0 ${
+                          conv.unread > 0 ? 'text-primary font-semibold' : 'text-muted-foreground'
+                        }`}>
+                          {conv.time}
                         </span>
                       </div>
 
                       <div className="flex items-center justify-between gap-1 mt-0.5">
-                        <p
-                          className={`text-[11px] truncate flex-1 ${
-                            c.unread > 0
-                              ? 'text-foreground font-medium'
-                              : 'text-muted-foreground'
-                          }`}
-                        >
-                          {c.lastMessage}
+                        <p className={`text-[11px] truncate flex-1 ${
+                          conv.unread > 0
+                            ? 'text-foreground font-medium'
+                            : 'text-muted-foreground'
+                        }`}>
+                          {conv.lastMessage}
                         </p>
                         <div className="flex items-center gap-1 shrink-0 ml-1">
-                          {c.unread > 0 && (
+                          {conv.unread > 0 && (
                             <span className="h-4 min-w-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center px-1">
-                              {c.unread}
+                              {conv.unread}
                             </span>
                           )}
                           <Badge
-                            variant={c.mode === 'ai' ? 'default' : 'outline'}
+                            variant={conv.mode === 'ai' ? 'default' : 'outline'}
                             className={`text-[9px] h-4 px-1 gap-0.5 ${
-                              c.mode === 'human'
+                              conv.mode === 'human'
                                 ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/5'
                                 : ''
                             }`}
                           >
-                            {c.mode === 'ai' ? (
+                            {conv.mode === 'ai' ? (
                               <><Bot className="h-2.5 w-2.5" /> IA</>
                             ) : (
                               'Humain'
@@ -224,6 +220,56 @@ export function ConvList({
         </div>
       </ScrollArea>
     </div>
+  );
+}
+
+// ─── Sub-components ────────────────────────────────────────────────────────────
+
+/**
+ * Facebook page avatar — shows the page profile picture when available,
+ * falls back to a color-coded initials div.
+ */
+function PageAvatar({
+  name,
+  initials,
+  avatarUrl,
+  colorClass,
+  size = 'sm',
+}: {
+  name:        string;
+  initials:    string;
+  avatarUrl?:  string;
+  colorClass:  string;
+  size?:       'sm' | 'md';
+}) {
+  const dimension = size === 'sm' ? 'h-7 w-7' : 'h-9 w-9';
+  const textSize  = size === 'sm' ? 'text-xs' : 'text-sm';
+
+  return (
+    <Avatar className={`${dimension} shrink-0`}>
+      <AvatarImage src={avatarUrl} alt={name} />
+      <AvatarFallback
+        className={`${textSize} font-bold ${colorClass}`}
+      >
+        {initials}
+      </AvatarFallback>
+    </Avatar>
+  );
+}
+
+function VerifiedBadge() {
+  return (
+    <svg
+      className="h-3.5 w-3.5 text-primary shrink-0"
+      viewBox="0 0 20 20"
+      fill="currentColor"
+    >
+      <path
+        fillRule="evenodd"
+        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
+        clipRule="evenodd"
+      />
+    </svg>
   );
 }
 
