@@ -100,7 +100,7 @@ async function bootstrap(): Promise<void> {
   });
 
   app.setGlobalPrefix('api');
-  await app.listen(port || 5000);
+  await app.listen(port);
 
   logger.log(`🚀 Server at http://localhost:${port}/api`);
   logger.log(`🌍 Environment: ${nodeEnv}`);
