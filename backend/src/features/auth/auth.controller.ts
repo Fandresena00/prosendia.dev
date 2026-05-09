@@ -58,7 +58,7 @@ export class AuthController {
     return {
       httpOnly: true,
       secure: this.isProduction,
-      sameSite: 'lax',
+      sameSite: 'none',
     };
   }
 

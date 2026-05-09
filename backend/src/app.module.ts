@@ -10,7 +10,10 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { CacheModule } from './common/cache/cache.module.js';
-import { AllExceptionsFilter, HttpExceptionFilter } from './common/filters/http-exception.filter.js';
+import {
+  AllExceptionsFilter,
+  HttpExceptionFilter,
+} from './common/filters/http-exception.filter.js';
 import { ThrottlerBehindProxyGuard } from './common/guards/throttler-behind-proxy.guard.js';
 import envConfig from './config/env.config.js';
 import { ValidationSchema } from './config/validation.js';
@@ -25,19 +28,46 @@ import { UsersModule } from './features/users/users.module.js';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, cache: true, envFilePath: '.env', load: [envConfig], validationSchema: ValidationSchema }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      cache: true,
+      envFilePath: '.env',
+      load: [envConfig],
+      validationSchema: ValidationSchema,
+    }),
     ScheduleModule.forRoot(),
-    ThrottlerModule.forRoot({ throttlers: [{ name: 'short', ttl: 60_000, limit: 100 }, { name: 'medium', ttl: 600_000, limit: 500 }], errorMessage: 'Too many requests.' }),
-    CacheModule, PrismaModule, UsersModule, AuthModule,
-    FacebookModule, InboxEventsModule, QueueModule, AiModule, InboxModule,
+    ThrottlerModule.forRoot({
+      throttlers: [
+        { name: 'short', ttl: 60_000, limit: 100 },
+        { name: 'medium', ttl: 600_000, limit: 500 },
+      ],
+      errorMessage: 'Too many requests.',
+    }),
+    CacheModule,
+    PrismaModule,
+    UsersModule,
+    AuthModule,
+    FacebookModule,
+    InboxEventsModule,
+    QueueModule,
+    AiModule,
+    InboxModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_FILTER, useClass: HttpExceptionFilter },
-    { provide: APP_GUARD,  useClass: ThrottlerBehindProxyGuard },
-    { provide: APP_PIPE,   useValue: new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, transformOptions: { enableImplicitConversion: true } }) },
+    { provide: APP_GUARD, useClass: ThrottlerBehindProxyGuard },
+    {
+      provide: APP_PIPE,
+      useValue: new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+        transformOptions: { enableImplicitConversion: true },
+      }),
+    },
   ],
 })
 export class AppModule {}
