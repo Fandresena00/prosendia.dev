@@ -1,95 +1,40 @@
+"use client";
 /**
  * @file features/inbox/hooks/use-inbox-sse.ts
- *
- * Opens a Server-Sent Events connection to the NestJS backend inbox stream
- * and dispatches typed events to caller-provided callbacks.
- *
- * EventSource reconnects automatically on network errors (browser behaviour).
- *
- * CHANGES:
- *   - SSE URL now uses NEXT_PUBLIC_API_URL environment variable instead of a
- *     relative path. A relative `/api/...` path hits Next.js API routes, not
- *     the NestJS backend. The full backend URL is required for SSE.
- *   - Variable names made more explicit.
- *
- * Required env var:
- *   NEXT_PUBLIC_API_URL=https://api.vendeoai.com/api   (production)
- *   NEXT_PUBLIC_API_URL=http://localhost:5000/api       (development)
+ * CHANGES: Added onConnect/onError for SSE status. URL uses NEXT_PUBLIC_API_URL.
  */
-
-"use client";
-
 import { useEffect, useRef } from "react";
 import type {
-  ConversationUpdatedSsePayload,
-  NewMessageSsePayload,
-  SseEvent,
-  SyncCompleteSsePayload,
+  ConversationUpdatedSsePayload, NewMessageSsePayload,
+  SseEvent, SyncCompleteSsePayload,
 } from "../types/inbox.types";
 
 interface InboxSseCallbacks {
-  onNewMessage?:          (payload: NewMessageSsePayload)          => void;
-  onConversationUpdated?: (payload: ConversationUpdatedSsePayload) => void;
-  onSyncComplete?:        (payload: SyncCompleteSsePayload)        => void;
+  onConnect?:             () => void;
+  onError?:               () => void;
+  onNewMessage?:          (p: NewMessageSsePayload) => void;
+  onConversationUpdated?: (p: ConversationUpdatedSsePayload) => void;
+  onSyncComplete?:        (p: SyncCompleteSsePayload) => void;
 }
 
-/**
- * The NestJS backend URL for SSE.
- * NEXT_PUBLIC_API_URL must include the /api prefix.
- * Example: http://localhost:5000/api
- */
-const BACKEND_API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000/api';
+const BACKEND_API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
 
 export function useInboxSse(callbacks: InboxSseCallbacks): void {
-  // Stable ref so the effect doesn't re-run when callbacks change identity
-  const callbacksRef = useRef(callbacks);
-  useEffect(() => {
-    callbacksRef.current = callbacks;
-  }, [callbacks]);
+  const cbRef = useRef(callbacks);
+  useEffect(() => { cbRef.current = callbacks; }, [callbacks]);
 
   useEffect(() => {
-    const sseUrl = `${BACKEND_API_BASE_URL}/inbox/events`;
-    const eventSource = new EventSource(sseUrl, { withCredentials: true });
-
-    eventSource.onmessage = (rawEvent: MessageEvent<string>) => {
+    const source = new EventSource(`${BACKEND_API_BASE_URL}/inbox/events`, { withCredentials: true });
+    source.onopen    = () => cbRef.current.onConnect?.();
+    source.onerror   = () => cbRef.current.onError?.();
+    source.onmessage = (e: MessageEvent<string>) => {
       try {
-        const parsedEvent: SseEvent = JSON.parse(rawEvent.data);
-
-        switch (parsedEvent.type) {
-          case 'new_message':
-            callbacksRef.current.onNewMessage?.(
-              parsedEvent.data as NewMessageSsePayload,
-            );
-            break;
-
-          case 'conversation_updated':
-            callbacksRef.current.onConversationUpdated?.(
-              parsedEvent.data as ConversationUpdatedSsePayload,
-            );
-            break;
-
-          case 'sync_complete':
-            callbacksRef.current.onSyncComplete?.(
-              parsedEvent.data as SyncCompleteSsePayload,
-            );
-            break;
-
-          case 'ping':
-            // Server keepalive — no action needed
-            break;
-        }
-      } catch {
-        // Malformed JSON event — ignore silently
-      }
+        const p: SseEvent = JSON.parse(e.data);
+        if (p.type === "new_message")          cbRef.current.onNewMessage?.(p.data as NewMessageSsePayload);
+        else if (p.type === "conversation_updated") cbRef.current.onConversationUpdated?.(p.data as ConversationUpdatedSsePayload);
+        else if (p.type === "sync_complete")   cbRef.current.onSyncComplete?.(p.data as SyncCompleteSsePayload);
+      } catch { /* ignore */ }
     };
-
-    eventSource.onerror = () => {
-      // EventSource will automatically attempt to reconnect — no manual action needed
-    };
-
-    return () => {
-      eventSource.close();
-    };
-  }, []); // Empty deps — connect once, callbacks accessed via ref
+    return () => source.close();
+  }, []);
 }

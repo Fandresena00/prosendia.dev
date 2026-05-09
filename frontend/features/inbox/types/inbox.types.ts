@@ -1,17 +1,16 @@
 /**
  * @file features/inbox/types/inbox.types.ts
  *
- * All types for the inbox feature.
- *
  * CHANGES:
- *   - Account: added optional `avatarUrl` for Facebook page profile pictures.
+ *   - MsgKind: added 'video' and 'audio' for Facebook media messages.
+ *   - VideoAttachment and AudioAttachment interfaces added.
+ *   - Msg: added video and audio optional fields.
+ *   - MessageApiResponse: fileUrl is now used for videos, audio, and documents.
  */
-
-// ─── Core enums ───────────────────────────────────────────────────────────────
 
 export type MsgSender      = 'client' | 'ai' | 'human' | 'page';
 export type ConvMode       = 'ai' | 'human';
-export type MsgKind        = 'text' | 'photos' | 'file';
+export type MsgKind        = 'text' | 'photos' | 'video' | 'audio' | 'file';
 export type HandoverStatus = 'AI' | 'HUMAN' | 'RESOLVED';
 
 // ─── Attachments ──────────────────────────────────────────────────────────────
@@ -19,17 +18,27 @@ export type HandoverStatus = 'AI' | 'HUMAN' | 'RESOLVED';
 export interface PhotoAttachment {
   kind:       'photo';
   name:       string;
-  /** blob: URL (local pick) or https: URL (from backend) */
   objectUrl?: string;
   gradient:   string;
 }
 
 export interface FileAttachment {
-  kind:        'file';
-  name:        string;
-  size?:       string;
-  /** blob: URL for upload preview */
-  objectUrl?:  string;
+  kind:       'file';
+  name:       string;
+  size?:      string;
+  objectUrl?: string;
+}
+
+export interface VideoAttachment {
+  /** Public URL of the downloaded video file (served from our backend). */
+  url:           string;
+  /** Optional thumbnail — not always available from Facebook. */
+  thumbnailUrl?: string;
+}
+
+export interface AudioAttachment {
+  /** Public URL of the downloaded audio file (served from our backend). */
+  url: string;
 }
 
 // ─── Photo preset ─────────────────────────────────────────────────────────────
@@ -41,31 +50,30 @@ export interface PresetPhoto {
 }
 
 export interface PhotoPreset {
-  /** Backend ChatResource UUID */
-  id:                   string;
-  name:                 string;
-  description:          string;
-  photos:               PresetPhoto[];
-  /** Permanent backend URLs — used when sending to Facebook */
-  referenceImageUrls?:  string[];
+  id:                  string;
+  name:                string;
+  description:         string;
+  photos:              PresetPhoto[];
+  referenceImageUrls?: string[];
 }
 
 // ─── Message ──────────────────────────────────────────────────────────────────
 
 export interface Msg {
-  /** Backend UUID or local temp ID */
-  id:           string;
-  sender:       MsgSender;
-  time:         string;
-  date:         string;
-  kind:         MsgKind;
-  content?:     string;
-  photos?:      PhotoAttachment[];
-  file?:        FileAttachment;
-  pending?:     boolean;
-  failed?:      boolean;
-  reactions?:   string[];
-  externalId?:  string | null;
+  id:         string;
+  sender:     MsgSender;
+  time:       string;
+  date:       string;
+  kind:       MsgKind;
+  content?:   string;
+  photos?:    PhotoAttachment[];
+  video?:     VideoAttachment;
+  audio?:     AudioAttachment;
+  file?:      FileAttachment;
+  pending?:   boolean;
+  failed?:    boolean;
+  reactions?: string[];
+  externalId?: string | null;
 }
 
 // ─── Conversation ─────────────────────────────────────────────────────────────
@@ -86,19 +94,17 @@ export interface Conv {
   handoverStatus:   HandoverStatus;
 }
 
-// ─── Account (Facebook Page) ──────────────────────────────────────────────────
+// ─── Account ──────────────────────────────────────────────────────────────────
 
 export interface Account {
-  /** businessProfileId */
-  id:          string;
-  name:        string;
-  initials:    string;
-  color:       string;
-  pageType:    string;
-  verified:    boolean;
-  pageId:      string;
-  /** Facebook page profile picture URL (computed from CDN) */
-  avatarUrl?:  string;
+  id:         string;
+  name:       string;
+  initials:   string;
+  color:      string;
+  pageType:   string;
+  verified:   boolean;
+  pageId:     string;
+  avatarUrl?: string;
 }
 
 // ─── API response shapes ──────────────────────────────────────────────────────
@@ -122,7 +128,9 @@ export interface MessageApiResponse {
   conversationId:      string;
   sender:              string;
   content:             string | null;
+  /** URL for image and sticker attachments. */
   imageUrl:            string | null;
+  /** URL for video, audio, and document attachments. */
   fileUrl:             string | null;
   referenceImageUrls:  string[];
   status:              string;
@@ -131,9 +139,9 @@ export interface MessageApiResponse {
 }
 
 export interface MessagesPageApiResponse {
-  messages:    MessageApiResponse[];
-  nextCursor:  string | null;
-  hasMore:     boolean;
+  messages:   MessageApiResponse[];
+  nextCursor: string | null;
+  hasMore:    boolean;
 }
 
 // ─── SSE ──────────────────────────────────────────────────────────────────────
@@ -161,9 +169,9 @@ export interface ConversationUpdatedSsePayload {
 }
 
 export interface SyncCompleteSsePayload {
-  businessProfileId:  string;
-  newMessages:        number;
-  newConversations:   number;
+  businessProfileId: string;
+  newMessages:       number;
+  newConversations:  number;
 }
 
 export interface ReferencePresetApiResponse {
@@ -177,6 +185,6 @@ export interface ReferencePresetApiResponse {
     description: string;
     sortOrder:   number;
   }>;
-  createdAt:  string;
-  updatedAt:  string;
+  createdAt: string;
+  updatedAt: string;
 }

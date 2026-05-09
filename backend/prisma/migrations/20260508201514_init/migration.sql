@@ -37,6 +37,9 @@ CREATE TYPE "WebhookEventType" AS ENUM ('MESSAGE', 'FEED_COMMENT', 'FEED_REACTIO
 -- CreateEnum
 CREATE TYPE "WebhookEventStatus" AS ENUM ('PENDING', 'PROCESSED', 'FAILED', 'SKIPPED');
 
+-- CreateEnum
+CREATE TYPE "AiDecision" AS ENUM ('REPLIED', 'ESCALATED', 'SKIPPED', 'ERROR');
+
 -- CreateTable
 CREATE TABLE "users" (
     "id" TEXT NOT NULL,
@@ -83,6 +86,8 @@ CREATE TABLE "ai_configs" (
     "maxReplyTokens" INTEGER NOT NULL DEFAULT 300,
     "replyDelaySeconds" INTEGER NOT NULL DEFAULT 0,
     "personalizeGreeting" BOOLEAN NOT NULL DEFAULT true,
+    "maxContextMessages" INTEGER NOT NULL DEFAULT 8,
+    "summaryEveryN" INTEGER NOT NULL DEFAULT 10,
     "blockedKeywords" JSONB NOT NULL DEFAULT '[]',
     "allowedTopics" JSONB NOT NULL DEFAULT '[]',
     "escalateOnLowConfidence" BOOLEAN NOT NULL DEFAULT true,
@@ -91,6 +96,56 @@ CREATE TABLE "ai_configs" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "ai_configs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "ai_model_configs" (
+    "id" TEXT NOT NULL,
+    "businessProfileId" TEXT NOT NULL,
+    "replyModelId" TEXT NOT NULL DEFAULT 'anthropic/claude-3.5-haiku',
+    "replyModelName" TEXT NOT NULL DEFAULT 'Claude 3.5 Haiku',
+    "replyMaxTokens" INTEGER NOT NULL DEFAULT 400,
+    "replyTemperature" DOUBLE PRECISION NOT NULL DEFAULT 0.7,
+    "summaryModelId" TEXT NOT NULL DEFAULT 'meta-llama/llama-3.1-8b-instruct:free',
+    "summaryModelName" TEXT NOT NULL DEFAULT 'Llama 3.1 8B Instruct (free)',
+    "summaryMaxTokens" INTEGER NOT NULL DEFAULT 200,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ai_model_configs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "conversation_summaries" (
+    "id" TEXT NOT NULL,
+    "conversationId" TEXT NOT NULL,
+    "summary" TEXT NOT NULL,
+    "upToMessageId" TEXT,
+    "messagesCovered" INTEGER NOT NULL DEFAULT 0,
+    "modelId" TEXT NOT NULL,
+    "tokensUsed" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "conversation_summaries_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "ai_reply_logs" (
+    "id" TEXT NOT NULL,
+    "conversationId" TEXT NOT NULL,
+    "inboundMessageId" TEXT,
+    "decision" "AiDecision" NOT NULL,
+    "modelId" TEXT NOT NULL,
+    "promptTokens" INTEGER NOT NULL DEFAULT 0,
+    "replyTokens" INTEGER NOT NULL DEFAULT 0,
+    "latencyMs" INTEGER NOT NULL DEFAULT 0,
+    "replyText" TEXT,
+    "escalationReason" TEXT,
+    "confidence" DOUBLE PRECISION,
+    "errorMessage" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "ai_reply_logs_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -146,6 +201,7 @@ CREATE TABLE "conversations" (
     "handoverStatus" "HandoverStatus" NOT NULL DEFAULT 'AI',
     "humanTookOverAt" TIMESTAMP(3),
     "agentNote" TEXT,
+    "needsAiReply" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -314,6 +370,18 @@ CREATE INDEX "business_profiles_userId_idx" ON "business_profiles"("userId");
 CREATE UNIQUE INDEX "ai_configs_businessProfileId_key" ON "ai_configs"("businessProfileId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "ai_model_configs_businessProfileId_key" ON "ai_model_configs"("businessProfileId");
+
+-- CreateIndex
+CREATE INDEX "conversation_summaries_conversationId_createdAt_idx" ON "conversation_summaries"("conversationId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "ai_reply_logs_conversationId_createdAt_idx" ON "ai_reply_logs"("conversationId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "ai_reply_logs_decision_idx" ON "ai_reply_logs"("decision");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "facebook_connections_businessProfileId_key" ON "facebook_connections"("businessProfileId");
 
 -- CreateIndex
@@ -330,6 +398,9 @@ CREATE UNIQUE INDEX "webhook_events_externalId_eventType_key" ON "webhook_events
 
 -- CreateIndex
 CREATE INDEX "conversations_businessProfileId_lastMessageAt_idx" ON "conversations"("businessProfileId", "lastMessageAt");
+
+-- CreateIndex
+CREATE INDEX "conversations_handoverStatus_needsAiReply_idx" ON "conversations"("handoverStatus", "needsAiReply");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "conversations_businessProfileId_externalId_key" ON "conversations"("businessProfileId", "externalId");
@@ -396,6 +467,15 @@ ALTER TABLE "business_profiles" ADD CONSTRAINT "business_profiles_userId_fkey" F
 
 -- AddForeignKey
 ALTER TABLE "ai_configs" ADD CONSTRAINT "ai_configs_businessProfileId_fkey" FOREIGN KEY ("businessProfileId") REFERENCES "business_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ai_model_configs" ADD CONSTRAINT "ai_model_configs_businessProfileId_fkey" FOREIGN KEY ("businessProfileId") REFERENCES "business_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "conversation_summaries" ADD CONSTRAINT "conversation_summaries_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ai_reply_logs" ADD CONSTRAINT "ai_reply_logs_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "facebook_connections" ADD CONSTRAINT "facebook_connections_businessProfileId_fkey" FOREIGN KEY ("businessProfileId") REFERENCES "business_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;

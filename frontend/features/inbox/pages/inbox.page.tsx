@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 /**
  * @file features/inbox/pages/inbox.page.tsx
@@ -20,11 +20,11 @@
  *   - No polling required
  */
 
-import { AddPresetDialog } from '../components/AddPresetDialog';
-import { ChatView } from '../components/ChatView';
-import { ConvList } from '../components/ConvList';
-import { useInbox } from '../hooks/useInbox';
-import type { PhotoPreset } from '../types/inbox.types';
+import { AddPresetDialog } from "../components/AddPresetDialog";
+import { ChatView } from "../components/ChatView";
+import { ConvList } from "../components/ConvList";
+import { useInbox } from "../hooks/useInbox";
+import type { PhotoPreset } from "../types/inbox.types";
 
 interface InboxPageProps {
   /** Current authenticated user ID — passed from the app auth context */
@@ -39,7 +39,6 @@ export function InboxPage({ userId }: InboxPageProps) {
 
   return (
     <div className="flex h-[calc(100vh-20px)] overflow-hidden bg-background">
-
       {/* ── Left panel ── */}
       <ConvList
         accounts={inbox.accounts}
@@ -52,9 +51,7 @@ export function InboxPage({ userId }: InboxPageProps) {
         searchQuery={inbox.searchQuery}
         onSearchChange={inbox.setSearchQuery}
         className={
-          inbox.showList
-            ? 'w-full sm:w-[320px]'
-            : 'hidden sm:flex sm:w-[320px]'
+          inbox.showList ? "w-full sm:w-[320px]" : "hidden sm:flex sm:w-[320px]"
         }
       />
 
@@ -96,7 +93,7 @@ export function InboxPage({ userId }: InboxPageProps) {
           textareaRef={inbox.textareaRef}
           onPhotoFiles={inbox.handlePhotoFiles}
           onFileSelect={inbox.handleFileSelect}
-          className={!inbox.showList ? 'flex' : 'hidden sm:flex'}
+          className={!inbox.showList ? "flex" : "hidden sm:flex"}
         />
       )}
 
@@ -105,7 +102,7 @@ export function InboxPage({ userId }: InboxPageProps) {
         open={inbox.addPresetOpen}
         onClose={() => inbox.setAddPresetOpen(false)}
         onAdd={(p) =>
-          inbox.addPreset(p as Omit<PhotoPreset, 'id'> & { files: File[] })
+          inbox.addPreset(p as Omit<PhotoPreset, "id"> & { files: File[] })
         }
       />
     </div>

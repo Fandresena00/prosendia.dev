@@ -13,6 +13,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { PrismaModule } from '../../database/prisma.module.js';
 import { InboxEventsModule } from '../inbox/inbox-events.module.js';
 import { InboxSyncModule } from '../inbox/inbox-sync.module.js';
+import { MediaDownloadService } from '../inbox/services/media-download.service.js';
 import { QueueModule } from '../queue/queue.module.js';
 import { FacebookGraphClient } from './clients/facebook-graph.client.js';
 import { FacebookController } from './facebook.controller.js';
@@ -24,7 +25,10 @@ import { FacebookMessagingService } from './services/facebook-messaging.service.
 import { FacebookSyncService } from './services/facebook-sync.service.js';
 import { TokenService } from './services/token.service.js';
 import { WebhookService } from './services/webhook.service.js';
-import { FacebookSyncWorker, TokenValidateWorker } from './workers/facebook.worker.js';
+import {
+  FacebookSyncWorker,
+  TokenValidateWorker,
+} from './workers/facebook.worker.js';
 
 @Module({
   imports: [
@@ -46,6 +50,7 @@ import { FacebookSyncWorker, TokenValidateWorker } from './workers/facebook.work
     WebhookService,
     FacebookSyncWorker,
     TokenValidateWorker,
+    MediaDownloadService,
   ],
   exports: [
     FacebookAccountService,

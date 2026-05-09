@@ -1,14 +1,23 @@
 /**
  * @file features/facebook/services/webhook.service.ts
  *
- * Processes real-time Facebook webhook payloads.
+ * CRITICAL PERFORMANCE FIX
+ * ────────────────────────
+ * Previous hot path (per inbound message):
+ *   isTokenUsable()           → maybe live Facebook API call  (+1–5s)
+ *   fetchClientMessengerProfile() → live Facebook API call    (+0.5–2s)
+ *   DB writes + SSE emit
  *
- * CHANGES:
- *   - Added normalizeAvatarUrl() — converts http:// to https:// and strips
- *     Facebook CDN query parameters that cause CORS issues in <img> tags.
- *   - Avatar URL normalized before being stored in every upsertConversation call.
- *   - fetchClientProfile now returns a normalized profile_pic.
- *   - Variable names made more explicit throughout.
+ * New hot path (per inbound message):
+ *   isTokenUsableForWebhook() → DB read only                  (~1–5ms)
+ *   DB writes + SSE emit
+ *   refreshAvatarInBackground() → deferred, non-blocking      (0ms impact)
+ *
+ * Avatar fetch is now a background fire-and-forget operation. The message
+ * appears instantly in the UI; the avatar shows up seconds later via SSE.
+ *
+ * SSE is emitted BEFORE the background operations complete, so the frontend
+ * gets the message as fast as possible.
  */
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -17,11 +26,20 @@ import {
   WebhookEventStatus,
   WebhookEventType,
 } from '../../../generated/prisma/enums.js';
+import { MediaDownloadService } from '../../inbox/services/media-download.service.js';
 import { InboxEventEmitter } from '../../inbox/gateways/inbox-sse.gateway.js';
 import { AiQueueProducer } from '../../queue/producers/ai-queue.producer.js';
 import { FacebookGraphClient } from '../clients/facebook-graph.client.js';
 import { FacebookAccountService } from './facebook-account.service.js';
 import { TokenService } from './token.service.js';
+
+// ─── Payload types ─────────────────────────────────────────────────────────────
+
+export interface FbAttachment {
+  type: string;
+  payload: { url?: string; sticker_id?: number; title?: string };
+  title?: string;
+}
 
 export interface FbMessagingEntry {
   sender: { id: string };
@@ -30,9 +48,13 @@ export interface FbMessagingEntry {
   message?: {
     mid: string;
     text?: string;
-    attachments?: Array<{ type: string; payload: { url?: string } }>;
+    attachments?: FbAttachment[];
+    is_echo?: boolean;
   };
+  read?: { watermark: number };
+  delivery?: { watermark: number; mids: string[] };
 }
+
 export interface FbFeedValue {
   item?: string;
   verb?: string;
@@ -42,25 +64,20 @@ export interface FbFeedValue {
   from?: { id: string; name: string };
   created_time?: number;
 }
+
 export interface FbWebhookEntry {
   id: string;
   time?: number;
   messaging?: FbMessagingEntry[];
   changes?: Array<{ field: string; value: FbFeedValue }>;
 }
+
 export interface FbWebhookPayload {
   object: string;
   entry: FbWebhookEntry[];
 }
 
-// ─── Internal types ───────────────────────────────────────────────────────────
-
-interface ClientProfile {
-  name: string | null;
-  avatarUrl: string | null;
-}
-
-// ─── Service ──────────────────────────────────────────────────────────────────
+// ─── Service ───────────────────────────────────────────────────────────────────
 
 @Injectable()
 export class WebhookService {
@@ -73,50 +90,54 @@ export class WebhookService {
     private readonly sseEmitter: InboxEventEmitter,
     private readonly facebookGraph: FacebookGraphClient,
     private readonly aiJobQueue: AiQueueProducer,
+    private readonly mediaDownload: MediaDownloadService,
   ) {}
+
+  // ─── Entry point ──────────────────────────────────────────────────────────
 
   async dispatchPayload(payload: FbWebhookPayload): Promise<void> {
     if (payload.object !== 'page') return;
     for (const entry of payload.entry) {
       void this.processPageEntry(entry).catch((err: unknown) =>
         this.logger.error(
-          `Error processing page=${entry.id}: ${err instanceof Error ? err.message : String(err)}`,
+          `Error processing page=${entry.id}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
         ),
       );
     }
   }
 
   private async processPageEntry(entry: FbWebhookEntry): Promise<void> {
-    const facebookConnection = await this.facebookAccounts.getByPageId(
-      entry.id,
-    );
-    if (!facebookConnection) {
+    const connection = await this.facebookAccounts.getByPageId(entry.id);
+    if (!connection) {
       this.logger.debug(`No active connection for page=${entry.id}`);
       return;
     }
-    const isTokenUsable = await this.tokenService.isTokenUsable(entry.id);
-    if (!isTokenUsable) {
+
+    // CRITICAL FIX: use webhook-safe check (DB only, no live API call)
+    const isUsable = await this.tokenService.isTokenUsableForWebhook(entry.id);
+    if (!isUsable) {
       this.logger.warn(
-        `Token not usable for page=${entry.id} — skipping webhook event`,
+        `Token marked INVALID in DB for page=${entry.id} — skipping webhook`,
       );
       return;
     }
+
     for (const messagingEvent of entry.messaging ?? []) {
+      if (messagingEvent.message?.is_echo) continue;
+      if (messagingEvent.read || messagingEvent.delivery) continue;
       if (messagingEvent.message && messagingEvent.sender.id !== entry.id) {
         await this.handleInboundMessage(
-          facebookConnection.id,
+          connection.id,
           entry.id,
           messagingEvent,
         );
       }
     }
+
     for (const change of entry.changes ?? []) {
       if (change.field === 'feed') {
-        await this.handleFeedChange(
-          facebookConnection.id,
-          entry.id,
-          change.value,
-        );
+        await this.handleFeedChange(connection.id, entry.id, change.value);
       }
     }
   }
@@ -131,7 +152,6 @@ export class WebhookService {
     const fbMessageId = messagingEvent.message?.mid;
     if (!fbMessageId) return;
 
-    // Idempotency check — skip already-processed events
     const isDuplicate = await this.recordWebhookEvent(
       connectionId,
       fbMessageId,
@@ -141,51 +161,117 @@ export class WebhookService {
     if (isDuplicate) return;
 
     this.logger.log(
-      `Inbound DM — page=${pageId}, sender=${messagingEvent.sender.id}, mid=${fbMessageId}`,
+      `Inbound DM — page=${pageId} sender=${messagingEvent.sender.id} mid=${fbMessageId}`,
     );
 
-    const facebookConnection = await this.prisma.facebookConnection.findUnique({
+    const connection = await this.prisma.facebookConnection.findUnique({
       where: { id: connectionId },
       select: {
         businessProfileId: true,
         businessProfile: { select: { userId: true } },
       },
     });
-    if (!facebookConnection) return;
-
-    // Fetch the client's Messenger profile (name + avatar) — best-effort
-    const clientProfile = await this.fetchClientMessengerProfile(
-      messagingEvent.sender.id,
-      pageId,
-    );
+    if (!connection) return;
 
     const messageText = messagingEvent.message?.text ?? null;
     const messageDate = new Date(messagingEvent.timestamp);
 
-    const conversation = await this.upsertConversation(
-      facebookConnection.businessProfileId,
+    // ── STEP 1: Upsert conversation WITHOUT avatar (no API call needed now) ──
+    // We use the cached avatar from DB if it exists, otherwise null.
+    // The avatar will be refreshed in the background below.
+    const conversation = await this.upsertConversationWithCachedAvatar(
+      connection.businessProfileId,
       messagingEvent.sender.id,
-      clientProfile,
       messageText,
       messagingEvent.timestamp,
     );
 
-    // Extract image URL from attachment if present
-    const firstAttachment = messagingEvent.message?.attachments?.[0];
-    const attachmentImageUrl =
-      firstAttachment?.type === 'image'
-        ? (firstAttachment.payload?.url ?? null)
-        : null;
+    // ── STEP 2: Process attachments ───────────────────────────────────────────
+    const attachments = messagingEvent.message?.attachments ?? [];
+    const savedMessageIds: string[] = [];
 
-    const savedMessage = await this.prisma.message.create({
-      data: {
-        conversationId: conversation.id,
-        externalId: fbMessageId,
-        sender: 'CLIENT',
-        content: messageText,
-        imageUrl: attachmentImageUrl,
-        status: 'DELIVERED',
-        createdAt: messageDate,
+    for (const attachment of attachments) {
+      if (!attachment.payload?.url) continue;
+      const processed = await this.processAttachment(attachment);
+      const savedMsg = await this.prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          externalId: attachments.length === 1 ? fbMessageId : null,
+          sender: 'CLIENT',
+          content: processed.fileName ?? null,
+          imageUrl: processed.imageUrl ?? null,
+          fileUrl: processed.fileUrl ?? null,
+          status: 'DELIVERED',
+          createdAt: messageDate,
+        },
+      });
+      savedMessageIds.push(savedMsg.id);
+
+      // Emit SSE immediately — no waiting for background jobs
+      this.emitNewMessage(
+        connection.businessProfile.userId,
+        conversation.id,
+        savedMsg,
+        messageDate,
+      );
+    }
+
+    // ── STEP 3: Save text content ─────────────────────────────────────────────
+    let textMessageId: string | null = null;
+    if (messageText?.trim()) {
+      const savedTextMsg = await this.prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          externalId: attachments.length === 0 ? fbMessageId : null,
+          sender: 'CLIENT',
+          content: messageText,
+          status: 'DELIVERED',
+          createdAt: messageDate,
+        },
+      });
+      textMessageId = savedTextMsg.id;
+      savedMessageIds.push(savedTextMsg.id);
+
+      // Emit SSE immediately
+      this.emitNewMessage(
+        connection.businessProfile.userId,
+        conversation.id,
+        savedTextMsg,
+        messageDate,
+      );
+    }
+
+    if (savedMessageIds.length === 0) {
+      await this.markWebhookEventProcessed(
+        connectionId,
+        fbMessageId,
+        WebhookEventType.MESSAGE,
+        conversation.id,
+      );
+      return;
+    }
+
+    // ── STEP 4: Update conversation last message + emit conversation_updated ──
+    const lastMessageText =
+      messageText ?? this.describeAttachment(attachments[0]);
+    const updatedConversation = await this.prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { lastMessage: lastMessageText, lastMessageAt: messageDate },
+    });
+
+    this.sseEmitter.conversationUpdated(connection.businessProfile.userId, {
+      conversation: {
+        id: updatedConversation.id,
+        businessProfileId: updatedConversation.businessProfileId,
+        externalId: updatedConversation.externalId,
+        clientPsid: updatedConversation.clientPsid,
+        clientName: updatedConversation.clientName,
+        clientAvatarUrl: updatedConversation.clientAvatarUrl,
+        lastMessage: lastMessageText,
+        lastMessageAt: messageDate,
+        handoverStatus: updatedConversation.handoverStatus,
+        unreadCount: 1,
+        updatedAt: new Date(),
       },
     });
 
@@ -196,61 +282,186 @@ export class WebhookService {
       conversation.id,
     );
 
-    // Emit SSE: new message
-    this.sseEmitter.newMessage(facebookConnection.businessProfile.userId, {
-      conversationId: conversation.id,
-      message: {
-        id: savedMessage.id,
-        conversationId: conversation.id,
-        sender: 'CLIENT',
-        content: savedMessage.content,
-        imageUrl: savedMessage.imageUrl,
-        fileUrl: null,
-        referenceImageUrls: [],
-        status: 'DELIVERED',
-        externalId: fbMessageId,
-        createdAt: messageDate,
-      },
-    });
+    // ── STEP 5: Background avatar refresh (deferred, non-blocking) ───────────
+    // Only refresh if avatar is missing — avoids unnecessary API calls
+    if (!conversation.clientAvatarUrl) {
+      void this.refreshAvatarInBackground(
+        messagingEvent.sender.id,
+        pageId,
+        conversation.id,
+        connection.businessProfile.userId,
+      ).catch(() => undefined);
+    }
 
-    // Emit SSE: conversation updated (moves to top, increments unread)
-    this.sseEmitter.conversationUpdated(
-      facebookConnection.businessProfile.userId,
-      {
-        conversation: {
-          id: conversation.id,
-          businessProfileId: conversation.businessProfileId,
-          externalId: conversation.externalId,
-          clientPsid: conversation.clientPsid,
-          clientName: conversation.clientName,
-          clientAvatarUrl: conversation.clientAvatarUrl,
-          lastMessage: conversation.lastMessage,
-          lastMessageAt: conversation.lastMessageAt,
-          handoverStatus: conversation.handoverStatus,
-          unreadCount: 1,
-          updatedAt: conversation.updatedAt,
-        },
-      },
-    );
-
-    // Enqueue AI reply if the conversation is in AI mode
-    if (conversation.handoverStatus === 'AI') {
+    // ── STEP 6: Enqueue AI reply if conversation is in AI mode ───────────────
+    const primaryMessageId = textMessageId ?? savedMessageIds[0];
+    if (conversation.handoverStatus === 'AI' && messageText?.trim()) {
       await this.prisma.conversation.update({
         where: { id: conversation.id },
         data: { needsAiReply: true },
       });
       await this.aiJobQueue.enqueueAiReply({
         conversationId: conversation.id,
-        inboundMessageId: savedMessage.id,
-        businessProfileId: facebookConnection.businessProfileId,
-        userId: facebookConnection.businessProfile.userId,
+        inboundMessageId: primaryMessageId!,
+        businessProfileId: connection.businessProfileId,
+        userId: connection.businessProfile.userId,
         inboundText: messageText ?? undefined,
         inboundCreatedAt: messageDate.toISOString(),
       });
     }
   }
 
-  // ─── Feed change (comment) handler ────────────────────────────────────────
+  // ─── Background avatar refresh ─────────────────────────────────────────────
+  //
+  // Runs AFTER SSE is already emitted. The UI shows the message immediately.
+  // The avatar appears a few seconds later when this completes.
+
+  private async refreshAvatarInBackground(
+    clientPsid: string,
+    pageId: string,
+    conversationId: string,
+    userId: string,
+  ): Promise<void> {
+    const pageConnection = await this.facebookAccounts.getByPageId(pageId);
+    if (!pageConnection) return;
+
+    try {
+      const profile = await this.facebookGraph.getMessengerUserProfile(
+        clientPsid,
+        pageConnection.decryptedToken,
+      );
+
+      const displayName =
+        (profile.name ??
+          [profile.first_name, profile.last_name]
+            .filter(Boolean)
+            .join(' ')
+            .trim()) ||
+        null;
+
+      const normalizedAvatar = this.normalizeUrl(profile.profile_pic ?? null);
+      if (!normalizedAvatar && !displayName) return; // Nothing useful to update
+
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: {
+          clientName: displayName ?? undefined,
+          clientAvatarUrl: normalizedAvatar ?? undefined,
+        },
+      });
+
+      this.logger.debug(
+        `Avatar refreshed in background for conversation=${conversationId}`,
+      );
+
+      // Emit SSE so the avatar appears in the UI without a refresh
+      const updatedConv = await this.prisma.conversation.findUnique({
+        where: { id: conversationId },
+      });
+      if (!updatedConv) return;
+
+      this.sseEmitter.conversationUpdated(userId, {
+        conversation: {
+          id: updatedConv.id,
+          businessProfileId: updatedConv.businessProfileId,
+          externalId: updatedConv.externalId,
+          clientPsid: updatedConv.clientPsid,
+          clientName: updatedConv.clientName,
+          clientAvatarUrl: updatedConv.clientAvatarUrl,
+          lastMessage: updatedConv.lastMessage,
+          lastMessageAt: updatedConv.lastMessageAt,
+          handoverStatus: updatedConv.handoverStatus,
+          unreadCount: 0,
+          updatedAt: new Date(),
+        },
+      });
+    } catch {
+      // Avatar refresh failure is non-fatal — ignore silently
+    }
+  }
+
+  // ─── Conversation upsert (no API calls) ───────────────────────────────────
+
+  /**
+   * Upserts a conversation using only data already in the DB.
+   * Does NOT call the Facebook API — that happens in the background.
+   */
+  private async upsertConversationWithCachedAvatar(
+    businessProfileId: string,
+    clientPsid: string,
+    lastMessageText: string | null,
+    timestampMs: number,
+  ) {
+    const existing = await this.prisma.conversation.findFirst({
+      where: {
+        businessProfileId,
+        OR: [{ externalId: clientPsid }, { clientPsid }],
+      },
+    });
+
+    if (existing) {
+      return this.prisma.conversation.update({
+        where: { id: existing.id },
+        data: {
+          clientPsid,
+          lastMessage: lastMessageText,
+          lastMessageAt: new Date(timestampMs),
+          // Keep existing name/avatar — background refresh will update if needed
+        },
+      });
+    }
+
+    return this.prisma.conversation.create({
+      data: {
+        businessProfileId,
+        externalId: clientPsid,
+        clientPsid,
+        clientName: null, // Will be filled by background refresh
+        clientAvatarUrl: null,
+        lastMessage: lastMessageText,
+        lastMessageAt: new Date(timestampMs),
+      },
+    });
+  }
+
+  // ─── Attachment processing ────────────────────────────────────────────────
+
+  private async processAttachment(attachment: FbAttachment): Promise<{
+    imageUrl?: string | null;
+    fileUrl?: string | null;
+    fileName?: string | null;
+  }> {
+    const fbUrl = attachment.payload?.url;
+    if (!fbUrl) return {};
+
+    const type = attachment.type.toLowerCase();
+    const downloaded = await this.mediaDownload.downloadAndStore(fbUrl, type);
+    const storedUrl = downloaded?.publicUrl ?? fbUrl;
+
+    if (type === 'image' || type === 'sticker') return { imageUrl: storedUrl };
+    if (type === 'video' || type === 'audio') return { fileUrl: storedUrl };
+    return { fileUrl: storedUrl, fileName: attachment.title ?? null };
+  }
+
+  private describeAttachment(attachment?: FbAttachment): string {
+    if (!attachment) return '';
+    switch (attachment.type.toLowerCase()) {
+      case 'image':
+        return '📷 Photo';
+      case 'video':
+        return '🎥 Vidéo';
+      case 'audio':
+        return '🎤 Message vocal';
+      case 'sticker':
+        return '😊 Sticker';
+      case 'file':
+        return `📄 ${attachment.title ?? 'Fichier'}`;
+      default:
+        return '📎 Pièce jointe';
+    }
+  }
+
+  // ─── Feed comment handler ─────────────────────────────────────────────────
 
   private async handleFeedChange(
     connectionId: string,
@@ -260,7 +471,7 @@ export class WebhookService {
     if (feedValue.item !== 'comment' || feedValue.verb !== 'add') return;
     const fbCommentId = feedValue.comment_id;
     if (!fbCommentId || !feedValue.message) return;
-    if (feedValue.from?.id === pageId) return; // Ignore the page's own comments
+    if (feedValue.from?.id === pageId) return;
 
     const isDuplicate = await this.recordWebhookEvent(
       connectionId,
@@ -270,14 +481,12 @@ export class WebhookService {
     );
     if (isDuplicate) return;
 
-    this.logger.log(`New comment — page=${pageId}, comment=${fbCommentId}`);
-
     if (!feedValue.post_id) {
       await this.markWebhookEventFailed(
         connectionId,
         fbCommentId,
         WebhookEventType.FEED_COMMENT,
-        'Missing post_id in feed change payload',
+        'Missing post_id',
       );
       return;
     }
@@ -290,7 +499,7 @@ export class WebhookService {
         connectionId,
         fbCommentId,
         WebhookEventType.FEED_COMMENT,
-        `Post ${feedValue.post_id} not synced yet — cannot attach comment`,
+        `Post ${feedValue.post_id} not synced`,
       );
       return;
     }
@@ -308,10 +517,7 @@ export class WebhookService {
           : new Date(),
         lastSyncedAt: new Date(),
       },
-      update: {
-        message: feedValue.message,
-        lastSyncedAt: new Date(),
-      },
+      update: { message: feedValue.message, lastSyncedAt: new Date() },
     });
 
     await this.markWebhookEventProcessed(
@@ -322,100 +528,42 @@ export class WebhookService {
     );
   }
 
-  // ─── Conversation upsert ──────────────────────────────────────────────────
+  // ─── SSE emitter helper ───────────────────────────────────────────────────
 
-  private async upsertConversation(
-    businessProfileId: string,
-    clientPsid: string,
-    clientProfile: ClientProfile | null,
-    lastMessageText: string | null,
-    timestampMs: number,
-  ) {
-    const normalizedAvatarUrl = clientProfile?.avatarUrl
-      ? this.normalizeAvatarUrl(clientProfile.avatarUrl)
-      : null;
-
-    const existingConversation = await this.prisma.conversation.findFirst({
-      where: {
-        businessProfileId,
-        OR: [{ externalId: clientPsid }, { clientPsid }],
+  private emitNewMessage(
+    userId: string,
+    conversationId: string,
+    savedMessage: {
+      id: string;
+      content: string | null;
+      imageUrl: string | null;
+      fileUrl: string | null;
+      status: string;
+      externalId: string | null;
+      createdAt: Date;
+    },
+    createdAt: Date,
+  ): void {
+    this.sseEmitter.newMessage(userId, {
+      conversationId,
+      message: {
+        id: savedMessage.id,
+        conversationId,
+        sender: 'CLIENT',
+        content: savedMessage.content,
+        imageUrl: savedMessage.imageUrl,
+        fileUrl: savedMessage.fileUrl,
+        referenceImageUrls: [],
+        status: savedMessage.status,
+        externalId: savedMessage.externalId,
+        createdAt,
       },
     });
-
-    if (existingConversation) {
-      return this.prisma.conversation.update({
-        where: { id: existingConversation.id },
-        data: {
-          clientPsid,
-          clientName: clientProfile?.name ?? existingConversation.clientName,
-          clientAvatarUrl:
-            normalizedAvatarUrl ?? existingConversation.clientAvatarUrl,
-          lastMessage: lastMessageText,
-          lastMessageAt: new Date(timestampMs),
-        },
-      });
-    }
-
-    return this.prisma.conversation.create({
-      data: {
-        businessProfileId,
-        externalId: clientPsid,
-        clientPsid,
-        clientName: clientProfile?.name ?? null,
-        clientAvatarUrl: normalizedAvatarUrl ?? null,
-        lastMessage: lastMessageText,
-        lastMessageAt: new Date(timestampMs),
-      },
-    });
-  }
-
-  // ─── Fetch client Messenger profile ──────────────────────────────────────
-
-  private async fetchClientMessengerProfile(
-    clientPsid: string,
-    pageId: string,
-  ): Promise<ClientProfile | null> {
-    try {
-      const pageConnection = await this.facebookAccounts.getByPageId(pageId);
-      if (!pageConnection) return null;
-
-      const messengerProfile = await this.facebookGraph.getMessengerUserProfile(
-        clientPsid,
-        pageConnection.decryptedToken,
-      );
-
-      // Build display name from available fields
-      const displayName =
-        (messengerProfile.name ??
-          [messengerProfile.first_name, messengerProfile.last_name]
-            .filter(Boolean)
-            .join(' ')
-            .trim()) ||
-        null;
-
-      return {
-        name: displayName || null,
-        avatarUrl: this.normalizeAvatarUrl(
-          messengerProfile.profile_pic ?? null,
-        ),
-      };
-    } catch {
-      // Profile fetch is best-effort — a missing avatar is not an error
-      return null;
-    }
   }
 
   // ─── URL normalization ────────────────────────────────────────────────────
 
-  /**
-   * Normalizes a Facebook CDN image URL:
-   *   1. Upgrades http:// to https:// (Facebook sometimes returns http)
-   *   2. Returns null for empty/null inputs
-   *
-   * Facebook profile picture URLs are stable CDN URLs and do not need
-   * token-authenticated requests, so they can be stored and used directly.
-   */
-  private normalizeAvatarUrl(rawUrl: string | null): string | null {
+  private normalizeUrl(rawUrl: string | null): string | null {
     if (!rawUrl) return null;
     if (rawUrl.startsWith('http://')) return `https://${rawUrl.slice(7)}`;
     return rawUrl;
@@ -423,34 +571,28 @@ export class WebhookService {
 
   // ─── Webhook event idempotency ────────────────────────────────────────────
 
-  /**
-   * Records a webhook event for idempotency tracking.
-   * Returns true if the event was already processed (duplicate — skip it).
-   */
   private async recordWebhookEvent(
     connectionId: string,
     externalId: string,
     eventType: WebhookEventType,
     rawPayload: unknown,
   ): Promise<boolean> {
-    const existingEvent = await this.prisma.webhookEvent.findUnique({
+    const existing = await this.prisma.webhookEvent.findUnique({
       where: { externalId_eventType: { externalId, eventType } },
     });
-
-    if (existingEvent) {
-      if (existingEvent.status === WebhookEventStatus.PROCESSED) {
+    if (existing) {
+      if (existing.status === WebhookEventStatus.PROCESSED) {
         this.logger.debug(
-          `Duplicate ${eventType} event externalId=${externalId} — already processed, skipping`,
+          `Duplicate ${eventType} externalId=${externalId} — skipped`,
         );
         return true;
       }
       await this.prisma.webhookEvent.update({
-        where: { id: existingEvent.id },
+        where: { id: existing.id },
         data: { attempts: { increment: 1 } },
       });
       return false;
     }
-
     await this.prisma.webhookEvent.create({
       data: {
         facebookConnectionId: connectionId,
