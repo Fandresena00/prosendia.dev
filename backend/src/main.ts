@@ -100,7 +100,6 @@ async function bootstrap(): Promise<void> {
     credentials: true,
   });
 
-  app.setGlobalPrefix('api');
   await app.listen(port);
 
   logger.log(`🚀 Server at http://localhost:${port}/api`);
