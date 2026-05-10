@@ -51,9 +51,6 @@ export class FacebookAuthService {
 
   buildOAuthUrl(businessProfileId: string): string {
     const appId = this.configService.getOrThrow<string>('facebookAppId');
-    const redirectUri = this.configService.getOrThrow<string>(
-      'facebookOauthRedirectUri',
-    );
     const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
 
     const params = new URLSearchParams({
