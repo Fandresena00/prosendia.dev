@@ -41,7 +41,6 @@ export default () => ({
   facebookAppId: process.env.FACEBOOK_APP_ID,
   facebookAppSecret: process.env.FACEBOOK_APP_SECRET,
   facebookVerifyToken: process.env.FACEBOOK_VERIFY_TOKEN,
-
   /**
    * 32-byte hex key for AES-256-GCM token encryption.
    * Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
