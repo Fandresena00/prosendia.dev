@@ -58,7 +58,7 @@ export class FacebookAuthService {
 
     const params = new URLSearchParams({
       client_id: appId,
-      redirect_uri: `${frontendUrl}/{redirect_uri}`, // Must match the redirect URI set in Facebook App settings
+      redirect_uri: `${frontendUrl}/facebook/callback`, // Must match the redirect URI set in Facebook App settings
       scope: FACEBOOK_SCOPES.join(','),
       state: businessProfileId, // Passed back as-is on the callback
       response_type: 'code',
