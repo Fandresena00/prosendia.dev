@@ -75,13 +75,11 @@ export class FacebookAuthService {
    * because this step only returns options — connectPage() binds the choice.
    */
   async handleCallback(code: string): Promise<OAuthPageOption[]> {
-    const redirectUri = this.configService.getOrThrow<string>(
-      'facebookOauthRedirectUri',
-    );
+    const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
 
     const shortToken = await this.graphClient.exchangeCodeForToken(
       code,
-      redirectUri,
+      `${frontendUrl}/facebook/callback`,
     );
     const longToken = await this.graphClient.extendToken(shortToken);
     const pages = await this.graphClient.getUserPages(longToken);
