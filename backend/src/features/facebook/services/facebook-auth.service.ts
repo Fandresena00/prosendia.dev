@@ -51,11 +51,14 @@ export class FacebookAuthService {
 
   buildOAuthUrl(businessProfileId: string): string {
     const appId = this.configService.getOrThrow<string>('facebookAppId');
-    const redirectUri = this.configService.getOrThrow<string>('facebookOauthRedirectUri');
+    const redirectUri = this.configService.getOrThrow<string>(
+      'facebookOauthRedirectUri',
+    );
+    const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
 
     const params = new URLSearchParams({
       client_id: appId,
-      redirect_uri: redirectUri,
+      redirect_uri: `${frontendUrl}/{redirect_uri}`, // Must match the redirect URI set in Facebook App settings
       scope: FACEBOOK_SCOPES.join(','),
       state: businessProfileId, // Passed back as-is on the callback
       response_type: 'code',
@@ -75,9 +78,14 @@ export class FacebookAuthService {
    * because this step only returns options — connectPage() binds the choice.
    */
   async handleCallback(code: string): Promise<OAuthPageOption[]> {
-    const redirectUri = this.configService.getOrThrow<string>('facebookOauthRedirectUri');
+    const redirectUri = this.configService.getOrThrow<string>(
+      'facebookOauthRedirectUri',
+    );
 
-    const shortToken = await this.graphClient.exchangeCodeForToken(code, redirectUri);
+    const shortToken = await this.graphClient.exchangeCodeForToken(
+      code,
+      redirectUri,
+    );
     const longToken = await this.graphClient.extendToken(shortToken);
     const pages = await this.graphClient.getUserPages(longToken);
 
@@ -119,7 +127,9 @@ export class FacebookAuthService {
     // 2. Validate the page token before storing it
     const isValid = await this.graphClient.isTokenValid(dto.pageAccessToken);
     if (!isValid) {
-      throw new BadRequestException('The provided page access token is invalid or expired.');
+      throw new BadRequestException(
+        'The provided page access token is invalid or expired.',
+      );
     }
 
     // 3. Conflict — same page already connected to a *different* profile
@@ -135,7 +145,8 @@ export class FacebookAuthService {
     // 4. Encrypt and upsert the connection
     const encryptedAccessToken = this.encryption.encrypt(dto.pageAccessToken);
     const appId = this.configService.getOrThrow<string>('facebookAppId');
-    const grantedScopes = dto.grantedScopes?.split(',').map((s) => s.trim()) ?? [];
+    const grantedScopes =
+      dto.grantedScopes?.split(',').map((s) => s.trim()) ?? [];
 
     const connection = await this.prisma.facebookConnection.upsert({
       where: { pageId: dto.pageId },
@@ -163,14 +174,21 @@ export class FacebookAuthService {
     });
 
     // 5. Subscribe to webhook (best-effort — failure should not block the connect)
-    await this.trySubscribeWebhook(connection.id, dto.pageId, dto.pageAccessToken);
+    await this.trySubscribeWebhook(
+      connection.id,
+      dto.pageId,
+      dto.pageAccessToken,
+    );
 
     return this.toResponseDto(connection);
   }
 
   // ─── Step 4 — Disconnect ──────────────────────────────────────────────────
 
-  async disconnectPage(businessProfileId: string, userId: string): Promise<void> {
+  async disconnectPage(
+    businessProfileId: string,
+    userId: string,
+  ): Promise<void> {
     const conn = await this.prisma.facebookConnection.findFirst({
       where: { businessProfileId, businessProfile: { userId } },
     });
@@ -181,11 +199,15 @@ export class FacebookAuthService {
       const token = this.encryption.decrypt(conn.encryptedAccessToken);
       await this.graphClient.unsubscribePageFromWebhook(conn.pageId, token);
     } catch {
-      this.logger.warn(`Could not unsubscribe page ${conn.pageId} from webhook during disconnect`);
+      this.logger.warn(
+        `Could not unsubscribe page ${conn.pageId} from webhook during disconnect`,
+      );
     }
 
     await this.prisma.facebookConnection.delete({ where: { id: conn.id } });
-    this.logger.log(`Disconnected Facebook page ${conn.pageId} for user ${userId}`);
+    this.logger.log(
+      `Disconnected Facebook page ${conn.pageId} for user ${userId}`,
+    );
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
