@@ -11,35 +11,40 @@
  * OpenRouter model IDs follow the format: "<provider>/<model-name>"
  * Browse available models at: https://openrouter.ai/models
  */
-
 // ─── Reply AI ─────────────────────────────────────────────────────────────────
-// Purpose : Generate customer-facing replies in Facebook Messenger and comments
-// Criteria: Good instruction-following, multilingual, tone control
-// Trade-off: quality > cost — this output is read by customers
+// Purpose : Generate customer-facing replies
+// Criteria: Natural tone, multilingual support, low cost
+// Trade-off: Free model first for MVP phase
 
 export const REPLY_AI_MODEL = {
   /** OpenRouter model ID */
-  MODEL_ID:    'anthropic/claude-3.5-haiku',
+  MODEL_ID: 'meta-llama/llama-3.1-8b-instruct:free',
+
   /** Human-readable name shown in the UI model selector */
-  MODEL_NAME:  'Claude 3.5 Haiku',
-  /** Maximum completion tokens per reply (controls length + cost) */
-  MAX_TOKENS:  400,
-  /** 0 = fully deterministic, 1 = maximum creativity */
+  MODEL_NAME: 'Llama 3.1 8B Instruct (free)',
+
+  /** Maximum completion tokens per reply */
+  MAX_TOKENS: 400,
+
+  /** Balanced creativity for natural seller replies */
   TEMPERATURE: 0.7,
 } as const;
 
 // ─── Data AI ──────────────────────────────────────────────────────────────────
 // Purpose : Summarise conversation history and extract structured data
-// Criteria: Fast and cheap — its output is only read by ReplyAI, not humans
-// Trade-off: speed + free tier preferred
+// Criteria: Fast and cheap — output only consumed internally
+// Trade-off: Maximum cost reduction for MVP
 
 export const DATA_AI_MODEL = {
-  MODEL_ID:    'meta-llama/llama-3.1-8b-instruct:free',
-  MODEL_NAME:  'Llama 3.1 8B Instruct (free)',
-  /** Summaries must stay concise to minimise ReplyAI prompt tokens */
-  MAX_TOKENS:  200,
-  /** Low temperature — summaries must be factual, not creative */
-  TEMPERATURE: 0.3,
+  MODEL_ID: 'google/gemma-2-9b-it:free',
+
+  MODEL_NAME: 'Gemma 2 9B IT (free)',
+
+  /** Summaries must stay concise */
+  MAX_TOKENS: 200,
+
+  /** Low creativity for factual extraction */
+  TEMPERATURE: 0.2,
 } as const;
 
 // ─── Context window defaults ──────────────────────────────────────────────────
@@ -48,9 +53,9 @@ export const DATA_AI_MODEL = {
 
 export const AI_CONTEXT_CONFIG = {
   /** Number of recent messages included in every ReplyAI context window */
-  MAX_CONTEXT_MESSAGES:     8,
+  MAX_CONTEXT_MESSAGES: 8,
   /** DataAI generates a new summary every N client messages */
   SUMMARY_EVERY_N_MESSAGES: 10,
   /** Maximum delay in seconds before sending an AI reply */
-  MAX_REPLY_DELAY_SECONDS:  60,
+  MAX_REPLY_DELAY_SECONDS: 60,
 } as const;
