@@ -93,7 +93,7 @@ async function bootstrap(): Promise<void> {
   // credentials: true is REQUIRED for the browser to send/receive HttpOnly cookies.
   // Without this, Set-Cookie is silently ignored and cookies are never sent.
   app.enableCors({
-    origin: frontendUrl || 'http://localhost:3000',
+    origin: [frontendUrl, 'http://localhost:3000'],
     optionsSuccessStatus: 200,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type'],
