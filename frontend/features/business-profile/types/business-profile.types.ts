@@ -1,19 +1,16 @@
 /**
  * @file features/business-profile/types/business-profile.types.ts
- * Types and static data for the business profile feature.
- * Mirrors the Prisma schema enums.
+ * Types for the business profile feature.
+ * - WhatsApp removed
+ * - API response types added
+ * - ReferencePreset added for AI image sending
  */
 
-/* ─────────────────────────────────────────────
-   Enums (mirror Prisma)
-───────────────────────────────────────────── */
-export type BusinessType   = "HAIR_SALON" | "RESTAURANT" | "FREELANCER" | "SHOP" | "SERVICE" | "OTHER";
-export type Tone           = "FRIENDLY" | "PROFESSIONAL" | "FORMAL";
-export type ResponseStyle  = "SHORT" | "DETAILED" | "MIXED";
+export type BusinessType  = 'HAIR_SALON' | 'RESTAURANT' | 'FREELANCER' | 'SHOP' | 'SERVICE' | 'OTHER';
+export type Tone          = 'FRIENDLY' | 'PROFESSIONAL' | 'FORMAL';
+export type ResponseStyle = 'SHORT' | 'DETAILED' | 'MIXED';
 
-/* ─────────────────────────────────────────────
-   Business profile state shape
-───────────────────────────────────────────── */
+/** Local form state (what the user edits in the UI). */
 export interface BusinessProfileForm {
   name:                string;
   businessType:        BusinessType;
@@ -24,32 +21,72 @@ export interface BusinessProfileForm {
   aiInstructions:      string;
   commentInstructions: string;
   facebookPageId:      string;
-  whatsappNumber:      string;
+  // WhatsApp removed
 }
 
-/* ─────────────────────────────────────────────
-   Template
-───────────────────────────────────────────── */
-export interface Template extends Omit<BusinessProfileForm, "autoReply" | "facebookPageId" | "whatsappNumber"> {
-  label: string;
+/** Template used in the template picker. */
+export interface Template extends Omit<BusinessProfileForm, 'facebookPageId'> {
+  label:       string;
+  /** undefined = hardcoded template, string = saved profile ID */
+  profileId?:  string;
+  isUserSaved?: boolean;
 }
 
-/* ─────────────────────────────────────────────
-   UI option shapes
-───────────────────────────────────────────── */
-export interface ToneOption {
-  value: Tone;
-  label: string;
-  desc:  string;
+/** Reference image from a preset (used by AI to send to clients). */
+export interface ReferenceImageDto {
+  id:          string;
+  url:         string;
+  description: string;
+  sortOrder:   number;
 }
 
-export interface StyleOption {
-  value: ResponseStyle;
-  label: string;
-  desc:  string;
+export interface ReferencePresetDto {
+  id:          string;
+  name:        string;
+  description: string;
+  images:      ReferenceImageDto[];
 }
 
-export interface BusinessTypeOption {
-  value: BusinessType;
-  label: string;
+/** Lightweight summary for the profile switcher. */
+export interface BusinessProfileSummaryDto {
+  id:               string;
+  name:             string;
+  businessType:     string;
+  facebookPageId:   string | null;
+  facebookPageName: string | null;
+  autoReply:        boolean;
+  updatedAt:        string;
 }
+
+/** Full profile response from the API. */
+export interface BusinessProfileResponseDto {
+  id:                  string;
+  name:                string;
+  businessType:        string;
+  description:         string | null;
+  tone:                string;
+  responseStyle:       string;
+  autoReply:           boolean;
+  aiInstructions:      string | null;
+  commentInstructions: string | null;
+  facebookPageId:      string | null;
+  facebookPageName:    string | null;
+  referencePresets:    ReferencePresetDto[];
+  updatedAt:           string;
+}
+
+/** Sent to the API on save. */
+export interface UpdateBusinessProfileDto {
+  name?:               string;
+  businessType?:       BusinessType;
+  description?:        string;
+  tone?:               Tone;
+  responseStyle?:      ResponseStyle;
+  autoReply?:          boolean;
+  aiInstructions?:     string;
+  commentInstructions?: string;
+}
+
+export interface ToneOption          { value: Tone;          label: string; desc: string; }
+export interface StyleOption         { value: ResponseStyle;  label: string; desc: string; }
+export interface BusinessTypeOption  { value: BusinessType;   label: string; }

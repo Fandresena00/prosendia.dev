@@ -1,5 +1,13 @@
 /**
- * @file src/features/auth/auth.store.ts
+ * @file src/features/auth/store/auth.store.ts
+ *
+ * FIX: Added a module-level `isInitializingAuth` lock inside `initializeAuth`.
+ * Previously, two concurrent callers (useSessionInit + useNetworkRecovery)
+ * could both run `initializeAuth` simultaneously, causing two `GET /auth/me`
+ * requests and two state transitions — the double 401 seen in the server logs.
+ *
+ * The lock is module-level (not Zustand state) so it works across all callers
+ * without triggering re-renders.
  */
 
 import { create } from "zustand";
@@ -33,7 +41,6 @@ export interface AuthStore {
   isRehydrating: boolean;
   isLoading: boolean;
   authError: string | null;
-  /** Specific field errors from class-validator (populated on 400) */
   validationErrors: string[] | null;
 
   initializeAuth: () => Promise<void>;
@@ -46,6 +53,13 @@ export interface AuthStore {
   uploadAvatar: (file: File) => Promise<void>;
   clearError: () => void;
 }
+
+/**
+ * Module-level concurrency lock for initializeAuth.
+ * Prevents two simultaneous /auth/me calls when useSessionInit and
+ * useNetworkRecovery both call initializeAuth at the same time on mount.
+ */
+let isInitializingAuth = false;
 
 export const useAuthStore = create<AuthStore>()(
   persist(
@@ -62,34 +76,23 @@ export const useAuthStore = create<AuthStore>()(
         });
       };
 
-      /**
-       * Central error handler.
-       *
-       * ApiError with validationErrors → show the first specific message
-       * (e.g. "password must contain at least one uppercase letter...")
-       * instead of the generic "Bad Request" label.
-       */
       const handleError = (error: unknown, fallback: string): never => {
         if (isAuthenticationError(error)) {
           clearSession();
           throw error;
         }
-
         if (isNetworkError(error)) {
           set({ status: "offline", isLoading: false, isRehydrating: false });
           throw error;
         }
-
         if (isApiError(error)) {
           set({
-            // displayMessage returns validationErrors[0] if present, else message
             authError: error.displayMessage,
             validationErrors: error.validationErrors ?? null,
             isLoading: false,
           });
           throw error;
         }
-
         set({
           authError: error instanceof Error ? error.message : fallback,
           validationErrors: null,
@@ -130,9 +133,15 @@ export const useAuthStore = create<AuthStore>()(
         },
 
         initializeAuth: async (): Promise<void> => {
+          // FIX: Prevent concurrent calls — e.g. useSessionInit + useNetworkRecovery
+          // both calling initializeAuth at mount time. Without this lock, we get
+          // two simultaneous GET /auth/me requests (the double 401 in server logs).
+          if (isInitializingAuth) return;
+
           const { status } = get();
           if (status === "authenticated") return;
 
+          isInitializingAuth = true;
           set({ status: "loading", isRehydrating: true });
 
           try {
@@ -157,10 +166,15 @@ export const useAuthStore = create<AuthStore>()(
               return;
             }
 
+            // 401/403: confirmed no session
             set({
               status: hasSessionCookie() ? "offline" : "unauthenticated",
               isRehydrating: false,
             });
+          } finally {
+            // Always release the lock so future calls (e.g. after logout + login)
+            // can run initializeAuth again
+            isInitializingAuth = false;
           }
         },
 
@@ -190,13 +204,14 @@ export const useAuthStore = create<AuthStore>()(
             await authService.logout().catch(() => undefined);
           } finally {
             clearSession();
+            // Reset the lock on logout so the next login can re-initialize
+            isInitializingAuth = false;
           }
         },
 
         updateUser: async (data: UpdateUserInput): Promise<void> => {
           const { user } = get();
           if (!user) throw new Error("No authenticated session.");
-
           set({ isLoading: true, authError: null, validationErrors: null });
           try {
             const updated = await userService.updateUser(user.id, data);
@@ -205,6 +220,7 @@ export const useAuthStore = create<AuthStore>()(
             handleError(error, "Failed to update profile. Please try again.");
           }
         },
+
         uploadAvatar: async (file: File) => {
           const user = get().user;
           if (!user) throw new Error("No session");
@@ -234,33 +250,27 @@ export const useAuthStore = create<AuthStore>()(
   ),
 );
 
-export const useCurrentUser = () => useAuthStore((s) => s.user);
-export const useAuthStatus = () => useAuthStore((s) => s.status);
-export const useIsAuthenticated = () =>
-  useAuthStore((s) => s.status === "authenticated");
-export const useIsOffline = () => useAuthStore((s) => s.status === "offline");
-export const useAuthLoading = () => useAuthStore((s) => s.isLoading);
-export const useIsRehydrating = () => useAuthStore((s) => s.isRehydrating);
-export const useAuthError = () => useAuthStore((s) => s.authError);
-export const useValidationErrors = () =>
-  useAuthStore((s) => s.validationErrors);
+export const useCurrentUser      = () => useAuthStore((s) => s.user);
+export const useAuthStatus       = () => useAuthStore((s) => s.status);
+export const useIsAuthenticated  = () => useAuthStore((s) => s.status === "authenticated");
+export const useIsOffline        = () => useAuthStore((s) => s.status === "offline");
+export const useAuthLoading      = () => useAuthStore((s) => s.isLoading);
+export const useIsRehydrating    = () => useAuthStore((s) => s.isRehydrating);
+export const useAuthError        = () => useAuthStore((s) => s.authError);
+export const useValidationErrors = () => useAuthStore((s) => s.validationErrors);
 
 export function subscribeToNetworkRecovery(): () => void {
   let previousStatus = networkMonitor.getStatus();
-
   return networkMonitor.subscribe((networkStatus) => {
-    const wasOffline =
-      previousStatus === "offline" || previousStatus === "unknown";
+    const wasOffline = previousStatus === "offline" || previousStatus === "unknown";
     const isNowOnline = networkStatus === "online";
     previousStatus = networkStatus;
-
     if (wasOffline && isNowOnline) {
       const { status, initializeAuth } = useAuthStore.getState();
       if (status === "offline" || status === "loading") {
         void initializeAuth();
       }
     }
-
     if (networkStatus === "offline") {
       const { status } = useAuthStore.getState();
       if (status === "authenticated") {

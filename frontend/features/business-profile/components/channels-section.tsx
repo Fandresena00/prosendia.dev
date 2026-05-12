@@ -1,70 +1,47 @@
+"use client";
+
 /**
  * @file features/business-profile/components/channels-section.tsx
- * Section 05 — Contact channels: Facebook page ID and WhatsApp number.
+ * Section 05 — Facebook page ID only. WhatsApp removed.
  */
 
 import { Input } from "@/components/ui/input";
-import { IconBrandFacebook, IconBrandWhatsapp } from "@tabler/icons-react";
+import { IconBrandFacebook } from "@tabler/icons-react";
 import { Field, SectionCard } from "./ui-primitives";
 
 interface ChannelsSectionProps {
-  facebookPageId:  string;
-  whatsappNumber:  string;
+  facebookPageId:   string;
   onFacebookChange: (v: string) => void;
-  onWhatsappChange: (v: string) => void;
 }
 
 export function ChannelsSection({
-  facebookPageId, whatsappNumber,
-  onFacebookChange, onWhatsappChange,
+  facebookPageId,
+  onFacebookChange,
 }: ChannelsSectionProps) {
   return (
     <SectionCard
       step="05"
-      icon={<span className="text-sm leading-none">📞</span>}
-      title="Canaux de contact"
-      accent="none"
+      icon={<IconBrandFacebook className="h-4 w-4 text-[#1877F2]" />}
+      title="Page Facebook"
+      accent="facebook"
+      subtitle="Identifiant de la page utilisée par l'IA pour répondre."
     >
-      <div className="space-y-5">
-        <Field
-          label={
-            <span className="flex items-center gap-1.5">
-              <IconBrandFacebook className="h-3.5 w-3.5 text-[#1877F2]" />
-              ID / Lien page Facebook
-            </span>
-          }
-          hint="L'identifiant unique de votre page Facebook."
-        >
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground shrink-0 select-none">
-              facebook.com/
-            </span>
-            <Input
-              value={facebookPageId}
-              onChange={(e) => onFacebookChange(e.target.value)}
-              className="h-9 text-sm flex-1"
-              placeholder="maboutique"
-            />
-          </div>
-        </Field>
-
-        <Field
-          label={
-            <span className="flex items-center gap-1.5">
-              <IconBrandWhatsapp className="h-3.5 w-3.5 text-emerald-500" />
-              Numéro WhatsApp (notifications)
-            </span>
-          }
-          hint="Recevez des alertes pour les messages importants."
-        >
+      <Field
+        label="Identifiant de la page"
+        hint="L'identifiant unique de votre page (ex : maboutique)."
+      >
+        <div className="flex items-center gap-0 rounded-lg border border-border/50 overflow-hidden focus-within:ring-1 focus-within:ring-primary/50">
+          <span className="text-xs text-muted-foreground bg-secondary/60 px-3 h-9 flex items-center shrink-0 border-r border-border/50">
+            facebook.com/
+          </span>
           <Input
-            value={whatsappNumber}
-            onChange={(e) => onWhatsappChange(e.target.value)}
-            className="h-9 text-sm"
-            placeholder="+261 34 ..."
+            value={facebookPageId}
+            onChange={(e) => onFacebookChange(e.target.value)}
+            className="h-9 text-sm border-0 rounded-none focus-visible:ring-0 bg-transparent"
+            placeholder="maboutique"
           />
-        </Field>
-      </div>
+        </div>
+      </Field>
     </SectionCard>
   );
 }

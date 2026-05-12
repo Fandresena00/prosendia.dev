@@ -1,23 +1,36 @@
+"use client";
+
 /**
  * @file features/business-profile/components/profile-summary-section.tsx
- * Section 06 — Live read-only summary of the current profile configuration.
+ *
+ * CHANGES:
+ *  - Shows reference images / presets the AI can send to clients
+ *  - WhatsApp row removed
+ *  - Reference images count shown with "Utilisées par l'IA" badge
  */
 
-import { IconSparkles } from "@tabler/icons-react";
+import { Badge } from "@/components/ui/badge";
+import { IconPhoto, IconSparkles } from "@tabler/icons-react";
 import { BUSINESS_TYPES, STYLE_OPTIONS, TONE_OPTIONS } from "../data/business-profile.data";
-import type { BusinessProfileForm } from "../types/business-profile.types";
+import type { BusinessProfileForm, ReferencePresetDto } from "../types/business-profile.types";
 import { SectionCard } from "./ui-primitives";
 
 interface ProfileSummarySectionProps {
-  form: BusinessProfileForm;
+  form:             BusinessProfileForm;
+  referencePresets: ReferencePresetDto[];
 }
 
-export function ProfileSummarySection({ form }: ProfileSummarySectionProps) {
+export function ProfileSummarySection({
+  form,
+  referencePresets,
+}: ProfileSummarySectionProps) {
   const businessLabel = BUSINESS_TYPES.find((t) => t.value === form.businessType)?.label ?? form.businessType;
   const toneLabel     = TONE_OPTIONS.find((t)  => t.value === form.tone)?.label          ?? form.tone;
   const styleLabel    = STYLE_OPTIONS.find((s)  => s.value === form.responseStyle)?.label ?? form.responseStyle;
 
-  const rows: { icon: string; label: string; value: string; color: string }[] = [
+  const totalImages = referencePresets.reduce((sum, p) => sum + p.images.length, 0);
+
+  const rows = [
     {
       icon:  "🏪",
       label: "Business",
@@ -41,10 +54,10 @@ export function ProfileSummarySection({ form }: ProfileSummarySectionProps) {
         : "border-amber-500/20 bg-amber-500/5 text-amber-600",
     },
     {
-      icon:  "📱",
-      label: "Canaux",
-      value: `${form.facebookPageId ? `fb.com/${form.facebookPageId}` : "Pas de page liée"} · ${form.whatsappNumber || "Pas de WhatsApp"}`,
-      color: "border-border/40 bg-secondary/30 text-foreground",
+      icon:  "📘",
+      label: "Page Facebook",
+      value: form.facebookPageId ? `facebook.com/${form.facebookPageId}` : "Aucune page liée",
+      color: "border-[#1877F2]/20 bg-[#1877F2]/5 text-[#1877F2]",
     },
   ];
 
@@ -52,7 +65,7 @@ export function ProfileSummarySection({ form }: ProfileSummarySectionProps) {
     <SectionCard
       step="06"
       icon={<IconSparkles className="h-4 w-4 text-amber-500" />}
-      title="Résumé du profil actuel"
+      title="Résumé du profil"
       accent="amber"
     >
       <div className="space-y-3">
@@ -72,6 +85,56 @@ export function ProfileSummarySection({ form }: ProfileSummarySectionProps) {
             </div>
           </div>
         ))}
+
+        {/* Reference images used by AI */}
+        <div className="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+          <IconPhoto className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-primary/60">
+                Images de référence
+              </p>
+              <Badge variant="default" className="text-[9px] h-4 px-1.5">
+                Utilisées par l'IA
+              </Badge>
+            </div>
+            {referencePresets.length === 0 ? (
+              <p className="text-[12px] font-medium mt-0.5 text-primary">
+                Aucune image — ajoutez-en dans l'inbox
+              </p>
+            ) : (
+              <div className="mt-1.5 space-y-1">
+                {referencePresets.slice(0, 3).map((preset) => (
+                  <div key={preset.id} className="flex items-center gap-2">
+                    {/* Thumbnail */}
+                    {preset.images[0] && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={preset.images[0].url}
+                        alt={preset.name}
+                        className="h-6 w-6 rounded object-cover shrink-0"
+                      />
+                    )}
+                    <p className="text-[11px] font-medium text-primary truncate">
+                      {preset.name}
+                    </p>
+                    <span className="text-[10px] text-primary/60 shrink-0">
+                      {preset.images.length} photo{preset.images.length > 1 ? "s" : ""}
+                    </span>
+                  </div>
+                ))}
+                {referencePresets.length > 3 && (
+                  <p className="text-[11px] text-primary/60">
+                    +{referencePresets.length - 3} autre{referencePresets.length - 3 > 1 ? "s" : ""}
+                  </p>
+                )}
+                <p className="text-[11px] text-primary/70 mt-1">
+                  {totalImages} image{totalImages > 1 ? "s" : ""} au total — l'IA peut les envoyer aux clients
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </SectionCard>
   );

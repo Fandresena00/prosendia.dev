@@ -1,14 +1,26 @@
+"use client";
 /**
  * @file features/facebook/hooks/use-facebook-pages.ts
  *
- * Manages the full lifecycle of Facebook page connections in the UI:
- * - Fetches and maps connections to UI-enriched FacebookPage objects
- * - Syncs page stats (conversations, posts, Graph API follower counts)
- * - Schedules automatic syncs at 00:00 and 12:00 every day
- * - Exposes per-page SyncSummary for rich feedback in the card
+ * FIXES
+ * ─────
+ * 1. CRASH FIX: `refresh` no longer propagates AuthenticationError as an
+ *    unhandled promise rejection. It catches it, calls handleAuthError (which
+ *    sets store status → "unauthenticated"), and returns silently.
+ *    The global `auth:expired` event + useAuthErrorHandler then redirects.
+ *
+ * 2. RACE CONDITION FIX: API calls only start when `status === "authenticated"`.
+ *    Previously the hook fetched on mount regardless of auth state, causing
+ *    401 → silentRefresh → 401 → AuthenticationError → crash before the auth
+ *    guard had a chance to redirect.
+ *
+ * 3. RESET ON LOGOUT: Pages state is cleared when status leaves "authenticated".
+ *    Prevents stale data from a previous session appearing after re-login.
  */
 
+import { AuthenticationError, NetworkError } from "@/lib/errors";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAuthStore } from "@/features/auth/store/auth.store";
 import {
   disconnectPage,
   fetchPagePublicInfo,
@@ -28,10 +40,7 @@ import { getTokenHealth } from "../types/facebook.types";
 function formatLastSync(isoDate: string | null | undefined): string {
   if (!isoDate) return "Jamais synchronisée";
   return new Date(isoDate).toLocaleDateString("fr-FR", {
-    day:    "2-digit",
-    month:  "short",
-    hour:   "2-digit",
-    minute: "2-digit",
+    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
   });
 }
 
@@ -60,21 +69,15 @@ function mapConnection(conn: FacebookConnection): FacebookPage {
 
 // ─── Auto-sync scheduling ─────────────────────────────────────────────────────
 
-/** Returns milliseconds until the next 00:00 or 12:00 target. */
 function msUntilNextAutoSync(): number {
   const now  = new Date();
   const next = new Date(now);
-  const h    = now.getHours();
-
-  if (h < 12) {
-    // Before noon → next target is today at 12:00
+  if (now.getHours() < 12) {
     next.setHours(12, 0, 0, 0);
   } else {
-    // After noon (or exactly noon) → next target is midnight tomorrow
     next.setDate(next.getDate() + 1);
     next.setHours(0, 0, 0, 0);
   }
-
   return next.getTime() - now.getTime();
 }
 
@@ -83,9 +86,7 @@ function msUntilNextAutoSync(): number {
 export interface UseFacebookPagesResult {
   pages:         FacebookPage[];
   loading:       boolean;
-  /** Set of businessProfileIds currently being synced */
   syncingIds:    Set<string>;
-  /** Last sync result per businessProfileId */
   syncSummaries: Map<string, SyncSummary>;
   refresh:       () => Promise<void>;
   removePage:    (businessProfileId: string) => Promise<void>;
@@ -96,43 +97,55 @@ export interface UseFacebookPagesResult {
 
 export function useFacebookPages(): UseFacebookPagesResult {
   const [pages,         setPages]         = useState<FacebookPage[]>([]);
-  const [loading,       setLoading]       = useState(true);
+  const [loading,       setLoading]       = useState(false);
   const [syncingIds,    setSyncingIds]    = useState<Set<string>>(new Set());
   const [syncSummaries, setSyncSummaries] = useState<Map<string, SyncSummary>>(new Map());
 
-  // Stable ref so the auto-sync timeout can always read the latest pages
+  // FIX: Read auth status to guard all API calls
+  const authStatus    = useAuthStore((s) => s.status);
+  const handleAuthErr = useAuthStore((s) => s.handleAuthError);
+
   const pagesRef = useRef<FacebookPage[]>([]);
   pagesRef.current = pages;
 
   // ── Fetch from backend ──────────────────────────────────────────────────────
 
   const refresh = useCallback(async () => {
+    // FIX: Never fetch if not authenticated — prevents 401 cascade on mount
+    if (useAuthStore.getState().status !== "authenticated") return;
+
     setLoading(true);
     try {
       const connections = await listConnections();
-
       setPages((prev) => {
-        // Preserve live stats (followers, conversations) that are not in the API response
         const statsMap = new Map(
-          prev.map((p) => [
-            p.accountId,
-            {
-              followersCount:      p.followersCount,
-              fanCount:            p.fanCount,
-              conversationsSynced: p.conversationsSynced,
-              postsSynced:         p.postsSynced,
-            },
-          ]),
+          prev.map((p) => [p.accountId, {
+            followersCount:      p.followersCount,
+            fanCount:            p.fanCount,
+            conversationsSynced: p.conversationsSynced,
+            postsSynced:         p.postsSynced,
+          }]),
         );
         return connections.map((conn) => ({
           ...mapConnection(conn),
           ...(statsMap.get(conn.businessProfileId) ?? {}),
         }));
       });
+    } catch (error) {
+      // FIX: Catch AuthenticationError gracefully instead of crashing React.
+      // The global `auth:expired` event + useAuthErrorHandler handles the redirect.
+      if (error instanceof AuthenticationError) {
+        handleAuthErr(error);
+        return;
+      }
+      // Network errors are non-fatal — keep stale data, don't crash
+      if (error instanceof NetworkError) return;
+      // Re-throw unexpected errors for debugging
+      throw error;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [handleAuthErr]);
 
   // ── Disconnect ──────────────────────────────────────────────────────────────
 
@@ -157,38 +170,26 @@ export function useFacebookPages(): UseFacebookPagesResult {
       let postsSynced         = -1;
 
       try {
-        // Run sync + Graph API call in parallel — posts failure is non-fatal
         const [convsResult, postsResult, pageInfo] = await Promise.allSettled([
           syncPageConversations(businessProfileId),
           syncPagePosts(businessProfileId),
           pageId ? fetchPagePublicInfo(pageId) : Promise.resolve(null),
         ]);
 
-        if (convsResult.status === "fulfilled") {
-          conversationsSynced = convsResult.value.synced;
-        }
-        if (postsResult.status === "fulfilled") {
-          postsSynced = postsResult.value.synced;
-        }
+        if (convsResult.status === "fulfilled") conversationsSynced = convsResult.value.synced;
+        if (postsResult.status  === "fulfilled") postsSynced         = postsResult.value.synced;
 
-        const graphInfo =
-          pageInfo.status === "fulfilled" ? pageInfo.value : null;
-
-        // Refresh connections to pick up the new lastSyncedAt timestamp
-        // then merge live stats for this specific page
+        const graphInfo = pageInfo.status === "fulfilled" ? pageInfo.value : null;
         const freshConnections = await listConnections();
 
         setPages(
           freshConnections.map((conn): FacebookPage => {
             const base     = mapConnection(conn);
             const isTarget = conn.businessProfileId === businessProfileId;
-
             if (!isTarget) {
-              // Preserve stats for unrelated pages
               const existing = pagesRef.current.find((p) => p.accountId === conn.businessProfileId);
               return existing ? { ...base, ...pickStats(existing) } : base;
             }
-
             return {
               ...base,
               followersCount:      graphInfo?.followers_count ?? targetPage?.followersCount ?? 0,
@@ -208,6 +209,13 @@ export function useFacebookPages(): UseFacebookPagesResult {
         };
         setSyncSummaries((prev) => new Map(prev).set(businessProfileId, summary));
         return summary;
+      } catch (error) {
+        // FIX: Graceful auth error handling in sync as well
+        if (error instanceof AuthenticationError) {
+          handleAuthErr(error);
+          return { businessProfileId, conversations: -1, posts: -1, timestamp: new Date() };
+        }
+        return { businessProfileId, conversations: -1, posts: -1, timestamp: new Date() };
       } finally {
         setSyncingIds((prev) => {
           const next = new Set(prev);
@@ -216,42 +224,47 @@ export function useFacebookPages(): UseFacebookPagesResult {
         });
       }
     },
-    [],
+    [handleAuthErr],
   );
 
   // ── Auto-sync at 00:00 and 12:00 ───────────────────────────────────────────
 
   useEffect(() => {
+    if (authStatus !== "authenticated") return;
     let timeoutId: ReturnType<typeof setTimeout>;
-
     const scheduleNext = () => {
       timeoutId = setTimeout(async () => {
-        // Fire-and-forget — sync all connected pages, swallow individual failures
         for (const page of pagesRef.current) {
           await syncPage(page.accountId).catch(() => undefined);
         }
         scheduleNext();
       }, msUntilNextAutoSync());
     };
-
     scheduleNext();
     return () => clearTimeout(timeoutId);
-  }, [syncPage]);
+  }, [authStatus, syncPage]);
 
-  // ── Initial fetch ───────────────────────────────────────────────────────────
+  // ── FIX: Fetch only when authenticated ─────────────────────────────────────
+  // Previously used [refresh] which ran immediately on mount regardless of auth.
+  // Now waits for status === "authenticated" — prevents the 401 cascade.
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (authStatus === "authenticated") {
+      void refresh();
+    }
+    // FIX: Clear stale data when user logs out
+    if (authStatus === "unauthenticated") {
+      setPages([]);
+      setSyncSummaries(new Map());
+    }
+  }, [authStatus, refresh]);
 
   return { pages, loading, syncingIds, syncSummaries, refresh, removePage, syncPage };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function pickStats(
-  page: FacebookPage,
-): Pick<FacebookPage, "followersCount" | "fanCount" | "conversationsSynced" | "postsSynced"> {
+function pickStats(page: FacebookPage) {
   return {
     followersCount:      page.followersCount,
     fanCount:            page.fanCount,

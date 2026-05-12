@@ -1,6 +1,6 @@
 /**
  * @file features/business-profile/components/ui-primitives.tsx
- * Small reusable presentational components used across the business profile feature.
+ * Unchanged — included for completeness.
  */
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,17 +8,9 @@ import { Label } from "@/components/ui/label";
 import { IconInfoCircle } from "@tabler/icons-react";
 import type { ReactNode } from "react";
 
-/* ─────────────────────────────────────────────
-   Accent palette helpers
-───────────────────────────────────────────── */
 export type AccentColor =
-  | "primary"
-  | "violet"
-  | "sky"
-  | "emerald"
-  | "amber"
-  | "facebook"
-  | "none";
+  | "primary" | "violet" | "sky" | "emerald"
+  | "amber"   | "facebook" | "none";
 
 const ACCENT_BAR: Record<AccentColor, string> = {
   primary:  "bg-primary/60",
@@ -40,18 +32,14 @@ const ACCENT_STEP: Record<AccentColor, string> = {
   none:     "text-muted-foreground bg-secondary/60",
 };
 
-/* ─────────────────────────────────────────────
-   SectionCard
-   Card with a coloured left-edge bar + step number
-───────────────────────────────────────────── */
 interface SectionCardProps {
-  step:     string;
-  icon:     ReactNode;
-  title:    string;
-  accent:   AccentColor;
-  badge?:   ReactNode;
+  step:      string;
+  icon:      ReactNode;
+  title:     string;
+  accent:    AccentColor;
+  badge?:    ReactNode;
   subtitle?: string;
-  children: ReactNode;
+  children:  ReactNode;
 }
 
 export function SectionCard({
@@ -59,9 +47,7 @@ export function SectionCard({
 }: SectionCardProps) {
   return (
     <Card className="border-border/40 bg-card/60 backdrop-blur-sm relative overflow-hidden">
-      {/* Accent bar */}
       <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${ACCENT_BAR[accent]}`} />
-
       <CardHeader className="pb-4 pl-6">
         <CardTitle className="text-[13px] font-semibold flex items-center gap-2.5">
           <span className={`text-[10px] font-bold rounded-md px-1.5 py-0.5 ${ACCENT_STEP[accent]}`}>
@@ -75,21 +61,16 @@ export function SectionCard({
           <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
         )}
       </CardHeader>
-
       <CardContent className="pl-6 pb-6">{children}</CardContent>
     </Card>
   );
 }
 
-/* ─────────────────────────────────────────────
-   Field
-   Label + input slot + optional hint
-───────────────────────────────────────────── */
 interface FieldProps {
-  label:    ReactNode;
-  hint?:    string;
+  label:     ReactNode;
+  hint?:     string;
   required?: boolean;
-  children: ReactNode;
+  children:  ReactNode;
 }
 
 export function Field({ label, hint, required, children }: FieldProps) {
@@ -105,10 +86,6 @@ export function Field({ label, hint, required, children }: FieldProps) {
   );
 }
 
-/* ─────────────────────────────────────────────
-   ToggleCard
-   Tone / style selector button
-───────────────────────────────────────────── */
 interface ToggleCardProps {
   label:   string;
   desc:    string;
@@ -135,10 +112,6 @@ export function ToggleCard({ label, desc, active, onClick }: ToggleCardProps) {
   );
 }
 
-/* ─────────────────────────────────────────────
-   InfoNote
-   Secondary info banner
-───────────────────────────────────────────── */
 export function InfoNote({ children }: { children: ReactNode }) {
   return (
     <div className="flex items-start gap-2.5 rounded-lg bg-secondary/40 border border-border/40 px-3 py-2.5">

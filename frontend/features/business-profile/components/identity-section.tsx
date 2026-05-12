@@ -1,16 +1,10 @@
+"use client";
 /**
  * @file features/business-profile/components/identity-section.tsx
- * Section 01 — Business identity (name, type, description).
+ * Unchanged from original.
  */
-
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { IconBuildingStore } from "@tabler/icons-react";
 import { BUSINESS_TYPES } from "../data/business-profile.data";
@@ -18,9 +12,9 @@ import type { BusinessType } from "../types/business-profile.types";
 import { Field, SectionCard } from "./ui-primitives";
 
 interface IdentitySectionProps {
-  name:           string;
-  businessType:   BusinessType;
-  description:    string;
+  name:                 string;
+  businessType:         BusinessType;
+  description:          string;
   onNameChange:         (v: string) => void;
   onBusinessTypeChange: (v: BusinessType) => void;
   onDescriptionChange:  (v: string) => void;
@@ -48,27 +42,19 @@ export function IdentitySection({
         </Field>
 
         <Field label="Type d'activité" required>
-          <Select
-            value={businessType}
-            onValueChange={(v) => onBusinessTypeChange(v as BusinessType)}
-          >
+          <Select value={businessType} onValueChange={(v) => onBusinessTypeChange(v as BusinessType)}>
             <SelectTrigger className="h-9 text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {BUSINESS_TYPES.map((t) => (
-                <SelectItem key={t.value} value={t.value}>
-                  {t.label}
-                </SelectItem>
+                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </Field>
 
-        <Field
-          label="Description"
-          hint="Aide l'IA à comprendre votre business."
-        >
+        <Field label="Description" hint="Aide l'IA à comprendre votre business.">
           <Textarea
             value={description}
             onChange={(e) => onDescriptionChange(e.target.value)}

@@ -17,6 +17,7 @@ export function VendeoLogo({
       {/* Dark mode logo */}
       <Image
         src="/logo/vendeoai_logo_iconic_dark.svg"
+        loading="eager"
         alt="VendeoAI"
         fill
         className={`h-8 w-8 ${rounded} hidden dark:block`}
@@ -26,6 +27,7 @@ export function VendeoLogo({
       <Image
         src="/logo/vendeoai_logo_iconic_light.svg"
         alt="VendeoAI"
+        loading="eager"
         fill
         className={`h-8 w-8 ${rounded} block dark:hidden`}
         style={{ boxShadow: "0 0 14px oklch(0.52 0.24 256 / 18%)" }}

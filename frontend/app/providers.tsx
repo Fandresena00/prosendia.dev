@@ -27,6 +27,7 @@ import { OfflineBanner } from "@/components/shared/offline-banner";
 import { useNetworkRecovery } from "@/features/auth/hooks/use-network-recovery";
 import { useAuthStore } from "@/features/auth/store/auth.store";
 import { useEffect, useRef } from "react";
+import { AppBootstrap } from "./app-bootstrap";
 
 interface ProvidersProps {
   children: React.ReactNode;
@@ -58,7 +59,7 @@ export function Providers({ children }: ProvidersProps) {
     <>
       <AuthInitializer />
       <OfflineBanner />
-      {children}
+      <AppBootstrap>{children}</AppBootstrap>
     </>
   );
 }
