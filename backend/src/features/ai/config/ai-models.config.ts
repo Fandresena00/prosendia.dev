@@ -18,10 +18,10 @@
 
 export const REPLY_AI_MODEL = {
   /** OpenRouter model ID */
-  MODEL_ID: 'meta-llama/llama-3.1-8b-instruct:free',
+  MODEL_ID: 'nvidia/nemotron-3-super-120b-a12b:free',
 
   /** Human-readable name shown in the UI model selector */
-  MODEL_NAME: 'Llama 3.1 8B Instruct (free)',
+  MODEL_NAME: 'Nemotron 3 Super (free)',
 
   /** Maximum completion tokens per reply */
   MAX_TOKENS: 400,
