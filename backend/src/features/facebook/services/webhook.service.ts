@@ -155,6 +155,9 @@ export class WebhookService {
     pageId: string,
     messagingEvent: FbMessagingEntry,
   ): Promise<void> {
+    // Ignore echoes of our own outbound page messages.
+    if (messagingEvent.sender?.id === pageId) return;
+
     const fbMessageId = messagingEvent.message?.mid;
     if (!fbMessageId) return;
 

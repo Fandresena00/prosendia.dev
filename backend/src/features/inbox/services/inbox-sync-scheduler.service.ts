@@ -261,7 +261,17 @@ export class InboxSyncSchedulerService {
     let newMessagesFound = 0;
 
     for (const fbMsg of fbMessages) {
-      const senderRole = fbMsg.from.id === pageId ? 'PAGE' : 'CLIENT';
+      const senderRole = fbMsg.from?.id === pageId ? 'PAGE' : 'CLIENT';
+      const firstAttachment = fbMsg.attachments?.data?.[0];
+      const inferredImageUrl =
+        firstAttachment?.image_data?.url ??
+        (firstAttachment?.mime_type?.startsWith('image/')
+          ? firstAttachment.file_url ?? null
+          : null);
+      const inferredFileUrl =
+        !inferredImageUrl && firstAttachment?.file_url
+          ? firstAttachment.file_url
+          : null;
 
       // Use Facebook's timestamp (not the backend receive time)
       const fbCreatedAt = new Date(fbMsg.created_time ?? Date.now());
@@ -277,7 +287,9 @@ export class InboxSyncSchedulerService {
             conversationId: localConversationId,
             externalId: fbMsg.id,
             sender: senderRole,
-            content: fbMsg.message ?? null,
+            content: fbMsg.message ? normalizeMessageText(fbMsg.message) : null,
+            imageUrl: inferredImageUrl,
+            fileUrl: inferredFileUrl,
             status: 'DELIVERED',
             // Use Facebook's createdAt — not now()
             createdAt: fbCreatedAt,
@@ -313,7 +325,13 @@ export class InboxSyncSchedulerService {
           await this.prisma.conversation.update({
             where: { id: localConversationId },
             data: {
-              lastMessage: fbMsg.message ?? null,
+              lastMessage: fbMsg.message
+                ? normalizeMessageText(fbMsg.message)
+                : inferredImageUrl
+                  ? '📷 Photo'
+                  : inferredFileUrl
+                    ? '📎 Fichier'
+                    : null,
               lastMessageAt: fbCreatedAt,
             },
           });
@@ -328,7 +346,13 @@ export class InboxSyncSchedulerService {
                 clientPsid: conversation.clientPsid,
                 clientName: conversation.clientName,
                 clientAvatarUrl: conversation.clientAvatarUrl,
-                lastMessage: fbMsg.message ?? null,
+                lastMessage: fbMsg.message
+                  ? normalizeMessageText(fbMsg.message)
+                  : inferredImageUrl
+                    ? '📷 Photo'
+                    : inferredFileUrl
+                      ? '📎 Fichier'
+                      : null,
                 lastMessageAt: fbCreatedAt,
                 handoverStatus: conversation.handoverStatus,
                 unreadCount: senderRole === 'CLIENT' ? 1 : 0,
@@ -341,7 +365,7 @@ export class InboxSyncSchedulerService {
         // Message content changed (edit) — update to match Facebook
         await this.prisma.message.update({
           where: { id: existingMessage.id },
-          data: { content: fbMsg.message },
+          data: { content: normalizeMessageText(fbMsg.message) },
         });
       }
     }
@@ -433,4 +457,13 @@ export class InboxSyncSchedulerService {
       inboundCreatedAt: lastMessage.createdAt.toISOString(),
     });
   }
+}
+
+function normalizeMessageText(input: string): string {
+  return input
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\s-\s+/g, '\n- ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }

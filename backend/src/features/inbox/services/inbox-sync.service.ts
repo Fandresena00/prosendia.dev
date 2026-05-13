@@ -129,9 +129,15 @@ export class InboxSyncService {
       let lastAt: Date | null = null;
 
       for (const fbMsg of ordered) {
-        const sender = fbMsg.from.id === conn.pageId ? 'PAGE' : 'CLIENT';
+        const sender = fbMsg.from?.id === conn.pageId ? 'PAGE' : 'CLIENT';
         const attachment = fbMsg.attachments?.data?.[0];
-        const imageUrl = attachment?.image_data?.url ?? null;
+        const imageUrl =
+          attachment?.image_data?.url ??
+          (attachment?.mime_type?.startsWith('image/')
+            ? attachment.file_url ?? null
+            : null);
+        const fileUrl =
+          !imageUrl && attachment?.file_url ? attachment.file_url : null;
         const content = fbMsg.message ? normalizeMessageText(fbMsg.message) : null;
 
         if (sender === 'CLIENT') {
@@ -147,6 +153,7 @@ export class InboxSyncService {
               sender,
               content,
               imageUrl,
+              fileUrl,
               status: 'DELIVERED',
               createdAt: new Date(fbMsg.created_time),
             },
@@ -233,12 +240,13 @@ export class InboxSyncService {
           data: {
             conversationId: conv.id,
             externalId: fbMsg.id,
-            sender,
-            content,
-            imageUrl,
-            status: 'DELIVERED',
-            createdAt: new Date(fbMsg.created_time),
-          },
+              sender,
+              content,
+              imageUrl,
+              fileUrl,
+              status: 'DELIVERED',
+              createdAt: new Date(fbMsg.created_time),
+            },
         });
 
         newMessages++;

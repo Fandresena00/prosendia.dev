@@ -29,6 +29,7 @@ const GRADIENTS = [
 
 const VIDEO_EXTENSIONS  = new Set(['mp4', 'webm', 'mov', 'avi', 'm4v']);
 const AUDIO_EXTENSIONS  = new Set(['mp3', 'm4a', 'aac', 'ogg', 'opus', 'wav']);
+const IMAGE_EXTENSIONS  = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']);
 
 /** Extracts the lowercase file extension from a URL (without the dot). */
 function getUrlExtension(url: string): string {
@@ -104,6 +105,19 @@ export function apiMsgToUiMsg(m: MessageApiResponse): Msg {
   // ── Video / audio / file (from fileUrl) ───────────────────────────────────
   if (m.fileUrl) {
     const ext = getUrlExtension(m.fileUrl);
+
+    if (IMAGE_EXTENSIONS.has(ext)) {
+      return {
+        ...base,
+        kind: 'photos',
+        photos: [{
+          kind: 'photo',
+          name: m.content ?? 'image',
+          objectUrl: m.fileUrl,
+          gradient: GRADIENTS[0],
+        }],
+      };
+    }
 
     if (VIDEO_EXTENSIONS.has(ext)) {
       return {

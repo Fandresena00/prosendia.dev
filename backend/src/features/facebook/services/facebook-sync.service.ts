@@ -89,7 +89,7 @@ export class FacebookSyncService {
           include: {
             facebookConnection: {
               where: { isActive: true },
-              select: { encryptedAccessToken: true },
+              select: { encryptedAccessToken: true, pageId: true },
             },
           },
         },
@@ -184,7 +184,7 @@ export class FacebookSyncService {
           include: {
             facebookConnection: {
               where: { isActive: true },
-              select: { encryptedAccessToken: true },
+              select: { encryptedAccessToken: true, pageId: true },
             },
           },
         },
@@ -211,7 +211,11 @@ export class FacebookSyncService {
 
       let synced = 0;
       for (const fbMsg of fbMessages) {
-        const upserted = await this.upsertMessage(conversationId, fbMsg);
+        const upserted = await this.upsertMessage(
+          conversationId,
+          fbMsg,
+          conversation.businessProfile.facebookConnection.pageId,
+        );
         if (upserted) synced++;
       }
 
@@ -280,22 +284,37 @@ export class FacebookSyncService {
     });
   }
 
-  private async upsertMessage(conversationId: string, fbMsg: FbMessage): Promise<boolean> {
+  private async upsertMessage(
+    conversationId: string,
+    fbMsg: FbMessage,
+    pageId: string,
+  ): Promise<boolean> {
     const exists = await this.prisma.message.findFirst({
       where: { externalId: fbMsg.id },
     });
     if (exists) return false;
 
-    const imageAttachment = fbMsg.attachments?.data?.find((a) => a.mime_type?.startsWith('image/'));
-    const imageUrl = imageAttachment?.image_data?.url ?? null;
+    const imageAttachment = fbMsg.attachments?.data?.find(
+      (a) =>
+        a.mime_type?.startsWith('image/') ||
+        Boolean(a.image_data?.url) ||
+        (a.file_url?.match(/\.(png|jpg|jpeg|gif|webp)(\?|$)/i) ?? false),
+    );
+    const imageUrl =
+      imageAttachment?.image_data?.url ?? imageAttachment?.file_url ?? null;
+    const fileAttachment = fbMsg.attachments?.data?.find(
+      (a) => Boolean(a.file_url) && a.file_url !== imageUrl,
+    );
+    const fileUrl = fileAttachment?.file_url ?? null;
 
     await this.prisma.message.create({
       data: {
         conversationId,
         externalId: fbMsg.id,
-        sender: 'CLIENT',
+        sender: fbMsg.from?.id === pageId ? 'PAGE' : 'CLIENT',
         content: fbMsg.message ? normalizeMessageText(fbMsg.message) : null,
         imageUrl,
+        fileUrl,
         status: 'DELIVERED',
         createdAt: new Date(fbMsg.created_time),
       },

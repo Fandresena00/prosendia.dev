@@ -67,15 +67,16 @@ export interface FbConversation {
 
 export interface FbMessage {
   readonly id: string;
-  readonly message: string;
-  readonly from: { id: string; name: string; email?: string };
-  readonly to: { data: ReadonlyArray<{ id: string; name: string }> };
+  readonly message?: string;
+  readonly from?: { id: string; name: string; email?: string };
+  readonly to?: { data: ReadonlyArray<{ id: string; name: string }> };
   readonly created_time: string;
   readonly attachments?: {
     data: ReadonlyArray<{
       id: string;
       image_data?: { url: string };
-      mime_type: string;
+      mime_type?: string;
+      file_url?: string;
     }>;
   };
 }
