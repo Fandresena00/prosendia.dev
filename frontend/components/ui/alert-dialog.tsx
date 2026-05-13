@@ -47,6 +47,7 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   size = "default",
+  children,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm"
@@ -62,7 +63,12 @@ function AlertDialogContent({
           className
         )}
         {...props}
-      />
+      >
+        {children}
+        <AlertDialogPrimitive.Description className="sr-only">
+          Confirmation dialog for this action.
+        </AlertDialogPrimitive.Description>
+      </AlertDialogPrimitive.Content>
     </AlertDialogPortal>
   )
 }

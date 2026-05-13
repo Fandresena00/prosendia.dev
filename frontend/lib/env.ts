@@ -3,5 +3,5 @@ type Env = {
 };
 
 export const env: Env = {
-  API_URL: process.env.NEXT_PUBLIC_API_URL! || "http://localhost:5000/api",
+  API_URL: process.env.NEXT_PUBLIC_API_URL || "/api",
 };

@@ -4,6 +4,7 @@
  * CHANGES: Added onConnect/onError for SSE status. URL uses NEXT_PUBLIC_API_URL.
  */
 import { useEffect, useRef } from "react";
+import { env } from "@/lib/env";
 import type {
   ConversationUpdatedSsePayload, NewMessageSsePayload,
   SseEvent, SyncCompleteSsePayload,
@@ -17,7 +18,7 @@ interface InboxSseCallbacks {
   onSyncComplete?:        (p: SyncCompleteSsePayload) => void;
 }
 
-const BACKEND_API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
+const BACKEND_API_BASE_URL = env.API_URL;
 
 export function useInboxSse(callbacks: InboxSseCallbacks): void {
   const cbRef = useRef(callbacks);

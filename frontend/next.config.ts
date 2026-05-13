@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
-const apiOrigin = apiUrl.replace(/\/api\/?$/, "");
+const backendOrigin =
+  process.env.NEXT_PUBLIC_BACKEND_ORIGIN ?? "http://localhost:5000";
 
 const nextConfig: NextConfig = {
   images: {
@@ -18,7 +18,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: `${apiOrigin}/api/:path*`,
+        destination: `${backendOrigin}/api/:path*`,
       },
     ];
   },
