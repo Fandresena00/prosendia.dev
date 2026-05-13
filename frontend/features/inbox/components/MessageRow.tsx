@@ -34,6 +34,24 @@ interface MessageRowProps {
   clientAvatarUrl?: string | null;
 }
 
+function formatInboxText(text: string): string {
+  if (!text) return "";
+
+  let formatted = text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+
+  // If bullet markers are sent on one line (" - item"), split them visually.
+  // This mirrors Facebook-like message wrapping for list answers from AI.
+  formatted = formatted.replace(/\s-\s+/g, "\n- ");
+
+  // Keep spacing clean while preserving paragraph breaks.
+  formatted = formatted.replace(/\n{3,}/g, "\n\n");
+
+  return formatted;
+}
+
 export function MessageRow({
   msg,
   prevMsg,
@@ -93,7 +111,9 @@ export function MessageRow({
                     : "bg-[#0084FF] text-white"
             } ${msg.pending ? "opacity-60" : ""}`}
           >
-            {msg.content}
+            <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+              {formatInboxText(msg.content ?? "")}
+            </p>
           </div>
         )}
 

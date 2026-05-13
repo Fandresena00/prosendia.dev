@@ -291,10 +291,11 @@ export class ReplyAiService {
       const encryptedPageToken = connection.encryptedAccessToken;
       const psid = conversation.clientPsid;
       if (psid && encryptedPageToken) {
-        const fallbackText =
+        const fallbackText = normalizeReplyText(
           businessProfile.aiConfig?.replyLanguage === 'fr'
             ? 'Merci pour votre message. Notre equipe vous repond tres vite.'
-            : 'Thanks for your message. Our team will reply shortly.';
+            : 'Thanks for your message. Our team will reply shortly.',
+        );
 
         const sentMessage = await this.fbMessaging.sendTextMessageInternal(
           connection.pageId,
@@ -360,11 +361,12 @@ export class ReplyAiService {
     }
 
     // Send the text reply
-    if (textContent.trim()) {
+    const normalizedText = normalizeReplyText(textContent);
+    if (normalizedText) {
       const sentMessage = await this.fbMessaging.sendTextMessageInternal(
         connection.pageId,
         psid,
-        textContent.trim(),
+        normalizedText,
         encryptedPageToken,
       );
 
@@ -374,7 +376,7 @@ export class ReplyAiService {
           conversationId,
           externalId: sentMessage.messageId,
           sender: 'AI',
-          content: textContent.trim(),
+          content: normalizedText,
           status: 'DELIVERED',
         },
       });
@@ -386,7 +388,7 @@ export class ReplyAiService {
           id: savedMsg.id,
           conversationId,
           sender: 'AI',
-          content: textContent.trim(),
+          content: normalizedText,
           imageUrl: null,
           fileUrl: null,
           referenceImageUrls: imageUrls,
@@ -493,4 +495,17 @@ function extractImageTokens(text: string): {
     .trim();
 
   return { textContent, imageUrls };
+}
+
+function normalizeReplyText(input: string): string {
+  let text = input
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim();
+
+  // Convert inline bullet formatting into visible line breaks.
+  text = text.replace(/\s-\s+/g, '\n- ');
+  text = text.replace(/\n{3,}/g, '\n\n');
+
+  return text.trim();
 }

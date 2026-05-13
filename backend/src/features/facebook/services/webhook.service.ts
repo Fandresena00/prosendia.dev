@@ -179,7 +179,10 @@ export class WebhookService {
     });
     if (!connection) return;
 
-    const messageText = messagingEvent.message?.text ?? null;
+    const messageTextRaw = messagingEvent.message?.text ?? null;
+    const messageText = messageTextRaw
+      ? normalizeMessageText(messageTextRaw)
+      : null;
     const messageDate = new Date(messagingEvent.timestamp);
 
     // FIX: Use the deduplication-safe upsert
@@ -633,4 +636,13 @@ export class WebhookService {
       data: { status: WebhookEventStatus.FAILED, errorMessage },
     });
   }
+}
+
+function normalizeMessageText(input: string): string {
+  return input
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\s-\s+/g, '\n- ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }

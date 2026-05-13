@@ -102,9 +102,10 @@ export class MessageService {
       userId,
     );
 
+    const normalizedText = normalizeMessageText(text);
     const fbResult = await this.graphClient.sendTextMessage(
       conv.clientPsid!,
-      text,
+      normalizedText,
       conn.decryptedToken,
     );
 
@@ -112,13 +113,13 @@ export class MessageService {
       data: {
         conversationId,
         sender: 'PAGE',
-        content: text,
+        content: normalizedText,
         externalId: fbResult.message_id,
         status: 'SENT',
       },
     });
 
-    await this.updateLastMessage(conversationId, text);
+    await this.updateLastMessage(conversationId, normalizedText);
     this.logger.log(
       `Sent text mid=${fbResult.message_id} conv=${conversationId}`,
     );
@@ -166,22 +167,23 @@ export class MessageService {
 
     // Optional text caption after images
     if (caption?.trim()) {
+      const normalizedCaption = normalizeMessageText(caption);
       const fbResult = await this.graphClient.sendTextMessage(
         conv.clientPsid!,
-        caption,
+        normalizedCaption,
         conn.decryptedToken,
       );
       const msg = await this.prisma.message.create({
         data: {
           conversationId,
           sender: 'PAGE',
-          content: caption,
+          content: normalizedCaption,
           externalId: fbResult.message_id,
           status: 'SENT',
         },
       });
       results.push(this.toDto(msg));
-      await this.updateLastMessage(conversationId, caption);
+      await this.updateLastMessage(conversationId, normalizedCaption);
     } else {
       await this.updateLastMessage(
         conversationId,
@@ -352,4 +354,13 @@ export class MessageService {
       createdAt: msg.createdAt,
     };
   }
+}
+
+function normalizeMessageText(input: string): string {
+  return input
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\s-\s+/g, '\n- ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }

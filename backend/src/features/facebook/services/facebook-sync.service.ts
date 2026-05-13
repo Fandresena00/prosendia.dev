@@ -294,7 +294,7 @@ export class FacebookSyncService {
         conversationId,
         externalId: fbMsg.id,
         sender: 'CLIENT',
-        content: fbMsg.message ?? null,
+        content: fbMsg.message ? normalizeMessageText(fbMsg.message) : null,
         imageUrl,
         status: 'DELIVERED',
         createdAt: new Date(fbMsg.created_time),
@@ -303,4 +303,13 @@ export class FacebookSyncService {
 
     return true;
   }
+}
+
+function normalizeMessageText(input: string): string {
+  return input
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\s-\s+/g, '\n- ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }

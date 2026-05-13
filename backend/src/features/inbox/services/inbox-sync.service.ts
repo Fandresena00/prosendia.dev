@@ -132,7 +132,7 @@ export class InboxSyncService {
         const sender = fbMsg.from.id === conn.pageId ? 'PAGE' : 'CLIENT';
         const attachment = fbMsg.attachments?.data?.[0];
         const imageUrl = attachment?.image_data?.url ?? null;
-        const content = fbMsg.message ?? null;
+        const content = fbMsg.message ? normalizeMessageText(fbMsg.message) : null;
 
         if (sender === 'CLIENT') {
           const exists = await this.prisma.message.findUnique({
@@ -399,4 +399,13 @@ export class InboxSyncService {
       this.logger.log(`Cleaned up ${deleted.count} old webhook events`);
     }
   }
+}
+
+function normalizeMessageText(input: string): string {
+  return input
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\s-\s+/g, '\n- ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
