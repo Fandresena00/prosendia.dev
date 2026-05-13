@@ -102,7 +102,7 @@ async function bootstrap(): Promise<void> {
 
   await app.listen(port);
 
-  logger.log(`🚀 Server at http://localhost:${port}/api`);
+  logger.log(`🚀 Server at http://localhost:${port}`);
   logger.log(`🌍 Environment: ${nodeEnv}`);
   logger.log(`🔒 CORS origin: ${frontendUrl}`);
   logger.log(`🍪 Cookie auth: enabled`);
