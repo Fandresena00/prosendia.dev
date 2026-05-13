@@ -13,8 +13,16 @@
  */
 
 import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { IconCheck, IconLoader2, IconSparkles } from "@tabler/icons-react";
+import Link from "next/link";
 import { BehaviorSection } from "../components/behavior-section";
 import { ChannelsSection } from "../components/channels-section";
 import { IdentitySection } from "../components/identity-section";
@@ -47,6 +55,26 @@ export function BusinessProfilePage() {
             <Skeleton key={i} className="h-64 rounded-xl" />
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (bp.profiles.length === 0) {
+    return (
+      <div className="p-6 lg:p-8">
+        <Empty className="min-h-[60vh] border">
+          <EmptyHeader>
+            <EmptyTitle>Aucune page Facebook connectee</EmptyTitle>
+            <EmptyDescription>
+              Le profil business depend d&apos;une page Facebook. Connectez une page pour commencer la configuration.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button asChild>
+              <Link href="/facebook-page">Connecter une page Facebook</Link>
+            </Button>
+          </EmptyContent>
+        </Empty>
       </div>
     );
   }

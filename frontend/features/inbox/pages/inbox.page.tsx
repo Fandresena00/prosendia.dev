@@ -25,6 +25,15 @@ import { ChatView } from "../components/ChatView";
 import { ConvList } from "../components/ConvList";
 import { useInbox } from "../hooks/useInbox";
 import type { PhotoPreset } from "../types/inbox.types";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
 
 interface InboxPageProps {
   /** Current authenticated user ID — passed from the app auth context */
@@ -33,6 +42,26 @@ interface InboxPageProps {
 
 export function InboxPage({ userId }: InboxPageProps) {
   const inbox = useInbox(userId);
+
+  if (!inbox.loadingConvs && inbox.accounts.length === 0) {
+    return (
+      <div className="flex h-[calc(100vh-20px)] items-center justify-center bg-background p-6">
+        <Empty className="max-w-xl border">
+          <EmptyHeader>
+            <EmptyTitle>Aucune page Facebook connectee</EmptyTitle>
+            <EmptyDescription>
+              Connectez d&apos;abord une page Facebook pour charger vos conversations dans l&apos;Inbox.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button asChild>
+              <Link href="/facebook-page">Connecter une page Facebook</Link>
+            </Button>
+          </EmptyContent>
+        </Empty>
+      </div>
+    );
+  }
 
   // Guard: no selected conversation yet (loading or empty inbox)
   const showChat = !!inbox.selected;

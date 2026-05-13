@@ -284,9 +284,41 @@ export class ReplyAiService {
     }
 
     if (!result) {
-      throw (
-        lastError ?? new Error('All AI models failed to produce a response')
+      this.logger.error(
+        `All models exhausted for conversation=${conversationId}. Sending fallback message.`,
       );
+
+      const encryptedPageToken = connection.encryptedAccessToken;
+      const psid = conversation.clientPsid;
+      if (psid && encryptedPageToken) {
+        const fallbackText =
+          businessProfile.aiConfig?.replyLanguage === 'fr'
+            ? 'Merci pour votre message. Notre equipe vous repond tres vite.'
+            : 'Thanks for your message. Our team will reply shortly.';
+
+        const sentMessage = await this.fbMessaging.sendTextMessageInternal(
+          connection.pageId,
+          psid,
+          fallbackText,
+          encryptedPageToken,
+        );
+
+        await this.prisma.message.create({
+          data: {
+            conversationId,
+            externalId: sentMessage.messageId,
+            sender: 'AI',
+            content: fallbackText,
+            status: 'DELIVERED',
+          },
+        });
+      }
+
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { needsAiReply: false },
+      });
+      return;
     }
 
     // Check for escalation signal

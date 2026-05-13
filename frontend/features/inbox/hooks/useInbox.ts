@@ -228,9 +228,16 @@ export function useInbox(userId: string | undefined) {
     fetchAccounts()
       .then((loaded) => {
         setAccounts(loaded);
-        if (loaded.length > 0) setActiveAcc(loaded[0]);
+        if (loaded.length > 0) {
+          setActiveAcc(loaded[0]);
+        } else {
+          setLoadingConvs(false);
+        }
       })
-      .catch(() => toast.error("Impossible de charger les pages Facebook."));
+      .catch(() => {
+        setLoadingConvs(false);
+        toast.error("Impossible de charger les pages Facebook.");
+      });
   }, []);
 
   // ─── Load conversations when account changes ───────────────────────────────
