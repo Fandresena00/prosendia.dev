@@ -3,5 +3,6 @@ type Env = {
 };
 
 export const env: Env = {
-  API_URL: process.env.NEXT_PUBLIC_API_URL || "/api",
+  API_URL:
+    process.env.NEXT_PUBLIC_API_URL || "https://vendeoia-api.fadevt.org",
 };

@@ -1,8 +1,5 @@
 import type { NextConfig } from "next";
 
-const backendOrigin =
-  process.env.NEXT_PUBLIC_BACKEND_ORIGIN ?? "http://localhost:5000";
-
 const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
@@ -13,14 +10,6 @@ const nextConfig: NextConfig = {
         pathname: "/uploads/**",
       },
     ],
-  },
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${backendOrigin}/api/:path*`,
-      },
-    ];
   },
 };
 

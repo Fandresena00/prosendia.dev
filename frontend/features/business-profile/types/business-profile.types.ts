@@ -54,6 +54,7 @@ export interface BusinessProfileSummaryDto {
   businessType:     string;
   facebookPageId:   string | null;
   facebookPageName: string | null;
+  facebookPageAvatarUrl?: string | null;
   autoReply:        boolean;
   updatedAt:        string;
 }

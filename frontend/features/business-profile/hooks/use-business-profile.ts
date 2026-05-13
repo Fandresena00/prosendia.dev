@@ -30,6 +30,11 @@ import type {
   Tone,
 } from "../types/business-profile.types";
 
+function buildFacebookPageAvatarUrl(pageId: string | null): string | null {
+  if (!pageId) return null;
+  return `https://graph.facebook.com/${encodeURIComponent(pageId)}/picture?type=large&width=96&height=96`;
+}
+
 // ─── Save state ───────────────────────────────────────────────────────────────
 
 export type SaveState = "idle" | "saving" | "saved" | "error";
@@ -96,7 +101,14 @@ export function useBusinessProfile() {
     setLoadingProfiles(true);
     fetchProfiles()
       .then((list) => {
-        setProfiles(list);
+        setProfiles(
+          list.map((profile) => ({
+            ...profile,
+            facebookPageAvatarUrl: buildFacebookPageAvatarUrl(
+              profile.facebookPageId,
+            ),
+          })),
+        );
         if (list.length > 0) setActiveProfileId(list[0].id);
       })
       .catch((error) => {
