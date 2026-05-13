@@ -9,6 +9,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
+import { TokenEncryptionService } from '../security/token-encryption.service.js';
 import { FacebookGraphClient } from '../clients/facebook-graph.client.js';
 import {
   ReplyToCommentResponseDto,
@@ -24,7 +25,45 @@ export class FacebookMessagingService {
     private readonly prisma: PrismaService,
     private readonly graphClient: FacebookGraphClient,
     private readonly accounts: FacebookAccountService,
+    private readonly encryption: TokenEncryptionService,
   ) {}
+
+  async sendTextMessageInternal(
+    pageId: string,
+    psid: string,
+    text: string,
+    encryptedPageToken: string,
+  ): Promise<SendMessageResponseDto> {
+    if (!pageId || !psid || !text.trim()) {
+      throw new Error('Invalid internal message payload');
+    }
+    const token = this.encryption.decrypt(encryptedPageToken);
+    const result = await this.graphClient.sendTextMessage(psid, text, token);
+    return {
+      recipientId: result.recipient_id,
+      messageId: result.message_id,
+    };
+  }
+
+  /**
+   * Internal sender for AI workflow where we already have pageId + encrypted token.
+   */
+  async sendImageMessageInternal(
+    pageId: string,
+    psid: string,
+    imageUrl: string,
+    encryptedPageToken: string,
+  ): Promise<SendMessageResponseDto> {
+    if (!pageId || !psid || !this.isSafeImageUrl(imageUrl)) {
+      throw new Error('Invalid internal image payload');
+    }
+    const token = this.encryption.decrypt(encryptedPageToken);
+    const result = await this.graphClient.sendImageMessage(psid, imageUrl, token);
+    return {
+      recipientId: result.recipient_id,
+      messageId: result.message_id,
+    };
+  }
 
   // ─── Direct Messages ──────────────────────────────────────────────────────
 
@@ -38,7 +77,10 @@ export class FacebookMessagingService {
     recipientPsid: string,
     text: string,
   ): Promise<SendMessageResponseDto> {
-    const conn = await this.accounts.requireByProfileId(businessProfileId, userId);
+    const conn = await this.accounts.requireByProfileId(
+      businessProfileId,
+      userId,
+    );
 
     const result = await this.graphClient.sendTextMessage(
       recipientPsid,
@@ -70,7 +112,13 @@ export class FacebookMessagingService {
     recipientPsid: string,
     imageUrl: string,
   ): Promise<SendMessageResponseDto> {
-    const conn = await this.accounts.requireByProfileId(businessProfileId, userId);
+    if (!this.isSafeImageUrl(imageUrl)) {
+      throw new Error('Image URL must be a valid HTTPS URL');
+    }
+    const conn = await this.accounts.requireByProfileId(
+      businessProfileId,
+      userId,
+    );
 
     const result = await this.graphClient.sendImageMessage(
       recipientPsid,
@@ -107,7 +155,10 @@ export class FacebookMessagingService {
     externalCommentId: string,
     message: string,
   ): Promise<ReplyToCommentResponseDto> {
-    const conn = await this.accounts.requireByProfileId(businessProfileId, userId);
+    const conn = await this.accounts.requireByProfileId(
+      businessProfileId,
+      userId,
+    );
 
     const result = await this.graphClient.replyToComment(
       externalCommentId,
@@ -204,5 +255,14 @@ export class FacebookMessagingService {
         status: 'SENT',
       },
     });
+  }
+
+  private isSafeImageUrl(value: string): boolean {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
   }
 }

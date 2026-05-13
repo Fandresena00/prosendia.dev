@@ -147,8 +147,13 @@ export class FacebookController {
     @Query('limit') limit = 20,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ synced: number }> {
+    const result = await this.syncService.syncConversations(
+      businessProfileId,
+      user.sub,
+      +limit,
+    );
     return {
-      synced: await this.syncService.syncConversations(businessProfileId, user.sub, +limit),
+      synced: result.synced,
     };
   }
 
@@ -160,12 +165,13 @@ export class FacebookController {
     @Query('limit') limit = 25,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ synced: number }> {
+    const result = await this.syncService.syncConversationMessages(
+      conversationId,
+      user.sub,
+      +limit,
+    );
     return {
-      synced: await this.syncService.syncConversationMessages(
-        conversationId,
-        user.sub,
-        +limit,
-      ),
+      synced: result.synced,
     };
   }
 

@@ -34,14 +34,18 @@ import {
   REPLY_AI_FALLBACK_MODELS,
   REPLY_AI_MODEL,
 } from '../config/ai-models.config.js';
-import { PromptBuilderService, type BusinessContext, type ReferenceImage } from './prompt-builder.service.js';
+import {
+  PromptBuilderService,
+  type BusinessContext,
+  type ReferenceImage,
+} from './prompt-builder.service.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ReplyContext {
-  inboundMessageId?:  string;
-  inboundText?:       string;
-  inboundCreatedAt?:  string;
+  inboundMessageId?: string;
+  inboundText?: string;
+  inboundCreatedAt?: string;
 }
 
 // ─── Service ──────────────────────────────────────────────────────────────────
@@ -51,11 +55,11 @@ export class ReplyAiService {
   private readonly logger = new Logger(ReplyAiService.name);
 
   constructor(
-    private readonly prisma:          PrismaService,
-    private readonly openRouter:      OpenRouterClient,
-    private readonly promptBuilder:   PromptBuilderService,
-    private readonly fbMessaging:     FacebookMessagingService,
-    private readonly sseEmitter:      InboxEventEmitter,
+    private readonly prisma: PrismaService,
+    private readonly openRouter: OpenRouterClient,
+    private readonly promptBuilder: PromptBuilderService,
+    private readonly fbMessaging: FacebookMessagingService,
+    private readonly sseEmitter: InboxEventEmitter,
   ) {}
 
   // ─── Main entry point ─────────────────────────────────────────────────────
@@ -73,10 +77,12 @@ export class ReplyAiService {
       );
 
       // Mark conversation as no longer needing a reply
-      await this.prisma.conversation.update({
-        where: { id: conversationId },
-        data:  { needsAiReply: false },
-      }).catch(() => undefined);
+      await this.prisma.conversation
+        .update({
+          where: { id: conversationId },
+          data: { needsAiReply: false },
+        })
+        .catch(() => undefined);
 
       throw err;
     }
@@ -90,22 +96,22 @@ export class ReplyAiService {
   ): Promise<void> {
     // Load conversation + all necessary relations
     const conversation = await this.prisma.conversation.findUnique({
-      where:   { id: conversationId },
+      where: { id: conversationId },
       include: {
         messages: {
           orderBy: { createdAt: 'desc' },
-          take:    AI_CONTEXT_CONFIG.MAX_CONTEXT_MESSAGES + 5, // fetch a few extra for safety
+          take: AI_CONTEXT_CONFIG.MAX_CONTEXT_MESSAGES + 5, // fetch a few extra for safety
         },
         businessProfile: {
           include: {
-            aiConfig:           true,
-            aiModelConfig:      true,
+            aiConfig: true,
+            aiModelConfig: true,
             facebookConnection: {
-              where:  { isActive: true },
+              where: { isActive: true },
               select: { pageId: true, encryptedAccessToken: true },
             },
             chatResources: {
-              where:   { isActive: true },
+              where: { isActive: true },
               include: { images: { orderBy: { sortOrder: 'asc' } } },
             },
           },
@@ -114,14 +120,16 @@ export class ReplyAiService {
     });
 
     if (!conversation) {
-      this.logger.warn(`Conversation ${conversationId} not found — skipping AI reply`);
+      this.logger.warn(
+        `Conversation ${conversationId} not found — skipping AI reply`,
+      );
       return;
     }
 
     const { businessProfile } = conversation;
-    const aiConfig    = businessProfile.aiConfig;
+    const aiConfig = businessProfile.aiConfig;
     const modelConfig = businessProfile.aiModelConfig;
-    const connection  = businessProfile.facebookConnection;
+    const connection = businessProfile.facebookConnection;
 
     if (!aiConfig || !connection) {
       this.logger.warn(
@@ -134,38 +142,39 @@ export class ReplyAiService {
     if (conversation.messages.length === 0) {
       this.logger.warn(
         `Conversation ${conversationId} has no messages in DB — skipping AI reply. ` +
-        `This may be a ghost conversation created without synced messages.`,
+          `This may be a ghost conversation created without synced messages.`,
       );
       await this.prisma.conversation.update({
         where: { id: conversationId },
-        data:  { needsAiReply: false },
+        data: { needsAiReply: false },
       });
       return;
     }
 
     // Build business context
     const businessCtx: BusinessContext = {
-      businessName:        businessProfile.name,
-      businessType:        businessProfile.businessType,
-      description:         businessProfile.description,
-      tone:                aiConfig.tone,
-      responseStyle:       aiConfig.responseStyle,
-      replyLanguage:       aiConfig.replyLanguage,
-      systemPrompt:        aiConfig.systemPrompt,
-      inboxInstructions:   aiConfig.inboxInstructions,
+      businessName: businessProfile.name,
+      businessType: businessProfile.businessType,
+      description: businessProfile.description,
+      tone: aiConfig.tone,
+      responseStyle: aiConfig.responseStyle,
+      replyLanguage: aiConfig.replyLanguage,
+      systemPrompt: aiConfig.systemPrompt,
+      inboxInstructions: aiConfig.inboxInstructions,
       personalizeGreeting: aiConfig.personalizeGreeting,
-      blockedKeywords:     aiConfig.blockedKeywords as string[],
-      allowedTopics:       aiConfig.allowedTopics as string[],
+      blockedKeywords: aiConfig.blockedKeywords as string[],
+      allowedTopics: aiConfig.allowedTopics as string[],
       escalationThreshold: aiConfig.escalationThreshold,
     };
 
     // Reference images for the AI catalogue
-    const referenceImages: ReferenceImage[] = businessProfile.chatResources.flatMap(
-      (resource) => resource.images.map((img) => ({
-        url:         img.url,
-        description: img.description,
-      })),
-    );
+    const referenceImages: ReferenceImage[] =
+      businessProfile.chatResources.flatMap((resource) =>
+        resource.images.map((img) => ({
+          url: img.url,
+          description: img.description,
+        })),
+      );
 
     // Build system prompt
     const systemPrompt = this.promptBuilder.buildReplySystemPrompt(
@@ -175,19 +184,24 @@ export class ReplyAiService {
 
     // Get latest summary for context compression
     const latestSummary = await this.prisma.conversationSummary.findFirst({
-      where:   { conversationId },
+      where: { conversationId },
       orderBy: { createdAt: 'desc' },
-      select:  { summary: true },
+      select: { summary: true },
     });
 
     // Recent messages (reversed so oldest first for context building)
-    const maxCtxMessages = aiConfig.maxContextMessages ?? AI_CONTEXT_CONFIG.MAX_CONTEXT_MESSAGES;
+    const maxCtxMessages =
+      aiConfig.maxContextMessages ?? AI_CONTEXT_CONFIG.MAX_CONTEXT_MESSAGES;
     const recentMessages = [...conversation.messages]
       .slice(0, maxCtxMessages)
       .reverse()
       .map((msg) => ({
-        sender:   (msg.sender === 'CLIENT' ? 'client' : msg.sender === 'AI' ? 'ai' : 'page') as 'client' | 'ai' | 'page' | 'human',
-        content:  msg.content,
+        sender: (msg.sender === 'CLIENT'
+          ? 'client'
+          : msg.sender === 'AI'
+            ? 'ai'
+            : 'page') as 'client' | 'ai' | 'page' | 'human',
+        content: msg.content,
         imageUrl: msg.imageUrl,
       }));
 
@@ -203,7 +217,7 @@ export class ReplyAiService {
       );
       await this.prisma.conversation.update({
         where: { id: conversationId },
-        data:  { needsAiReply: false },
+        data: { needsAiReply: false },
       });
       return;
     }
@@ -218,8 +232,9 @@ export class ReplyAiService {
 
     // Determine model to use (from DB config or central default)
     const primaryModelId = modelConfig?.replyModelId ?? REPLY_AI_MODEL.MODEL_ID;
-    const maxTokens      = modelConfig?.replyMaxTokens ?? REPLY_AI_MODEL.MAX_TOKENS;
-    const temperature    = modelConfig?.replyTemperature ?? REPLY_AI_MODEL.TEMPERATURE;
+    const maxTokens = modelConfig?.replyMaxTokens ?? REPLY_AI_MODEL.MAX_TOKENS;
+    const temperature =
+      modelConfig?.replyTemperature ?? REPLY_AI_MODEL.TEMPERATURE;
 
     // FIX: Fallback model chain — try primary first, then fallbacks in order.
     // A model can fail for many reasons: rate limit, empty response after
@@ -229,7 +244,12 @@ export class ReplyAiService {
       ...REPLY_AI_FALLBACK_MODELS.filter((m) => m !== primaryModelId),
     ];
 
-    let result: { content: string; totalTokens: number; model: string; latencyMs: number } | null = null;
+    let result: {
+      content: string;
+      totalTokens: number;
+      model: string;
+      latencyMs: number;
+    } | null = null;
     let lastError: unknown = null;
 
     for (const modelId of modelsToTry) {
@@ -238,7 +258,7 @@ export class ReplyAiService {
           `Trying model ${modelId} for conversation=${conversationId}`,
         );
         const response = await this.openRouter.complete({
-          model:       modelId,
+          model: modelId,
           messages,
           maxTokens,
           temperature,
@@ -251,20 +271,22 @@ export class ReplyAiService {
 
         this.logger.warn(
           `Model ${modelId} returned empty content for conversation=${conversationId} — ` +
-          `trying next model`,
+            `trying next model`,
         );
       } catch (err: unknown) {
         lastError = err;
         const message = err instanceof Error ? err.message : String(err);
         this.logger.warn(
           `Model ${modelId} failed for conversation=${conversationId}: ${message} — ` +
-          `${modelsToTry.indexOf(modelId) < modelsToTry.length - 1 ? 'trying next model' : 'all models exhausted'}`,
+            `${modelsToTry.indexOf(modelId) < modelsToTry.length - 1 ? 'trying next model' : 'all models exhausted'}`,
         );
       }
     }
 
     if (!result) {
-      throw lastError ?? new Error('All AI models failed to produce a response');
+      throw (
+        lastError ?? new Error('All AI models failed to produce a response')
+      );
     }
 
     // Check for escalation signal
@@ -274,38 +296,44 @@ export class ReplyAiService {
       this.logger.log(
         `AI escalated conversation=${conversationId} — reason: ${reason}`,
       );
-      await this.handleEscalation(conversationId, reason, businessProfile.userId);
+      await this.handleEscalation(
+        conversationId,
+        reason,
+        businessProfile.userId,
+      );
       return;
     }
 
     // Extract [IMAGE: url] tokens and send images first
     const { textContent, imageUrls } = extractImageTokens(trimmedReply);
 
-    const pageToken = connection.encryptedAccessToken
-      ? (await import('../security/token-encryption.service.js').then(
-          (m) => new m.TokenEncryptionService().decrypt(connection.encryptedAccessToken)
-        ))
-      : null;
+    const encryptedPageToken = connection.encryptedAccessToken;
 
-    // We need to get the decrypted token — inject TokenEncryptionService instead
-    // (this requires a refactor, shown below as placeholder)
     const psid = conversation.clientPsid;
-    if (!psid || !pageToken) {
-      this.logger.warn(`Missing PSID or token for conversation=${conversationId}`);
+    if (!psid || !encryptedPageToken) {
+      this.logger.warn(
+        `Missing PSID or token for conversation=${conversationId}`,
+      );
       return;
     }
 
     // Send images first (before the text)
     for (const imageUrl of imageUrls) {
-      await this.fbMessaging.sendImageMessage(connection.pageId, psid, imageUrl);
+      await this.fbMessaging.sendImageMessageInternal(
+        connection.pageId,
+        psid,
+        imageUrl,
+        encryptedPageToken,
+      );
     }
 
     // Send the text reply
     if (textContent.trim()) {
-      const sentMessage = await this.fbMessaging.sendTextMessage(
+      const sentMessage = await this.fbMessaging.sendTextMessageInternal(
         connection.pageId,
         psid,
         textContent.trim(),
+        encryptedPageToken,
       );
 
       // Persist the AI reply to DB
@@ -313,9 +341,9 @@ export class ReplyAiService {
         data: {
           conversationId,
           externalId: sentMessage.messageId,
-          sender:     'AI',
-          content:    textContent.trim(),
-          status:     'DELIVERED',
+          sender: 'AI',
+          content: textContent.trim(),
+          status: 'DELIVERED',
         },
       });
 
@@ -323,16 +351,16 @@ export class ReplyAiService {
       this.sseEmitter.newMessage(businessProfile.userId, {
         conversationId,
         message: {
-          id:                 savedMsg.id,
+          id: savedMsg.id,
           conversationId,
-          sender:             'AI',
-          content:            textContent.trim(),
-          imageUrl:           null,
-          fileUrl:            null,
+          sender: 'AI',
+          content: textContent.trim(),
+          imageUrl: null,
+          fileUrl: null,
           referenceImageUrls: imageUrls,
-          status:             'DELIVERED',
-          externalId:         sentMessage.messageId,
-          createdAt:          savedMsg.createdAt,
+          status: 'DELIVERED',
+          externalId: sentMessage.messageId,
+          createdAt: savedMsg.createdAt,
         },
       });
     }
@@ -340,12 +368,12 @@ export class ReplyAiService {
     // Mark conversation as handled
     await this.prisma.conversation.update({
       where: { id: conversationId },
-      data:  { needsAiReply: false },
+      data: { needsAiReply: false },
     });
 
     this.logger.log(
       `AI reply sent — conversation=${conversationId} ` +
-      `tokens=${result.totalTokens} latency=${result.latencyMs}ms model=${result.model}`,
+        `tokens=${result.totalTokens} latency=${result.latencyMs}ms model=${result.model}`,
     );
   }
 
@@ -353,14 +381,14 @@ export class ReplyAiService {
 
   private async handleEscalation(
     conversationId: string,
-    reason:         string,
-    userId:         string,
+    reason: string,
+    userId: string,
   ): Promise<void> {
     await this.prisma.conversation.update({
       where: { id: conversationId },
-      data:  {
+      data: {
         handoverStatus: 'HUMAN',
-        needsAiReply:   false,
+        needsAiReply: false,
       },
     });
 
@@ -373,7 +401,7 @@ export class ReplyAiService {
         conversation: {
           ...updated,
           unreadCount: 0,
-          updatedAt:   new Date(),
+          updatedAt: new Date(),
         },
       });
     }
@@ -381,7 +409,10 @@ export class ReplyAiService {
 
   // ─── Resume AI mode ───────────────────────────────────────────────────────
 
-  async resumeAiForConversation(conversationId: string, userId: string): Promise<void> {
+  async resumeAiForConversation(
+    conversationId: string,
+    userId: string,
+  ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, businessProfile: { userId } },
       include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } },
@@ -391,7 +422,7 @@ export class ReplyAiService {
 
     await this.prisma.conversation.update({
       where: { id: conversationId },
-      data:  { handoverStatus: 'AI', needsAiReply: false },
+      data: { handoverStatus: 'AI', needsAiReply: false },
     });
 
     // If the last message was from the client, reply now
@@ -399,7 +430,7 @@ export class ReplyAiService {
     if (lastMsg?.sender === 'CLIENT') {
       await this.prisma.conversation.update({
         where: { id: conversationId },
-        data:  { needsAiReply: true },
+        data: { needsAiReply: true },
       });
       void this.replyToConversation(conversationId).catch(() => undefined);
     }
@@ -414,7 +445,7 @@ export class ReplyAiService {
  */
 function extractImageTokens(text: string): {
   textContent: string;
-  imageUrls:   string[];
+  imageUrls: string[];
 } {
   const imageUrls: string[] = [];
   const imageRegex = /\[IMAGE:\s*(https?:\/\/[^\]]+)\]/gi;
@@ -424,7 +455,10 @@ function extractImageTokens(text: string): {
     imageUrls.push(match[1].trim());
   }
 
-  const textContent = text.replace(imageRegex, '').replace(/\n{3,}/g, '\n\n').trim();
+  const textContent = text
+    .replace(imageRegex, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
   return { textContent, imageUrls };
 }
