@@ -10,37 +10,17 @@
 // ─── Reply AI ─────────────────────────────────────────────────────────────────
 
 export const REPLY_AI_MODEL = {
-  /**
-   * OpenRouter model ID.
-   * Llama 3.1 8B: fast, multilingual, no thinking-chain leakage, free tier.
-   */
-  MODEL_ID: 'openrouter/free',
-
-  /** Human-readable name shown in the UI model selector. */
-  MODEL_NAME: 'OpenRouter Free Router',
-
-  /** Maximum completion tokens per reply. */
+  MODEL_ID: 'anthropic/claude-3-5-haiku',
+  MODEL_NAME: 'Claude 3.5 Haiku',
   MAX_TOKENS: 400,
-
-  /** Balanced creativity for natural seller replies. */
   TEMPERATURE: 0.7,
 } as const;
-
 // ─── Data AI ──────────────────────────────────────────────────────────────────
 
 export const DATA_AI_MODEL = {
-  /**
-   * Gemma 2 9B: efficient, factual, good for text summarisation.
-   * Free tier available on OpenRouter.
-   */
-  MODEL_ID: 'openrouter/free',
-
-  MODEL_NAME: 'OpenRouter Free Router',
-
-  /** Summaries must stay concise. */
+  MODEL_ID: 'google/gemma-4-26b-a4b-it:free',
+  MODEL_NAME: 'Gemma 4 Free',
   MAX_TOKENS: 200,
-
-  /** Low creativity for factual extraction. */
   TEMPERATURE: 0.2,
 } as const;
 
@@ -65,7 +45,7 @@ export const AI_CONTEXT_CONFIG = {
  * All models here must NOT output thinking chains.
  */
 export const REPLY_AI_FALLBACK_MODELS = [
-  'openrouter/free',
-  'meta-llama/llama-3.2-3b-instruct:free',
-  'google/gemma-2-9b-it:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'nvidia/nemotron-nano-9b-v2:free',
+  'deepseek/deepseek-chat-v3-0324:free',
 ] as const;
