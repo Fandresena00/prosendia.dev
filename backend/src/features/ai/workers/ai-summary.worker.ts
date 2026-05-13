@@ -1,14 +1,15 @@
 /**
  * @file features/ai/workers/ai-summary.worker.ts
  *
- * Worker for ai.summarize jobs.
- * Lives in AiModule (see architecture note in ai-reply.worker.ts).
+ * FIX: Auto-create AiModelConfig with defaults when missing.
  *
- * Fixes applied:
- *   - Moved out of QueueModule to avoid circular dependency
- *   - catch (err: unknown) properly typed
- *   - Prisma select added for clientName to avoid fetching full record
- *   - Non-fatal config-missing case returns without throwing (no retry needed)
+ * Previously: if no AiModelConfig row existed for a profile, the worker
+ * logged a WARN and skipped silently — on every summary job indefinitely.
+ *
+ * New behaviour: if the config is missing, create it with the central
+ * defaults from ai-models.config.ts, then proceed with summarisation.
+ * This eliminates the repeated WARN and unblocks the summarisation pipeline
+ * without requiring manual DB intervention or an API call to create the config.
  */
 
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
@@ -16,6 +17,7 @@ import { PgBoss, type JobWithMetadata } from 'pg-boss';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { PG_BOSS_TOKEN } from '../../queue/providers/pg-boss.provider.js';
 import { QUEUE_JOBS, type AiSummarizePayload } from '../../queue/queue.constants.js';
+import { DATA_AI_MODEL } from '../config/ai-models.config.js';
 import { DataAiService } from '../services/data-ai.service.js';
 
 const TEAM_SIZE = 5;
@@ -47,23 +49,23 @@ export class AiSummaryWorker implements OnModuleInit {
   private async handle(job: JobWithMetadata<AiSummarizePayload>): Promise<void> {
     const { conversationId, businessProfileId } = job.data;
 
-    this.logger.debug(
-      `Processing ai.summarize — conv=${conversationId} job=${job.id}`,
-    );
+    this.logger.debug(`Processing ai.summarize — conv=${conversationId} job=${job.id}`);
 
     try {
-      const modelConfig = await this.prisma.aiModelConfig.findUnique({
+      // FIX: Auto-create AiModelConfig with defaults if missing.
+      // Uses upsert — no-op if already exists, creates with defaults otherwise.
+      const modelConfig = await this.prisma.aiModelConfig.upsert({
         where:  { businessProfileId },
+        create: {
+          businessProfileId,
+          // Use the central constants as defaults — same values as the Prisma schema defaults
+          summaryModelId:   DATA_AI_MODEL.MODEL_ID,
+          summaryModelName: DATA_AI_MODEL.MODEL_NAME,
+          summaryMaxTokens: DATA_AI_MODEL.MAX_TOKENS,
+        },
+        update: {},
         select: { summaryModelId: true, summaryMaxTokens: true },
       });
-
-      if (!modelConfig) {
-        // Config doesn't exist — skip without retrying (config issue, not transient)
-        this.logger.warn(
-          `No AiModelConfig for profile=${businessProfileId} — ai.summarize skipped`,
-        );
-        return;
-      }
 
       const conversation = await this.prisma.conversation.findUnique({
         where:  { id: conversationId },
@@ -71,7 +73,6 @@ export class AiSummaryWorker implements OnModuleInit {
       });
 
       if (!conversation) {
-        // Conversation deleted — skip without retrying
         this.logger.warn(
           `Conversation ${conversationId} not found — ai.summarize skipped`,
         );

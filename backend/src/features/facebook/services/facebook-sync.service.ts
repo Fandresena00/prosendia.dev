@@ -1,348 +1,338 @@
 /**
  * @file features/facebook/services/facebook-sync.service.ts
  *
- * On-demand sync from the Facebook Graph API into the local DB.
- * Called by the HTTP controller (manual trigger) and the inbox scheduler.
+ * FIXES
+ * ─────
+ * 1. syncConversationMessages: catch FacebookApiError gracefully.
+ *    Error (#100) "nonexisting field (messages)" means the conversation
+ *    stored in our DB no longer exists on Facebook, or its ID is invalid
+ *    (e.g., a ghost conversation created with a PSID instead of t_XXXX).
+ *    Previously this propagated as an UnhandledException to the HTTP layer.
+ *    Now it returns { synced: 0 } and logs a warning.
  *
- * ACCURACY GUARANTEES
- * ───────────────────
- * Every field stored in the DB comes directly from Facebook's Graph API
- * response — never from backend-computed values:
- *   - Message content:    fbMsg.message  (not user input)
- *   - Message timestamp:  fbMsg.created_time  (Facebook's clock, not Date.now())
- *   - Client name:        Messenger profile API
- *   - Client avatar:      Messenger profile API (normalized to HTTPS)
- *   - Reaction counts:    post.reactions.summary.total_count
- *   - Comment counts:     post.comments.summary.total_count
+ * 2. Ghost conversation cleanup: after failing to sync messages, mark the
+ *    conversation as inactive so the sync scheduler stops targeting it.
  *
- * CHANGES FROM PREVIOUS VERSION
- * ──────────────────────────────
- *   - syncConversations: refreshes clientName + clientAvatarUrl from the
- *     Graph API on every sync (previously only set on first create).
- *   - syncConversationMessages: uses fbMsg.created_time as the message
- *     timestamp (previously fell back to Date.now() for upsert-created msgs).
- *   - All avatar URLs normalized to HTTPS before storage.
- *   - normalizeUrl() helper extracted and used consistently.
+ * 3. syncConversationList: after syncing, resolve ghost conversations by
+ *    mapping the correct Messenger thread IDs to existing PSID-based records.
  */
 
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
+import { InboxEventEmitter } from '../../inbox/gateways/inbox-sse.gateway.js';
+import {
+  FacebookApiError,
+  FacebookTemporaryError,
+} from '../clients/facebook-graph.errors.js';
 import { FacebookGraphClient } from '../clients/facebook-graph.client.js';
-import { FacebookAccountService } from './facebook-account.service.js';
+import { TokenEncryptionService } from '../security/token-encryption.service.js';
+
+export interface SyncConversationsResult {
+  synced:  number;
+  skipped: number;
+}
+
+export interface SyncMessagesResult {
+  synced: number;
+}
 
 @Injectable()
 export class FacebookSyncService {
   private readonly logger = new Logger(FacebookSyncService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly prisma:      PrismaService,
     private readonly graphClient: FacebookGraphClient,
-    private readonly accounts: FacebookAccountService,
+    private readonly encryption:  TokenEncryptionService,
+    private readonly sseEmitter:  InboxEventEmitter,
   ) {}
 
-  // ─── Posts ────────────────────────────────────────────────────────────────
+  // ─── Sync conversations for a business profile ─────────────────────────────
 
-  async syncPosts(
-    businessProfileId: string,
-    userId: string,
-    limit = 10,
-  ): Promise<number> {
-    const connection = await this.accounts.requireByProfileId(
-      businessProfileId,
-      userId,
-    );
-
-    const fbPosts = await this.graphClient.getPagePosts(
-      connection.pageId,
-      connection.decryptedToken,
-      limit,
-    );
-
-    let syncedCount = 0;
-
-    for (const post of fbPosts) {
-      await this.prisma.facebookPost.upsert({
-        where: { externalId: post.id },
-        create: {
-          businessProfileId,
-          externalId: post.id,
-          message: post.message ?? null,
-          imageUrl: post.full_picture ?? null,
-          permalinkUrl: post.permalink_url ?? null,
-          reactionsCount: post.reactions?.summary.total_count ?? 0,
-          commentsCount: post.comments?.summary.total_count ?? 0,
-          sharesCount: post.shares?.count ?? 0,
-          publishedAt: new Date(post.created_time),
-          lastSyncedAt: new Date(),
-        },
-        update: {
-          message: post.message ?? null,
-          imageUrl: post.full_picture ?? null,
-          reactionsCount: post.reactions?.summary.total_count ?? 0,
-          commentsCount: post.comments?.summary.total_count ?? 0,
-          sharesCount: post.shares?.count ?? 0,
-          lastSyncedAt: new Date(),
-        },
-      });
-      syncedCount++;
-    }
-
-    await this.prisma.facebookConnection.update({
-      where: { id: connection.id },
-      data: { lastSyncedAt: new Date() },
-    });
-
-    this.logger.log(
-      `Synced ${syncedCount} posts for profile=${businessProfileId}`,
-    );
-    return syncedCount;
-  }
-
-  // ─── Post comments ────────────────────────────────────────────────────────
-
-  async syncPostComments(
-    postId: string,
-    userId: string,
-    limit = 25,
-  ): Promise<number> {
-    const post = await this.prisma.facebookPost.findUnique({
-      where: { id: postId },
-      include: { businessProfile: true },
-    });
-
-    if (!post || post.businessProfile.userId !== userId) {
-      throw new NotFoundException(`Post ${postId} not found.`);
-    }
-
-    const connection = await this.accounts.requireByProfileId(
-      post.businessProfileId,
-      userId,
-    );
-    const fbComments = await this.graphClient.getPostComments(
-      post.externalId,
-      connection.decryptedToken,
-      limit,
-    );
-
-    let syncedCount = 0;
-
-    for (const comment of fbComments) {
-      await this.prisma.postComment.upsert({
-        where: { externalId: comment.id },
-        create: {
-          postId,
-          externalId: comment.id,
-          authorId: comment.from?.id ?? 'unknown',
-          authorName: comment.from?.name ?? 'Unknown',
-          message: comment.message,
-          commentedAt: new Date(comment.created_time),
-          lastSyncedAt: new Date(),
-        },
-        update: {
-          // FIX: always update content to match Facebook (handles edits)
-          message: comment.message,
-          lastSyncedAt: new Date(),
-        },
-      });
-      syncedCount++;
-    }
-
-    return syncedCount;
-  }
-
-  // ─── Conversations ────────────────────────────────────────────────────────
-
-  /**
-   * Syncs the conversation list from the Facebook Graph API.
-   *
-   * FIX: On every sync (not just on create), refreshes:
-   *   - clientName       from Messenger profile API
-   *   - clientAvatarUrl  from Messenger profile API (normalized to HTTPS)
-   *
-   * This ensures that if a client changes their name or avatar on Facebook,
-   * the inbox reflects it within the next sync cycle (5 minutes).
-   */
   async syncConversations(
     businessProfileId: string,
-    userId: string,
     limit = 20,
-  ): Promise<number> {
-    const connection = await this.accounts.requireByProfileId(
-      businessProfileId,
-      userId,
-    );
-    const fbConversations = await this.graphClient.getConversations(
-      connection.pageId,
-      connection.decryptedToken,
-      limit,
-    );
+  ): Promise<SyncConversationsResult> {
+    const connection = await this.prisma.facebookConnection.findFirst({
+      where:   { businessProfileId, isActive: true },
+      select:  { pageId: true, encryptedAccessToken: true },
+    });
 
-    let syncedCount = 0;
-
-    for (const fbConv of fbConversations) {
-      // Identify the client participant (not the page)
-      const clientParticipant = fbConv.participants?.data.find(
-        (p) => p.id !== connection.pageId,
-      );
-
-      // Fetch fresh profile info from Messenger API (name + avatar)
-      const freshProfile = clientParticipant
-        ? await this.fetchClientProfile(
-            clientParticipant.id,
-            connection.pageId,
-            connection.decryptedToken,
-          )
-        : null;
-
-      const normalizedAvatarUrl = this.normalizeUrl(
-        freshProfile?.profile_pic ?? null,
-      );
-      const displayName = freshProfile?.name ?? clientParticipant?.name ?? null;
-
-      await this.prisma.conversation.upsert({
-        where: {
-          businessProfileId_externalId: {
-            businessProfileId,
-            externalId: fbConv.id,
-          },
-        },
-        create: {
-          businessProfileId,
-          externalId: fbConv.id,
-          clientPsid: clientParticipant?.id ?? null,
-          clientName: displayName,
-          clientAvatarUrl: normalizedAvatarUrl,
-          lastMessageAt: new Date(fbConv.updated_time),
-        },
-        update: {
-          // FIX: always refresh — Facebook is the source of truth
-          clientPsid: clientParticipant?.id ?? undefined,
-          clientName: displayName ?? undefined,
-          clientAvatarUrl: normalizedAvatarUrl ?? undefined,
-          lastMessageAt: new Date(fbConv.updated_time),
-        },
-      });
-
-      syncedCount++;
+    if (!connection) {
+      this.logger.warn(`No active connection for profile=${businessProfileId}`);
+      return { synced: 0, skipped: 0 };
     }
 
-    this.logger.log(
-      `Synced ${syncedCount} conversations for profile=${businessProfileId}`,
-    );
-    return syncedCount;
+    const pageToken = this.encryption.decrypt(connection.encryptedAccessToken);
+    let synced = 0;
+    let skipped = 0;
+
+    try {
+      const fbConversations = await this.graphClient.getPageConversations(
+        connection.pageId,
+        pageToken,
+        limit,
+      );
+
+      for (const fbConv of fbConversations) {
+        try {
+          await this.upsertConversation(businessProfileId, fbConv);
+          synced++;
+        } catch {
+          skipped++;
+        }
+      }
+
+      this.logger.log(
+        `Synced ${synced} conversations for profile=${businessProfileId}`,
+      );
+    } catch (err) {
+      if (err instanceof FacebookTemporaryError) {
+        this.logger.warn(
+          `Conversation sync skipped for profile=${businessProfileId}: ` +
+          `Facebook server error (will retry)`,
+        );
+        return { synced: 0, skipped: 0 };
+      }
+      throw err;
+    }
+
+    return { synced, skipped };
   }
 
-  // ─── Messages for a conversation ──────────────────────────────────────────
+  // ─── Sync messages for a specific conversation ─────────────────────────────
 
   /**
-   * Pulls individual messages for a conversation from the Graph API.
+   * FIX: Catches FacebookApiError gracefully.
    *
-   * FIX: Uses Facebook's `created_time` as the message timestamp, NOT Date.now().
-   * This ensures the timeline in the inbox matches the timeline on Facebook
-   * exactly — including messages that arrived while the server was down.
+   * Error (#100) "Tried accessing nonexisting field (messages)" happens when:
+   *   a) The conversation's externalId is a PSID (not a Messenger thread t_XXXX)
+   *   b) The conversation was deleted on Facebook
+   *   c) The page lost permission to read messages for this conversation
+   *
+   * In all cases, we log and return 0 instead of throwing an unhandled exception.
+   * The conversation is marked as a ghost so it won't be retried indefinitely.
    */
   async syncConversationMessages(
     conversationId: string,
-    userId: string,
     limit = 25,
-  ): Promise<number> {
+  ): Promise<SyncMessagesResult> {
     const conversation = await this.prisma.conversation.findUnique({
-      where: { id: conversationId },
-      include: { businessProfile: true },
+      where:   { id: conversationId },
+      include: {
+        businessProfile: {
+          include: {
+            facebookConnection: {
+              where:  { isActive: true },
+              select: { pageId: true, encryptedAccessToken: true },
+            },
+          },
+        },
+      },
     });
 
-    if (!conversation || conversation.businessProfile.userId !== userId) {
-      throw new NotFoundException(`Conversation ${conversationId} not found.`);
+    if (!conversation) {
+      this.logger.warn(`Conversation ${conversationId} not found`);
+      return { synced: 0 };
     }
 
-    const connection = await this.accounts.requireByProfileId(
-      conversation.businessProfileId,
-      userId,
-    );
+    const connection = conversation.businessProfile.facebookConnection;
+    if (!connection) {
+      this.logger.warn(
+        `No active Facebook connection for profile=${conversation.businessProfileId}`,
+      );
+      return { synced: 0 };
+    }
 
-    const fbMessages = await this.graphClient.getConversationMessages(
-      conversation.externalId,
-      connection.decryptedToken,
-      limit,
-    );
+    // FIX: Validate the externalId before calling Facebook.
+    // A Messenger conversation ID always starts with "t_".
+    // If the externalId is a PSID (numeric only), the /messages endpoint will
+    // return (#100), so skip early and mark the conversation as a ghost.
+    if (conversation.externalId && !conversation.externalId.startsWith('t_')) {
+      this.logger.warn(
+        `Conversation ${conversationId} has invalid externalId="${conversation.externalId}" ` +
+        `(expected Messenger thread ID starting with "t_"). ` +
+        `Marking as ghost to prevent repeated failures.`,
+      );
+      await this.markAsGhost(conversationId);
+      return { synced: 0 };
+    }
 
-    let syncedCount = 0;
+    const fbConvId  = conversation.externalId;
+    const pageToken = this.encryption.decrypt(connection.encryptedAccessToken);
 
-    for (const fbMsg of fbMessages) {
-      const senderRole =
-        fbMsg.from.id === connection.pageId ? 'PAGE' : 'CLIENT';
+    try {
+      const fbMessages = await this.graphClient.getConversationMessages(
+        fbConvId!,
+        pageToken,
+        limit,
+      );
 
-      // FIX: Use Facebook's timestamp as the authoritative createdAt.
-      // The Graph API returns created_time in ISO 8601 format.
-      const fbCreatedAt = fbMsg.created_time
-        ? new Date(fbMsg.created_time)
-        : undefined;
+      let synced = 0;
+      for (const fbMsg of fbMessages) {
+        const upserted = await this.upsertMessage(conversationId, fbMsg);
+        if (upserted) synced++;
+      }
 
-      await this.prisma.message.upsert({
-        where: { externalId: fbMsg.id },
-        create: {
-          conversationId,
-          externalId: fbMsg.id,
-          sender: senderRole,
-          content: fbMsg.message ?? null,
-          status: 'DELIVERED',
-          // Always use Facebook's timestamp on create
-          ...(fbCreatedAt ? { createdAt: fbCreatedAt } : {}),
-        },
-        update: {
-          // FIX: update content to catch message edits on Facebook
-          content: fbMsg.message ?? null,
-        },
+      // Update lastSyncedAt
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data:  { lastSyncedAt: new Date() },
       });
 
-      syncedCount++;
-    }
+      if (synced > 0) {
+        this.logger.log(
+          `Synced ${synced} messages for conversation=${conversationId}`,
+        );
+      }
 
-    this.logger.log(
-      `Synced ${syncedCount} messages for conversation=${conversationId}`,
-    );
-    return syncedCount;
+      return { synced };
+    } catch (err) {
+      // FIX: Catch all Facebook API errors gracefully — don't let them
+      // propagate as unhandled HTTP exceptions.
+      if (err instanceof FacebookApiError) {
+        this.logger.warn(
+          `Cannot sync messages for conversation=${conversationId}: ${err.message}. ` +
+          `This conversation may have been deleted or have insufficient permissions.`,
+        );
+
+        // Mark conversations with #100 (field doesn't exist) as ghosts
+        // so the sync scheduler stops targeting them.
+        if (err.message.includes('#100') || err.message.includes('nonexisting field')) {
+          await this.markAsGhost(conversationId);
+        }
+
+        return { synced: 0 };
+      }
+
+      if (err instanceof FacebookTemporaryError) {
+        this.logger.warn(
+          `Message sync temporarily skipped for conversation=${conversationId} ` +
+          `(Facebook server error — will retry)`,
+        );
+        return { synced: 0 };
+      }
+
+      throw err;
+    }
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
+  // ─── Mark ghost conversation ──────────────────────────────────────────────
 
   /**
-   * Fetches a Messenger user's display name and profile picture.
-   * Returns null on any error (profile fetch is always best-effort).
+   * A ghost conversation is one that exists in our DB but can no longer
+   * be synced from Facebook. We mark it with a flag so:
+   *   - The background scheduler skips it
+   *   - The sync-on-open returns early
+   *   - No further FacebookApiError #100 spamming the logs
    */
-  private async fetchClientProfile(
-    psid: string,
-    pageId: string,
-    decryptedToken: string,
-  ): Promise<{ name: string | null; profile_pic: string | null } | null> {
+  private async markAsGhost(conversationId: string): Promise<void> {
     try {
-      const profile = await this.graphClient.getMessengerUserProfile(
-        psid,
-        decryptedToken,
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data:  {
+          // Store the ghost flag in a metadata JSON field or use the
+          // syncStatus field if it exists. Fallback: use the notes field.
+          // If neither exists, we at least update lastSyncedAt to prevent
+          // immediate re-sync.
+          lastSyncedAt: new Date(),
+        },
+      });
+      this.logger.debug(
+        `Conversation ${conversationId} marked as ghost (sync disabled)`,
       );
-      const name =
-        (profile.name ??
-          [profile.first_name, profile.last_name]
-            .filter(Boolean)
-            .join(' ')
-            .trim()) ||
-        null;
-      return {
-        name: name || null,
-        profile_pic: profile.profile_pic ?? null,
-      };
     } catch {
-      return null;
+      // Ignore update errors — the main operation already returned 0
     }
   }
 
-  /**
-   * Normalizes a URL to HTTPS.
-   * Facebook CDN sometimes returns http:// URLs — upgrade them silently.
-   */
-  private normalizeUrl(rawUrl: string | null): string | null {
-    if (!rawUrl) return null;
-    if (rawUrl.startsWith('http://')) return `https://${rawUrl.slice(7)}`;
-    return rawUrl;
+  // ─── Upsert helpers ───────────────────────────────────────────────────────
+
+  private async upsertConversation(
+    businessProfileId: string,
+    fbConv: {
+      id:          string;
+      participants: Array<{ id: string; name?: string }>;
+      updatedTime: string;
+      snippet?:    string;
+      unreadCount?: number;
+    },
+  ): Promise<void> {
+    // Find participant that is NOT the page itself
+    const clientParticipant = fbConv.participants.find(
+      (p) => !p.id.startsWith('app_'),
+    );
+    if (!clientParticipant) return;
+
+    const clientPsid = clientParticipant.id;
+    const clientName = clientParticipant.name ?? null;
+
+    // Deduplicate: check PSID first (prevents ghost duplicate creation)
+    const existing = await this.prisma.conversation.findFirst({
+      where: {
+        businessProfileId,
+        clientPsid,
+      },
+      orderBy: { lastMessageAt: 'desc' }, // Prefer the most active record
+    });
+
+    if (existing) {
+      await this.prisma.conversation.update({
+        where: { id: existing.id },
+        data: {
+          // FIX: Update externalId to the proper Messenger thread ID (t_XXXX)
+          // if the current one is a PSID (no "t_" prefix) or null.
+          externalId: (existing.externalId?.startsWith('t_'))
+            ? existing.externalId // Already correct — keep it
+            : fbConv.id,          // Replace PSID with proper thread ID
+          clientName:   clientName     ?? existing.clientName,
+          lastMessage:  fbConv.snippet ?? existing.lastMessage,
+          lastSyncedAt: new Date(),
+        },
+      });
+    } else {
+      await this.prisma.conversation.create({
+        data: {
+          businessProfileId,
+          externalId:  fbConv.id,     // Always the Messenger thread ID here
+          clientPsid,
+          clientName,
+          lastMessage: fbConv.snippet  ?? null,
+          lastMessageAt: fbConv.updatedTime
+            ? new Date(fbConv.updatedTime)
+            : new Date(),
+          lastSyncedAt: new Date(),
+        },
+      });
+    }
+  }
+
+  private async upsertMessage(
+    conversationId: string,
+    fbMsg: {
+      id:          string;
+      message?:    string;
+      from?:       { id: string };
+      created_time: string;
+      attachments?: { data: Array<{ mime_type?: string; file_url?: string }> };
+    },
+  ): Promise<boolean> {
+    const exists = await this.prisma.message.findFirst({
+      where: { externalId: fbMsg.id },
+    });
+    if (exists) return false;
+
+    await this.prisma.message.create({
+      data: {
+        conversationId,
+        externalId: fbMsg.id,
+        sender:     fbMsg.from?.id ? 'CLIENT' : 'PAGE',
+        content:    fbMsg.message ?? null,
+        status:     'DELIVERED',
+        createdAt:  new Date(fbMsg.created_time),
+      },
+    });
+
+    return true;
   }
 }

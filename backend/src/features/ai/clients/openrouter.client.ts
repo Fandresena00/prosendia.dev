@@ -1,17 +1,24 @@
 /**
  * @file features/ai/clients/openrouter.client.ts
  *
- * Typed HTTP client for the OpenRouter API.
+ * FIXES
+ * ─────
+ * 1. CRASH FIX: `raw.choices[0]` → `raw.choices?.[0]`
+ *    When OpenRouter returns an error body that passes the `res.ok` check (rare
+ *    but observed), or the model returns an empty choices array, accessing
+ *    `raw.choices[0]` throws "Cannot read properties of undefined (reading '0')".
+ *    The optional chaining `raw.choices?.[0]` prevents the crash.
  *
- * OpenRouter exposes an OpenAI-compatible /v1/chat/completions endpoint.
- * Key differences from OpenAI:
- *   - Base URL: https://openrouter.ai/api/v1
- *   - Auth header: Authorization: Bearer <OPENROUTER_API_KEY>
- *   - Required extra headers: HTTP-Referer, X-Title
- *   - Model IDs: "<provider>/<model-name>" (e.g. "anthropic/claude-3.5-haiku")
+ * 2. THINKING CHAIN STRIPPING: `stripThinkingChain()`
+ *    Some free models (e.g. Nemotron, DeepSeek-R1) output their internal
+ *    reasoning before the actual reply:
+ *      <think>Okay, the user is greeting me...</think>
+ *      Bonjour ! Je suis là pour vous aider.
+ *    Without stripping, this reasoning gets sent verbatim to customers.
+ *    The function removes all known thinking-chain formats.
  *
- * This client keeps every call minimal — no retries, no streaming.
- * Callers are responsible for catching errors.
+ * 3. EMPTY RESPONSE GUARD: throws a descriptive error if the model returns
+ *    nothing useful after stripping, allowing the worker to retry.
  */
 
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
@@ -25,14 +32,10 @@ export interface ChatMessage {
 }
 
 export interface ChatCompletionOptions {
-  /** OpenRouter model ID, e.g. "anthropic/claude-3.5-haiku" */
   model:        string;
   messages:     ChatMessage[];
-  /** Hard token limit for the completion (not the full context) */
   maxTokens:    number;
-  /** 0 = deterministic, 1 = maximum randomness */
   temperature?: number;
-  /** Nucleus sampling probability threshold */
   topP?:        number;
 }
 
@@ -42,11 +45,8 @@ export interface ChatCompletionResult {
   replyTokens:  number;
   totalTokens:  number;
   model:        string;
-  /** Latency in milliseconds (wall clock) */
   latencyMs:    number;
 }
-
-// ─── OpenRouter API error ─────────────────────────────────────────────────────
 
 export class OpenRouterError extends Error {
   constructor(
@@ -57,6 +57,50 @@ export class OpenRouterError extends Error {
     super(message);
     this.name = 'OpenRouterError';
   }
+}
+
+// ─── Thinking chain stripper ──────────────────────────────────────────────────
+
+/**
+ * Removes internal reasoning chains from model output before sending to customers.
+ *
+ * Models that include thinking chains typically wrap them in XML-like tags.
+ * After stripping, leading/trailing whitespace is removed.
+ *
+ * Patterns handled:
+ *   <think>...</think>                — DeepSeek-R1, Qwen-thinking, etc.
+ *   <thinking>...</thinking>          — Some OpenAI-compat models
+ *   <reasoning>...</reasoning>        — Less common
+ *   [THINKING]...[/THINKING]          — Bracket variants
+ *
+ * NOTE: Models that emit RAW thinking text (like Nemotron) without any tags
+ * cannot be reliably stripped. Switch to a different model instead.
+ * See REPLY_AI_FALLBACK_MODELS in ai-models.config.ts.
+ */
+function stripThinkingChain(raw: string): string {
+  let result = raw;
+
+  // XML-style tags (most common)
+  result = result.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  result = result.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+  result = result.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '');
+
+  // Bracket-style tags
+  result = result.replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '');
+  result = result.replace(/\[THINK\][\s\S]*?\[\/THINK\]/gi, '');
+
+  // Some models use "Step X:" reasoning steps before the actual answer.
+  // Only strip if there's a clear separator (---) between reasoning and answer.
+  const separatorMatch = result.match(/\n[-=*]{3,}\n/);
+  if (separatorMatch?.index !== undefined) {
+    const afterSeparator = result.slice(separatorMatch.index + separatorMatch[0].length).trim();
+    // Only use the post-separator content if it's non-trivial
+    if (afterSeparator.length > 10) {
+      result = afterSeparator;
+    }
+  }
+
+  return result.trim();
 }
 
 // ─── Client ───────────────────────────────────────────────────────────────────
@@ -79,13 +123,6 @@ export class OpenRouterClient {
 
   // ─── Single completion call ───────────────────────────────────────────────
 
-  /**
-   * Send a chat completion request to OpenRouter.
-   * Returns the first choice's text and usage stats.
-   *
-   * Throws OpenRouterError on non-2xx responses.
-   * Throws InternalServerErrorException on network timeouts.
-   */
   async complete(opts: ChatCompletionOptions): Promise<ChatCompletionResult> {
     const start      = Date.now();
     const controller = new AbortController();
@@ -117,36 +154,56 @@ export class OpenRouterClient {
       });
 
       const latencyMs = Date.now() - start;
-      const json      = await res.json().catch(() => ({}));
+      const json      = await res.json().catch(() => ({})) as Record<string, unknown>;
 
       if (!res.ok) {
-        const msg = (json as { error?: { message?: string } }).error?.message
+        const msg = (json.error as { message?: string } | undefined)?.message
           ?? `HTTP ${res.status}`;
         throw new OpenRouterError(msg, res.status, json);
       }
 
-      const raw = json as {
-        model:   string;
-        choices: Array<{ message: { content: string } }>;
-        usage:   { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-      };
+      // FIX 1: raw.choices?.[0] — safe access if choices is undefined/null/empty
+      const choicesArray = json.choices as Array<{ message?: { content?: string } }> | undefined;
+      const rawContent   = choicesArray?.[0]?.message?.content ?? '';
 
-      const content = raw.choices[0]?.message?.content?.trim() ?? '';
+      // FIX 2: Strip thinking chains BEFORE the content reaches callers
+      const content = stripThinkingChain(rawContent);
+
+      // FIX 3: Guard against models that return nothing useful
+      if (!content) {
+        this.logger.warn(
+          `Model ${opts.model} returned empty content after stripping ` +
+          `(raw length: ${rawContent.length}). ` +
+          `This may be a thinking-only model — consider switching models.`,
+        );
+        throw new InternalServerErrorException(
+          `Model returned empty content: ${opts.model}`,
+        );
+      }
+
+      const usageRaw = json.usage as {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+      } | undefined;
+
+      const modelName = (json.model as string | undefined) ?? opts.model;
 
       this.logger.debug(
-        `✓ OpenRouter [${raw.model}] ${raw.usage?.total_tokens}t in ${latencyMs}ms`,
+        `✓ OpenRouter [${modelName}] ${usageRaw?.total_tokens ?? '?'}t in ${latencyMs}ms`,
       );
 
       return {
         content,
-        promptTokens: raw.usage?.prompt_tokens      ?? 0,
-        replyTokens:  raw.usage?.completion_tokens   ?? 0,
-        totalTokens:  raw.usage?.total_tokens        ?? 0,
-        model:        raw.model,
+        promptTokens: usageRaw?.prompt_tokens      ?? 0,
+        replyTokens:  usageRaw?.completion_tokens  ?? 0,
+        totalTokens:  usageRaw?.total_tokens       ?? 0,
+        model:        modelName,
         latencyMs,
       };
     } catch (err) {
-      if (err instanceof OpenRouterError) throw err;
+      if (err instanceof OpenRouterError)          throw err;
+      if (err instanceof InternalServerErrorException) throw err;
 
       if (err instanceof Error && err.name === 'AbortError') {
         throw new InternalServerErrorException(
@@ -164,18 +221,13 @@ export class OpenRouterClient {
 
   // ─── Model catalogue ──────────────────────────────────────────────────────
 
-  /**
-   * Fetch the list of available models from OpenRouter.
-   * Used by the AI config UI to let users pick their preferred models.
-   * Results are NOT cached — call sparingly (max once per UI load).
-   */
   async listModels(): Promise<OpenRouterModel[]> {
     try {
       const res  = await fetch(`${OPENROUTER_BASE_URL}/models`, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
       });
       const json = await res.json() as { data: OpenRouterModelRaw[] };
-      return json.data.map(mapModel).sort((a, b) => a.name.localeCompare(b.name));
+      return (json.data ?? []).map(mapModel).sort((a, b) => a.name.localeCompare(b.name));
     } catch (err) {
       this.logger.error(`Failed to fetch OpenRouter models: ${String(err)}`);
       return [];
@@ -188,13 +240,9 @@ export class OpenRouterClient {
 export interface OpenRouterModel {
   id:              string;
   name:            string;
-  /** Context window in tokens */
   contextLength:   number;
-  /** Cost per 1k prompt tokens in USD */
   promptCostPer1k: number;
-  /** Cost per 1k completion tokens in USD */
   replyCostPer1k:  number;
-  /** true = free tier available */
   isFree:          boolean;
 }
 
@@ -202,9 +250,9 @@ interface OpenRouterModelRaw {
   id:             string;
   name:           string;
   context_length: number;
-  pricing: {
-    prompt:     string;
-    completion: string;
+  pricing?: {
+    prompt?:     string;
+    completion?: string;
   };
 }
 
@@ -214,7 +262,7 @@ function mapModel(r: OpenRouterModelRaw): OpenRouterModel {
   return {
     id:              r.id,
     name:            r.name,
-    contextLength:   r.context_length,
+    contextLength:   r.context_length ?? 0,
     promptCostPer1k: promptCost,
     replyCostPer1k:  replyCost,
     isFree:          promptCost === 0 && replyCost === 0,

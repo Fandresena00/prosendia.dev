@@ -436,6 +436,7 @@ model Conversation {
   updatedAt DateTime @updatedAt
 
   @@unique([businessProfileId, externalId])
+  @@unique([businessProfileId, clientPsid])
   @@index([businessProfileId, lastMessageAt])
   /// Index used by the AI reply worker to find pending conversations
   @@index([handoverStatus, needsAiReply])
