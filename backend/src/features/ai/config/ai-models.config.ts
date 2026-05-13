@@ -10,16 +10,16 @@
 // ─── Reply AI ─────────────────────────────────────────────────────────────────
 
 export const REPLY_AI_MODEL = {
-  MODEL_ID: 'anthropic/claude-3-5-haiku',
-  MODEL_NAME: 'Claude 3.5 Haiku',
+  MODEL_ID: 'google/gemma-4-26b-a4b-it:free',
+  MODEL_NAME: 'Gemma 4 Free',
   MAX_TOKENS: 400,
   TEMPERATURE: 0.7,
 } as const;
 // ─── Data AI ──────────────────────────────────────────────────────────────────
 
 export const DATA_AI_MODEL = {
-  MODEL_ID: 'google/gemma-4-26b-a4b-it:free',
-  MODEL_NAME: 'Gemma 4 Free',
+  MODEL_ID: 'nvidia/nemotron-nano-9b-v2:free',
+  MODEL_NAME: 'Nemotron Nano Free',
   MAX_TOKENS: 200,
   TEMPERATURE: 0.2,
 } as const;
