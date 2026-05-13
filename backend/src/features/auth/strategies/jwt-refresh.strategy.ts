@@ -2,7 +2,6 @@
  * @file src/features/auth/strategies/jwt-refresh.strategy.ts
  * @description Passport strategy for long-lived refresh tokens.
  * Reads the token from the HttpOnly cookie `vendeo_refresh_token`.
- * The cookie is scoped to /api/auth — only sent to auth endpoints.
  */
 
 import { Injectable, UnauthorizedException } from '@nestjs/common';

@@ -58,12 +58,10 @@ export class TokenSessionService {
     });
 
     if (!session || session.userId !== userId) {
-      await this.revokeAllActiveSessions(userId);
       throw new UnauthorizedException('Session invalid. Please log in again.');
     }
 
     if (session.revokedAt || session.expiresAt <= new Date()) {
-      await this.revokeAllActiveSessions(userId);
       throw new UnauthorizedException('Session invalid. Please log in again.');
     }
 

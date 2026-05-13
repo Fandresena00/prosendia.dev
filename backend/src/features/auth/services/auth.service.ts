@@ -149,7 +149,6 @@ export class AuthService {
     );
 
     if (!isMatch) {
-      await this.tokenSessionService.revokeAllActiveSessions(payload.sub);
       throw new UnauthorizedException('Session invalid. Please log in again.');
     }
 
@@ -165,7 +164,6 @@ export class AuthService {
     );
 
     if (!isMatch) {
-      await this.tokenSessionService.revokeAllActiveSessions(payload.sub);
       throw new UnauthorizedException('Session invalid. Please log in again.');
     }
 

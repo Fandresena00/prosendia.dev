@@ -73,13 +73,13 @@ export class AuthController {
     res.cookie(REFRESH_TOKEN_COOKIE, result.refreshToken, {
       ...this.baseCookieOptions,
       maxAge: REFRESH_TOKEN_MAX_AGE_MS,
-      path: '/api/auth',
+      path: '/',
     });
   }
 
   private clearAuthCookies(res: Response): void {
     res.clearCookie(ACCESS_TOKEN_COOKIE, { path: '/' });
-    res.clearCookie(REFRESH_TOKEN_COOKIE, { path: '/api/auth' });
+    res.clearCookie(REFRESH_TOKEN_COOKIE, { path: '/' });
   }
 
   // ─── Endpoints ───────────────────────────────────────────────────────────────
