@@ -44,6 +44,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { FacebookGraphClient } from '../../facebook/clients/facebook-graph.client.js';
 import { TokenEncryptionService } from '../../facebook/security/token-encryption.service.js';
+import { AiQueueProducer } from '../../queue/producers/ai-queue.producer.js';
 import { InboxEventEmitter } from '../gateways/inbox-sse.gateway.js';
 
 /** Only sync conversations that had activity in this window. */
@@ -67,6 +68,7 @@ export class InboxSyncSchedulerService {
     private readonly graphClient: FacebookGraphClient,
     private readonly encryption: TokenEncryptionService,
     private readonly sseEmitter: InboxEventEmitter,
+    private readonly aiQueue: AiQueueProducer,
   ) {}
 
   // ─── Scheduled entry point ────────────────────────────────────────────────
@@ -170,6 +172,15 @@ export class InboxSyncSchedulerService {
         pageId,
         userId,
         decryptedToken,
+      );
+
+      // Reliability guard (every 5 min):
+      // if AI mode is active and the latest message is from the client,
+      // ensure an AI reply job is queued so no customer message is missed.
+      await this.ensureAiReplyIfClientLast(
+        localConversation.id,
+        businessProfileId,
+        userId,
       );
     }
   }
@@ -376,5 +387,50 @@ export class InboxSyncSchedulerService {
     if (!rawUrl) return null;
     if (rawUrl.startsWith('http://')) return `https://${rawUrl.slice(7)}`;
     return rawUrl;
+  }
+
+  private async ensureAiReplyIfClientLast(
+    conversationId: string,
+    businessProfileId: string,
+    userId: string,
+  ): Promise<void> {
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: {
+        id: true,
+        handoverStatus: true,
+      },
+    });
+    if (!conversation) return;
+
+    // Skip human handover / manual mode conversations.
+    if (conversation.handoverStatus !== 'AI') return;
+
+    const lastMessage = await this.prisma.message.findFirst({
+      where: { conversationId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        sender: true,
+        content: true,
+        createdAt: true,
+      },
+    });
+    if (!lastMessage) return;
+    if (lastMessage.sender !== 'CLIENT') return;
+
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { needsAiReply: true },
+    });
+
+    await this.aiQueue.enqueueAiReply({
+      conversationId,
+      inboundMessageId: lastMessage.id,
+      businessProfileId,
+      userId,
+      inboundText: lastMessage.content ?? undefined,
+      inboundCreatedAt: lastMessage.createdAt.toISOString(),
+    });
   }
 }
