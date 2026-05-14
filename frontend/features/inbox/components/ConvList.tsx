@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 /**
  * @file features/inbox/components/ConvList.tsx
@@ -9,9 +9,9 @@
  *   - Falls back to color + initials if avatarUrl is missing (new pages, etc.).
  */
 
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,32 +19,38 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Skeleton } from '@/components/ui/skeleton';
-import { IconChevronDown, IconSearch } from '@tabler/icons-react';
-import { Bot, MoreHorizontal } from 'lucide-react';
-import type { Account, Conv } from '../types/inbox.types';
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import { IconChevronDown, IconSearch } from "@tabler/icons-react";
+import { Bot, MoreHorizontal } from "lucide-react";
+import type { Account, Conv } from "../types/inbox.types";
 
 interface ConvListProps {
-  accounts:       Account[];
-  activeAcc:      Account | null;
-  onChangeAcc:    (acc: Account) => void;
-  convs:          Conv[];
-  loading:        boolean;
-  selected:       Conv | null;
-  onSelect:       (c: Conv) => void;
-  searchQuery:    string;
+  accounts: Account[];
+  activeAcc: Account | null;
+  onChangeAcc: (acc: Account) => void;
+  convs: Conv[];
+  loading: boolean;
+  selected: Conv | null;
+  onSelect: (c: Conv) => void;
+  searchQuery: string;
   onSearchChange: (q: string) => void;
-  className?:     string;
+  className?: string;
 }
 
 export function ConvList({
-  accounts, activeAcc, onChangeAcc,
-  convs, loading, selected, onSelect,
-  searchQuery, onSearchChange,
-  className = '',
+  accounts,
+  activeAcc,
+  onChangeAcc,
+  convs,
+  loading,
+  selected,
+  onSelect,
+  searchQuery,
+  onSearchChange,
+  className = "",
 }: ConvListProps) {
   return (
     <div
@@ -73,12 +79,14 @@ export function ConvList({
                   size="sm"
                 />
                 <div className="flex-1 text-left min-w-0">
-                  <p className="text-xs font-semibold truncate">{activeAcc.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{activeAcc.pageType}</p>
+                  <p className="text-xs font-semibold truncate">
+                    {activeAcc.name}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {activeAcc.pageType}
+                  </p>
                 </div>
-                {activeAcc.verified && (
-                  <VerifiedBadge />
-                )}
+                {activeAcc.verified && <VerifiedBadge />}
                 <IconChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               </button>
             </DropdownMenuTrigger>
@@ -103,7 +111,9 @@ export function ConvList({
                   />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate">{acc.name}</p>
-                    <p className="text-[10px] text-muted-foreground">{acc.pageType}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {acc.pageType}
+                    </p>
                   </div>
                   {activeAcc.id === acc.id && (
                     <div className="h-2 w-2 rounded-full bg-primary shrink-0" />
@@ -129,8 +139,8 @@ export function ConvList({
       </div>
 
       {/* ── Conversation list ── */}
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="px-2 py-1 space-y-0.5">
+      <ScrollArea className="flex-1 min-h-0 ">
+        <div className="px-2 py-1 space-y-0.5 w-xs md:w-92 ">
           {loading ? (
             <ConvListSkeleton />
           ) : convs.length === 0 ? (
@@ -145,19 +155,22 @@ export function ConvList({
                   key={conv.id}
                   onClick={() => onSelect(conv)}
                   className={`w-full text-left rounded-xl p-2.5 transition-all ${
-                    isSelected ? 'bg-primary/8' : 'hover:bg-accent/60'
+                    isSelected ? "bg-primary/8" : "hover:bg-accent/60"
                   }`}
                 >
                   <div className="flex items-center gap-3">
                     {/* Client avatar */}
                     <div className="relative shrink-0">
                       <Avatar className="h-10 w-10">
-                        <AvatarImage src={conv.avatarUrl ?? undefined} alt={conv.client} />
+                        <AvatarImage
+                          src={conv.avatarUrl ?? undefined}
+                          alt={conv.client}
+                        />
                         <AvatarFallback
                           className={`text-sm font-bold ${
                             isSelected
-                              ? 'bg-primary/20 text-primary'
-                              : 'bg-secondary text-foreground'
+                              ? "bg-primary/20 text-primary"
+                              : "bg-secondary text-foreground"
                           }`}
                         >
                           {conv.initials}
@@ -171,22 +184,30 @@ export function ConvList({
                     {/* Content */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline justify-between gap-1">
-                        <p className={`text-xs truncate ${conv.unread > 0 ? 'font-bold' : 'font-medium'}`}>
+                        <p
+                          className={`text-xs truncate ${conv.unread > 0 ? "font-bold" : "font-medium"}`}
+                        >
                           {conv.client}
                         </p>
-                        <span className={`text-[10px] shrink-0 ${
-                          conv.unread > 0 ? 'text-primary font-semibold' : 'text-muted-foreground'
-                        }`}>
+                        <span
+                          className={`text-[10px] shrink-0 ${
+                            conv.unread > 0
+                              ? "text-primary font-semibold"
+                              : "text-muted-foreground"
+                          }`}
+                        >
                           {conv.time}
                         </span>
                       </div>
 
                       <div className="flex items-center justify-between gap-1 mt-0.5">
-                        <p className={`text-[11px] truncate flex-1 ${
-                          conv.unread > 0
-                            ? 'text-foreground font-medium'
-                            : 'text-muted-foreground'
-                        }`}>
+                        <p
+                          className={`text-[11px] truncate flex-1 ${
+                            conv.unread > 0
+                              ? "text-foreground font-medium"
+                              : "text-muted-foreground"
+                          }`}
+                        >
                           {conv.lastMessage}
                         </p>
                         <div className="flex items-center gap-1 shrink-0 ml-1">
@@ -196,17 +217,19 @@ export function ConvList({
                             </span>
                           )}
                           <Badge
-                            variant={conv.mode === 'ai' ? 'default' : 'outline'}
+                            variant={conv.mode === "ai" ? "default" : "outline"}
                             className={`text-[9px] h-4 px-1 gap-0.5 ${
-                              conv.mode === 'human'
-                                ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/5'
-                                : ''
+                              conv.mode === "human"
+                                ? "border-emerald-500/30 text-emerald-600 bg-emerald-500/5"
+                                : ""
                             }`}
                           >
-                            {conv.mode === 'ai' ? (
-                              <><Bot className="h-2.5 w-2.5" /> IA</>
+                            {conv.mode === "ai" ? (
+                              <>
+                                <Bot className="h-2.5 w-2.5" /> IA
+                              </>
                             ) : (
-                              'Humain'
+                              "Humain"
                             )}
                           </Badge>
                         </div>
@@ -234,23 +257,21 @@ function PageAvatar({
   initials,
   avatarUrl,
   colorClass,
-  size = 'sm',
+  size = "sm",
 }: {
-  name:        string;
-  initials:    string;
-  avatarUrl?:  string;
-  colorClass:  string;
-  size?:       'sm' | 'md';
+  name: string;
+  initials: string;
+  avatarUrl?: string;
+  colorClass: string;
+  size?: "sm" | "md";
 }) {
-  const dimension = size === 'sm' ? 'h-7 w-7' : 'h-9 w-9';
-  const textSize  = size === 'sm' ? 'text-xs' : 'text-sm';
+  const dimension = size === "sm" ? "h-7 w-7" : "h-9 w-9";
+  const textSize = size === "sm" ? "text-xs" : "text-sm";
 
   return (
     <Avatar className={`${dimension} shrink-0`}>
       <AvatarImage src={avatarUrl} alt={name} />
-      <AvatarFallback
-        className={`${textSize} font-bold ${colorClass}`}
-      >
+      <AvatarFallback className={`${textSize} font-bold ${colorClass}`}>
         {initials}
       </AvatarFallback>
     </Avatar>
