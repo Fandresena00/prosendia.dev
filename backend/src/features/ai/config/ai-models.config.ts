@@ -18,8 +18,8 @@ export const REPLY_AI_MODEL = {
 // ─── Data AI ──────────────────────────────────────────────────────────────────
 
 export const DATA_AI_MODEL = {
-  MODEL_ID: 'nvidia/nemotron-nano-9b-v2:free',
-  MODEL_NAME: 'Nemotron Nano Free',
+  MODEL_ID: 'mistralai/mistral-small-3.1-24b-instruct:free',
+  MODEL_NAME: 'Mistral Small Free',
   MAX_TOKENS: 200,
   TEMPERATURE: 0.2,
 } as const;
@@ -46,6 +46,7 @@ export const AI_CONTEXT_CONFIG = {
  */
 export const REPLY_AI_FALLBACK_MODELS = [
   'google/gemma-4-26b-a4b-it:free',
-  'nvidia/nemotron-nano-9b-v2:free',
+  'mistralai/mistral-small-3.1-24b-instruct:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
   'deepseek/deepseek-chat-v3-0324:free',
 ] as const;
