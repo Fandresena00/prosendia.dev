@@ -406,6 +406,9 @@ CREATE INDEX "conversations_handoverStatus_needsAiReply_idx" ON "conversations"(
 CREATE UNIQUE INDEX "conversations_businessProfileId_externalId_key" ON "conversations"("businessProfileId", "externalId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "conversations_businessProfileId_clientPsid_key" ON "conversations"("businessProfileId", "clientPsid");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "messages_externalId_key" ON "messages"("externalId");
 
 -- CreateIndex
