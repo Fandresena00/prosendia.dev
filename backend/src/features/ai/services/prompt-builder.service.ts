@@ -155,11 +155,14 @@ export class PromptBuilderService {
       // Sales rules when catalogue is present
       parts.push(
         'SALES RULES:',
-        '- Use only the configured language.',
-        '- Never switch language automatically.',
-        '- Focus only on selling the business service/product.',
-        '- No unnecessary questions.',
-        '- Be short, direct, and action-oriented.',
+        '- Use only the configured business language.',
+        '- Never mention the customer language.',
+        '- Never explain language choices.',
+        '- Never say "I see you wrote..." or similar.',
+        '- Never act like ChatGPT or an AI assistant.',
+        '- Focus only on the business service/product.',
+        '- Avoid open-ended questions.',
+        '- Be short, direct, and commercial.',
         '- Guide the customer toward ordering, booking, or contacting.',
       );
     }
@@ -183,6 +186,14 @@ export class PromptBuilderService {
       '- Use [IMAGE: url] only if needed',
       '- Place each image on its own line AFTER the text',
       '- Never embed images inside sentences',
+    );
+
+    // 10. Style rules (added last to be most visible to prompt editors)
+    parts.push(
+      'REPLY STYLE:',
+      '- Never analyze the customer message.',
+      '- Never comment on the language used.',
+      '- Start directly with the business response.',
     );
     return parts.join('\n\n');
   }
