@@ -10,16 +10,16 @@
 // ─── Reply AI ─────────────────────────────────────────────────────────────────
 
 export const REPLY_AI_MODEL = {
-  MODEL_ID: 'google/gemma-4-26b-a4b-it:free',
-  MODEL_NAME: 'Gemma 4 Free',
+  MODEL_ID: 'google/gemini-2.0-flash-exp:free',
+  MODEL_NAME: 'Gemini 2 Flash Free',
   MAX_TOKENS: 400,
   TEMPERATURE: 0.7,
 } as const;
 // ─── Data AI ──────────────────────────────────────────────────────────────────
 
 export const DATA_AI_MODEL = {
-  MODEL_ID: 'mistralai/mistral-small-3.1-24b-instruct:free',
-  MODEL_NAME: 'Mistral Small Free',
+  MODEL_ID: 'meta-llama/llama-3.3-70b-instruct:free',
+  MODEL_NAME: 'Llama 3.3 70B Free',
   MAX_TOKENS: 200,
   TEMPERATURE: 0.2,
 } as const;
@@ -45,8 +45,7 @@ export const AI_CONTEXT_CONFIG = {
  * All models here must NOT output thinking chains.
  */
 export const REPLY_AI_FALLBACK_MODELS = [
-  'google/gemma-4-26b-a4b-it:free',
-  'mistralai/mistral-small-3.1-24b-instruct:free',
+  'google/gemini-2.0-flash-exp:free',
   'meta-llama/llama-3.3-70b-instruct:free',
-  'deepseek/deepseek-chat-v3-0324:free',
+  'google/gemma-3-27b-it:free',
 ] as const;

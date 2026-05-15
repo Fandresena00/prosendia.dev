@@ -148,7 +148,19 @@ export class PromptBuilderService {
         'If used, format exactly: [IMAGE: url] on its own line after the reply.',
         '',
         'AVAILABLE IMAGES:',
+
         catalogue,
+      );
+
+      // Sales rules when catalogue is present
+      parts.push(
+        'SALES RULES:',
+        '- Use only the configured language.',
+        '- Never switch language automatically.',
+        '- Focus only on selling the business service/product.',
+        '- No unnecessary questions.',
+        '- Be short, direct, and action-oriented.',
+        '- Guide the customer toward ordering, booking, or contacting.',
       );
     }
     // 8. Escalation format
