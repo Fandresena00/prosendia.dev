@@ -527,17 +527,23 @@ model PostComment {
 }
 
 model PostAiConfig {
-  id String @id @default(uuid())
-
+  id     String       @id @default(uuid())
   postId String       @unique
   post   FacebookPost @relation(fields: [postId], references: [id], onDelete: Cascade)
 
-  autoReply          Boolean        @default(true)
+  autoReply          Boolean       @default(true)
   tone               Tone?
   responseStyle      ResponseStyle?
   customInstructions String?
   replyLanguage      String?
   maxReplyTokens     Int?
+
+  // ── NEW FIELDS ─────────────────────────────────────────────────────────────
+  /// Send a Facebook Private Reply (DM via comment_id) after replying publicly.
+  /// Facebook allows this as a direct response to a comment (not cold DM).
+  privateReplyEnabled Boolean @default(false)
+  /// Optional fixed message for the private reply. If null, AI generates it.
+  privateReplyMessage String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

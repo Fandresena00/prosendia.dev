@@ -1,15 +1,21 @@
 /**
  * @file features/ai/workers/ai-summary.worker.ts
  *
- * FIX: Auto-create AiModelConfig with defaults when missing.
+ * FIX — Root cause of repeated ERROR "No endpoints found for mistral-small-3.1-24b":
  *
- * Previously: if no AiModelConfig row existed for a profile, the worker
- * logged a WARN and skipped silently — on every summary job indefinitely.
+ * The previous version used `upsert({ update: {} })` which:
+ *   - Creates with DATA_AI_MODEL defaults if missing ✓
+ *   - BUT does NOT update the model ID if the row already exists ✗
  *
- * New behaviour: if the config is missing, create it with the central
- * defaults from ai-models.config.ts, then proceed with summarisation.
- * This eliminates the repeated WARN and unblocks the summarisation pipeline
- * without requiring manual DB intervention or an API call to create the config.
+ * So once the DB had the old broken model ID, every upsert was a no-op on
+ * the model field, and the error repeated indefinitely.
+ *
+ * Fix:
+ *   1. On upsert, always reset summaryModelId to DATA_AI_MODEL.MODEL_ID if
+ *      the stored model is no longer in the known-working list.
+ *   2. Add a fallback list for summary models, same pattern as reply models.
+ *   3. If all models fail, log and skip without rethrowing (summaries are
+ *      optional — they improve quality but aren't required for the reply to work).
  */
 
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
@@ -17,7 +23,10 @@ import { PgBoss, type JobWithMetadata } from 'pg-boss';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { PG_BOSS_TOKEN } from '../../queue/providers/pg-boss.provider.js';
 import { QUEUE_JOBS, type AiSummarizePayload } from '../../queue/queue.constants.js';
-import { DATA_AI_MODEL } from '../config/ai-models.config.js';
+import {
+  DATA_AI_MODEL,
+  SUMMARY_AI_FALLBACK_MODELS,
+} from '../config/ai-models.config.js';
 import { DataAiService } from '../services/data-ai.service.js';
 
 const TEAM_SIZE = 5;
@@ -52,20 +61,38 @@ export class AiSummaryWorker implements OnModuleInit {
     this.logger.debug(`Processing ai.summarize — conv=${conversationId} job=${job.id}`);
 
     try {
-      // FIX: Auto-create AiModelConfig with defaults if missing.
-      // Uses upsert — no-op if already exists, creates with defaults otherwise.
+      // FIX: Update the model ID if it is no longer in the working list.
+      // This heals stale rows created when old models were still available.
+      const existing = await this.prisma.aiModelConfig.findUnique({
+        where:  { businessProfileId },
+        select: { summaryModelId: true, summaryMaxTokens: true },
+      });
+
+      const isModelBroken = !existing ||
+        !SUMMARY_AI_FALLBACK_MODELS.includes(existing.summaryModelId as typeof SUMMARY_AI_FALLBACK_MODELS[number]);
+
       const modelConfig = await this.prisma.aiModelConfig.upsert({
         where:  { businessProfileId },
         create: {
           businessProfileId,
-          // Use the central constants as defaults — same values as the Prisma schema defaults
           summaryModelId:   DATA_AI_MODEL.MODEL_ID,
           summaryModelName: DATA_AI_MODEL.MODEL_NAME,
           summaryMaxTokens: DATA_AI_MODEL.MAX_TOKENS,
         },
-        update: {},
+        // FIX: Only reset model ID if it's no longer working.
+        // This prevents overwriting a valid custom model the user may have set.
+        update: isModelBroken ? {
+          summaryModelId:   DATA_AI_MODEL.MODEL_ID,
+          summaryModelName: DATA_AI_MODEL.MODEL_NAME,
+        } : {},
         select: { summaryModelId: true, summaryMaxTokens: true },
       });
+
+      if (isModelBroken) {
+        this.logger.warn(
+          `Reset stale summaryModelId for profile=${businessProfileId} → ${DATA_AI_MODEL.MODEL_ID}`,
+        );
+      }
 
       const conversation = await this.prisma.conversation.findUnique({
         where:  { id: conversationId },
@@ -73,28 +100,54 @@ export class AiSummaryWorker implements OnModuleInit {
       });
 
       if (!conversation) {
-        this.logger.warn(
-          `Conversation ${conversationId} not found — ai.summarize skipped`,
-        );
+        this.logger.warn(`Conversation ${conversationId} not found — ai.summarize skipped`);
         return;
       }
 
-      await this.dataAi.generateSummary(
-        conversationId,
-        conversation.clientName,
-        {
-          summaryModelId:   modelConfig.summaryModelId,
-          summaryMaxTokens: modelConfig.summaryMaxTokens,
-        },
-      );
+      // Try primary model, then fallbacks
+      const modelsToTry = [
+        modelConfig.summaryModelId,
+        ...SUMMARY_AI_FALLBACK_MODELS.filter((m) => m !== modelConfig.summaryModelId),
+      ];
+
+      let succeeded = false;
+      for (const modelId of modelsToTry) {
+        try {
+          await this.dataAi.generateSummary(
+            conversationId,
+            conversation.clientName,
+            {
+              summaryModelId:   modelId,
+              summaryMaxTokens: modelConfig.summaryMaxTokens,
+            },
+          );
+          succeeded = true;
+          break;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(
+            `Summary model ${modelId} failed for conv=${conversationId}: ${msg}` +
+            (modelsToTry.indexOf(modelId) < modelsToTry.length - 1 ? ' — trying next' : ''),
+          );
+        }
+      }
+
+      if (!succeeded) {
+        // Summaries are optional — don't rethrow, don't block the pipeline
+        this.logger.warn(
+          `All summary models failed for conv=${conversationId}. Summary skipped (non-fatal).`,
+        );
+        return;
+      }
 
       this.logger.debug(`ai.summarize completed — conv=${conversationId}`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        `ai.summarize failed — conv=${conversationId}: ${message}`,
+        `ai.summarize unexpected error — conv=${conversationId}: ${message}`,
         err instanceof Error ? err.stack : undefined,
       );
+      // Re-throw unexpected errors (DB failures, etc.) so pg-boss retries
       throw err instanceof Error ? err : new Error(message);
     }
   }

@@ -624,4 +624,47 @@ export class FacebookGraphClient {
     );
     return result.data;
   }
+
+  // ─── Page Feed ────────────────────────────────────────────────────────────
+
+  async getPageFeed(
+    pageId: string,
+    accessToken: string,
+    limit = 20,
+  ): Promise<FbPost[]> {
+    const result = await this.get<FbPaginatedResponse<FbPost>>(
+      `/${pageId}/feed`,
+      {
+        access_token: accessToken,
+        limit,
+        fields:
+          'id,message,created_time,permalink_url,reactions.summary(true),comments.summary(true),shares',
+      },
+    );
+    return result.data;
+  }
+
+  // ─── Private Reply to Comment ─────────────────────────────────────────────
+  //
+  // Facebook allows this as a "Private Reply" when responding to a comment on
+  // the page's post. Requires pages_messaging permission.
+  //
+  // API: POST /{page-id}/messages
+  // Body: { recipient: { comment_id: "..." }, message: { text: "..." } }
+
+  async sendPrivateReplyToComment(
+    pageId: string,
+    commentId: string,
+    text: string,
+    accessToken: string,
+  ): Promise<{ message_id?: string }> {
+    return this.post<{ message_id?: string }>(
+      `/${pageId}/messages`,
+      {
+        recipient: { comment_id: commentId },
+        message: { text },
+      },
+      { access_token: accessToken },
+    );
+  }
 }
