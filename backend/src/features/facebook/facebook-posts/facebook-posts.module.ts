@@ -10,10 +10,10 @@
  */
 
 import { Module, forwardRef } from '@nestjs/common';
-import { PrismaModule } from '../../database/prisma.module.js';
-import { AiModule } from '../ai/ai.module.js';
-import { FacebookModule } from '../facebook/facebook.module.js';
 
+import { PrismaModule } from '../../../database/prisma.module.js';
+import { AiModule } from '../../ai/ai.module.js';
+import { FacebookModule } from '../facebook.module.js';
 import { FacebookPostsController } from './controllers/facebook-posts.controller.js';
 import { FacebookPostsService } from './services/facebook-posts.service.js';
 import { PostCommentAiService } from './services/post-comment-ai.service.js';
@@ -25,13 +25,7 @@ import { PostCommentAiService } from './services/post-comment-ai.service.js';
     forwardRef(() => AiModule),
   ],
   controllers: [FacebookPostsController],
-  providers: [
-    FacebookPostsService,
-    PostCommentAiService,
-  ],
-  exports: [
-    FacebookPostsService,
-    PostCommentAiService,
-  ],
+  providers: [FacebookPostsService, PostCommentAiService],
+  exports: [FacebookPostsService, PostCommentAiService],
 })
 export class FacebookPostsModule {}

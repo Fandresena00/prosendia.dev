@@ -22,17 +22,18 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../../database/prisma.service.js';
-import { OpenRouterClient } from '../../ai/clients/openrouter.client.js';
+
+import { PrismaService } from '../../../../database/prisma.service.js';
+import { OpenRouterClient } from '../../../ai/clients/openrouter.client.js';
 import {
   REPLY_AI_FALLBACK_MODELS,
   REPLY_AI_MODEL,
-} from '../../ai/config/ai-models.config.js';
+} from '../../../ai/config/ai-models.config.js';
 import {
+  BusinessContext,
   PromptBuilderService,
-  type BusinessContext,
-  type ReferenceImage,
-} from '../../ai/services/prompt-builder.service.js';
+  ReferenceImage,
+} from '../../../ai/services/prompt-builder.service.js';
 import { FacebookPostsService } from './facebook-posts.service.js';
 
 @Injectable()
@@ -40,27 +41,27 @@ export class PostCommentAiService {
   private readonly logger = new Logger(PostCommentAiService.name);
 
   constructor(
-    private readonly prisma:        PrismaService,
-    private readonly openRouter:    OpenRouterClient,
+    private readonly prisma: PrismaService,
+    private readonly openRouter: OpenRouterClient,
     private readonly promptBuilder: PromptBuilderService,
-    private readonly fbPosts:       FacebookPostsService,
+    private readonly fbPosts: FacebookPostsService,
   ) {}
 
   // ─── Main entry: process a new comment ───────────────────────────────────
 
   async processNewComment(commentId: string): Promise<void> {
     const comment = await this.prisma.postComment.findUnique({
-      where:   { id: commentId },
+      where: { id: commentId },
       include: {
         post: {
           include: {
             postAiConfig: true,
             businessProfile: {
               include: {
-                aiConfig:     true,
+                aiConfig: true,
                 aiModelConfig: true,
                 chatResources: {
-                  where:   { isActive: true },
+                  where: { isActive: true },
                   include: { images: { orderBy: { sortOrder: 'asc' } } },
                 },
               },
@@ -76,7 +77,7 @@ export class PostCommentAiService {
     }
 
     const { post } = comment;
-    const config   = post.postAiConfig;
+    const config = post.postAiConfig;
     const { businessProfile } = post;
     const aiConfig = businessProfile.aiConfig;
 
@@ -101,23 +102,25 @@ export class PostCommentAiService {
 
     // Build context
     const businessCtx: BusinessContext = {
-      businessName:        businessProfile.name,
-      businessType:        businessProfile.businessType,
-      description:         businessProfile.description,
-      tone:                config?.tone                ?? aiConfig?.tone             ?? 'FRIENDLY',
-      responseStyle:       config?.responseStyle       ?? aiConfig?.responseStyle    ?? 'SHORT',
-      replyLanguage:       config?.replyLanguage       ?? aiConfig?.replyLanguage    ?? null,
-      systemPrompt:        aiConfig?.systemPrompt      ?? null,
-      inboxInstructions:   null,
+      businessName: businessProfile.name,
+      businessType: businessProfile.businessType,
+      description: businessProfile.description,
+      tone: config?.tone ?? aiConfig?.tone ?? 'FRIENDLY',
+      responseStyle:
+        config?.responseStyle ?? aiConfig?.responseStyle ?? 'SHORT',
+      replyLanguage: config?.replyLanguage ?? aiConfig?.replyLanguage ?? null,
+      systemPrompt: aiConfig?.systemPrompt ?? null,
+      inboxInstructions: null,
       personalizeGreeting: aiConfig?.personalizeGreeting ?? true,
-      blockedKeywords:     (aiConfig?.blockedKeywords as string[]) ?? [],
-      allowedTopics:       (aiConfig?.allowedTopics   as string[]) ?? [],
+      blockedKeywords: (aiConfig?.blockedKeywords as string[]) ?? [],
+      allowedTopics: (aiConfig?.allowedTopics as string[]) ?? [],
       escalationThreshold: aiConfig?.escalationThreshold ?? 0.6,
     };
 
-    const referenceImages: ReferenceImage[] = businessProfile.chatResources.flatMap(
-      (r) => r.images.map((img) => ({ url: img.url, description: img.description })),
-    );
+    const referenceImages: ReferenceImage[] =
+      businessProfile.chatResources.flatMap((r) =>
+        r.images.map((img) => ({ url: img.url, description: img.description })),
+      );
 
     const postCaption = post.message ?? '';
 
@@ -128,24 +131,27 @@ export class PostCommentAiService {
       120,
     );
 
-    const systemPromptComment = this.promptBuilder.buildCommentReplySystemPrompt(
-      businessCtx,
-      postCaption,
-      config?.customInstructions ?? null,
-      referenceImages,
-    );
+    const systemPromptComment =
+      this.promptBuilder.buildCommentReplySystemPrompt(
+        businessCtx,
+        postCaption,
+        config?.customInstructions ?? null,
+        referenceImages,
+      );
 
     const publicReply = await this.callWithFallback(
       [
         { role: 'system' as const, content: systemPromptComment },
-        { role: 'user'   as const, content: comment.message },
+        { role: 'user' as const, content: comment.message },
       ],
       publicMaxTokens,
       businessProfile.aiModelConfig,
     );
 
     if (!publicReply) {
-      this.logger.warn(`Failed to generate public reply for comment=${commentId}`);
+      this.logger.warn(
+        `Failed to generate public reply for comment=${commentId}`,
+      );
       return;
     }
 
@@ -166,11 +172,13 @@ export class PostCommentAiService {
     // FIX: completely separate prompt + do NOT pass commentText as user message
     // to avoid reproducing the comment content as a numbered list/tutorial.
     const privateEnabled =
-      (config as { privateReplyEnabled?: boolean } | null)?.privateReplyEnabled ?? false;
+      (config as { privateReplyEnabled?: boolean } | null)
+        ?.privateReplyEnabled ?? false;
 
     if (privateEnabled) {
-      const privateTemplate =
-        (config as { privateReplyMessage?: string } | null)?.privateReplyMessage;
+      const privateTemplate = (
+        config as { privateReplyMessage?: string } | null
+      )?.privateReplyMessage;
 
       let privateReplyText: string | null = null;
 
@@ -192,7 +200,10 @@ export class PostCommentAiService {
             // FIX: neutral trigger — NOT the comment text again.
             // Passing commentText here caused the AI to respond TO the comment
             // instead of generating a welcoming DM.
-            { role: 'user' as const, content: 'Génère le message privé de bienvenue.' },
+            {
+              role: 'user' as const,
+              content: 'Génère le message privé de bienvenue.',
+            },
           ],
           150, // FIX: was 300 — DM should be 2-3 sentences, not a tutorial
           businessProfile.aiModelConfig,
@@ -227,18 +238,18 @@ export class PostCommentAiService {
    * instruction. The old prompt said "detect language" but not "stay in it".
    */
   private buildDmReplySystemPrompt(
-    ctx:                BusinessContext,
-    postCaption:        string,
-    commentText:        string,
+    ctx: BusinessContext,
+    postCaption: string,
+    commentText: string,
     customInstructions: string | null,
-    referenceImages:    ReferenceImage[],
+    referenceImages: ReferenceImage[],
   ): string {
     const sections: string[] = [];
 
     // Identity
     sections.push(
       `Tu es l'assistant de "${ctx.businessName}".` +
-      (ctx.description ? `\n${ctx.description}` : ''),
+        (ctx.description ? `\n${ctx.description}` : ''),
     );
 
     if (ctx.systemPrompt?.trim()) {
@@ -248,43 +259,49 @@ export class PostCommentAiService {
     // Context (brief, no reproduction of comment)
     sections.push(
       'CONTEXTE:\n' +
-      `Post Facebook: ${postCaption.slice(0, 150)}\n` +
-      'Un client a commenté ce post et tu lui envoies un MESSAGE PRIVÉ de bienvenue.',
+        `Post Facebook: ${postCaption.slice(0, 150)}\n` +
+        'Un client a commenté ce post et tu lui envoies un MESSAGE PRIVÉ de bienvenue.',
     );
 
     // DM rules — short and welcoming
     sections.push(
       'RÈGLES DU MESSAGE PRIVÉ:\n' +
-      '- 2 à 3 phrases MAXIMUM. Message chaleureux et court.\n' +
-      '- Accueille le client, montre que tu as vu son commentaire.\n' +
-      '- Propose de l\'aider dans cette conversation.\n' +
-      '- Ne reproduis PAS les étapes, listes ou tutoriels du post.\n' +
-      '- Ne commence JAMAIS par «Bonjour» suivi d\'une liste numérotée.\n' +
-      '- Ne fournis PAS de prix, stock ou détails ici — invite à poser la question.\n' +
-      '- JAMAIS d\'inventions.',
+        '- 2 à 3 phrases MAXIMUM. Message chaleureux et court.\n' +
+        '- Accueille le client, montre que tu as vu son commentaire.\n' +
+        "- Propose de l'aider dans cette conversation.\n" +
+        '- Ne reproduis PAS les étapes, listes ou tutoriels du post.\n' +
+        "- Ne commence JAMAIS par «Bonjour» suivi d'une liste numérotée.\n" +
+        '- Ne fournis PAS de prix, stock ou détails ici — invite à poser la question.\n' +
+        "- JAMAIS d'inventions.",
     );
 
     // Language — STRICT single-language rule
     if (ctx.replyLanguage) {
-      const langLabel = ctx.replyLanguage === 'mg' ? 'malgache' :
-                        ctx.replyLanguage === 'fr' ? 'français' : ctx.replyLanguage;
-      sections.push(`LANGUE: Rédige ENTIÈREMENT en ${langLabel}. Aucun mot dans une autre langue.`);
+      const langLabel =
+        ctx.replyLanguage === 'mg'
+          ? 'malgache'
+          : ctx.replyLanguage === 'fr'
+            ? 'français'
+            : ctx.replyLanguage;
+      sections.push(
+        `LANGUE: Rédige ENTIÈREMENT en ${langLabel}. Aucun mot dans une autre langue.`,
+      );
     } else {
       // FIX: detect from comment, then use ONE language throughout
       const commentLang = this.detectCommentLanguage(commentText);
       if (commentLang === 'mg') {
         sections.push(
           'LANGUE: Le client a écrit en malgache.\n' +
-          'Réponds ENTIÈREMENT en malgache. Tu peux utiliser des termes techniques en français ' +
-          'UNIQUEMENT si aucun équivalent malgache n\'existe (ex: «site web», «commande»).\n' +
-          'Ne bascule PAS vers le français pour les phrases entières.\n' +
-          'Format: texte simple, pas de listes numérotées.',
+            'Réponds ENTIÈREMENT en malgache. Tu peux utiliser des termes techniques en français ' +
+            "UNIQUEMENT si aucun équivalent malgache n'existe (ex: «site web», «commande»).\n" +
+            'Ne bascule PAS vers le français pour les phrases entières.\n' +
+            'Format: texte simple, pas de listes numérotées.',
         );
       } else {
         sections.push(
           'LANGUE: Le client a écrit en français.\n' +
-          'Réponds ENTIÈREMENT en français. Pas de malgache.\n' +
-          'Format: texte simple, pas de listes numérotées.',
+            'Réponds ENTIÈREMENT en français. Pas de malgache.\n' +
+            'Format: texte simple, pas de listes numérotées.',
         );
       }
     }
@@ -296,11 +313,13 @@ export class PostCommentAiService {
     if (referenceImages.length > 0) {
       sections.push(
         'Produits/services disponibles:\n' +
-        referenceImages.map((img) => `- ${img.description}`).join('\n'),
+          referenceImages.map((img) => `- ${img.description}`).join('\n'),
       );
     }
 
-    sections.push('FORMAT: Texte brut uniquement. Commence directement. Aucune liste.');
+    sections.push(
+      'FORMAT: Texte brut uniquement. Commence directement. Aucune liste.',
+    );
 
     return sections.join('\n\n');
   }
@@ -311,8 +330,23 @@ export class PostCommentAiService {
    */
   private detectCommentLanguage(text: string): 'mg' | 'fr' {
     const lower = text.toLowerCase();
-    const mgWords = ['mba', 'azafady', 'vidiny', 'firy', 'misy', 'tena', 'ity', 'izy',
-                     'manao', 'misoatra', 'manahoana', 'omeo', 'hividiana', 'mila', 'ny'];
+    const mgWords = [
+      'mba',
+      'azafady',
+      'vidiny',
+      'firy',
+      'misy',
+      'tena',
+      'ity',
+      'izy',
+      'manao',
+      'misoatra',
+      'manahoana',
+      'omeo',
+      'hividiana',
+      'mila',
+      'ny',
+    ];
     const mgScore = mgWords.filter((w) => lower.includes(w)).length;
     return mgScore >= 2 ? 'mg' : 'fr';
   }
@@ -320,12 +354,13 @@ export class PostCommentAiService {
   // ─── AI call with fallback ────────────────────────────────────────────────
 
   private async callWithFallback(
-    messages:    Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-    maxTokens:   number,
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    maxTokens: number,
     modelConfig: { replyModelId: string; replyTemperature: number } | null,
   ): Promise<string | null> {
     const primaryModelId = modelConfig?.replyModelId ?? REPLY_AI_MODEL.MODEL_ID;
-    const temperature    = modelConfig?.replyTemperature ?? REPLY_AI_MODEL.TEMPERATURE;
+    const temperature =
+      modelConfig?.replyTemperature ?? REPLY_AI_MODEL.TEMPERATURE;
 
     const modelsToTry = [
       primaryModelId,
@@ -335,7 +370,7 @@ export class PostCommentAiService {
     for (const modelId of modelsToTry) {
       try {
         const result = await this.openRouter.complete({
-          model:       modelId,
+          model: modelId,
           messages,
           maxTokens,
           temperature,

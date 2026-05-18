@@ -30,87 +30,113 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
   IsNotEmpty,
-  IsNumber,
   IsOptional,
   IsString,
-  IsUUID,
   MaxLength,
   Min,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard.js';
-import { Tone, ResponseStyle } from '../../../generated/prisma/enums.js';
-import { PostCommentAiService } from '../services/post-comment-ai.service.js';
+import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard.js';
+import { ResponseStyle, Tone } from '../../../../generated/prisma/enums.js';
 import {
   FacebookPostsService,
   type AddManagedPostDto,
 } from '../services/facebook-posts.service.js';
+import { PostCommentAiService } from '../services/post-comment-ai.service.js';
 
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
 
 class ReplyToCommentDto {
-  @IsString() @MaxLength(8000)
+  @IsString()
+  @MaxLength(8000)
   message!: string;
 }
 
 class AddManagedPostBodyDto implements Omit<AddManagedPostDto, never> {
-  @IsString() @IsNotEmpty()
+  @IsString()
+  @IsNotEmpty()
   businessProfileId!: string;
 
-  @IsString() @IsNotEmpty()
+  @IsString()
+  @IsNotEmpty()
   externalId!: string;
 
-  @IsOptional() @IsString() @MaxLength(63206)
-  message?: string | null;
+  @IsOptional()
+  @IsString()
+  @MaxLength(63206)
+  message!: string | null;
 
-  @IsOptional() @IsString()
-  imageUrl?: string | null;
+  @IsOptional()
+  @IsString()
+  imageUrl!: string | null;
 
-  @IsOptional() @IsString()
-  permalinkUrl?: string | null;
+  @IsOptional()
+  @IsString()
+  permalinkUrl!: string | null;
 
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0)
-  reactionsCount?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  reactionsCount!: number;
 
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0)
-  commentsCount?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  commentsCount!: number;
 
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0)
-  sharesCount?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  sharesCount!: number;
 
   @IsDateString()
   publishedAt!: string;
 }
 
 class UpdatePostAiConfigDto {
-  @IsOptional() @IsBoolean()
+  @IsOptional()
+  @IsBoolean()
   autoReply?: boolean;
 
-  @IsOptional() @IsBoolean()
+  @IsOptional()
+  @IsBoolean()
   privateReplyEnabled?: boolean;
 
-  @IsOptional() @IsString() @MaxLength(2000)
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
   privateReplyMessage?: string;
 
-  @IsOptional() @IsString() @MaxLength(4000)
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
   customInstructions?: string;
 
-  @IsOptional() @IsString()
+  @IsOptional()
+  @IsString()
   replyLanguage?: string;
 
-  @IsOptional() @Type(() => Number) @IsInt() @Min(50)
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(50)
   maxReplyTokens?: number;
 
-  @IsOptional() @IsEnum(Tone)
+  @IsOptional()
+  @IsEnum(Tone)
   tone?: Tone;
 
-  @IsOptional() @IsEnum(ResponseStyle)
+  @IsOptional()
+  @IsEnum(ResponseStyle)
   responseStyle?: ResponseStyle;
 }
 
@@ -120,7 +146,7 @@ class UpdatePostAiConfigDto {
 @Controller('facebook')
 export class FacebookPostsController {
   constructor(
-    private readonly fbPosts:   FacebookPostsService,
+    private readonly fbPosts: FacebookPostsService,
     private readonly commentAi: PostCommentAiService,
   ) {}
 
@@ -142,14 +168,14 @@ export class FacebookPostsController {
   addManagedPost(@Body() dto: AddManagedPostBodyDto) {
     return this.fbPosts.addManagedPost({
       businessProfileId: dto.businessProfileId,
-      externalId:        dto.externalId,
-      message:           dto.message ?? null,
-      imageUrl:          dto.imageUrl ?? null,
-      permalinkUrl:      dto.permalinkUrl ?? null,
-      reactionsCount:    dto.reactionsCount ?? 0,
-      commentsCount:     dto.commentsCount  ?? 0,
-      sharesCount:       dto.sharesCount    ?? 0,
-      publishedAt:       dto.publishedAt,
+      externalId: dto.externalId,
+      message: dto.message ?? null,
+      imageUrl: dto.imageUrl ?? null,
+      permalinkUrl: dto.permalinkUrl ?? null,
+      reactionsCount: dto.reactionsCount ?? 0,
+      commentsCount: dto.commentsCount ?? 0,
+      sharesCount: dto.sharesCount ?? 0,
+      publishedAt: dto.publishedAt,
     });
   }
 
@@ -157,7 +183,7 @@ export class FacebookPostsController {
   @Delete('posts/managed/:postId')
   @HttpCode(HttpStatus.NO_CONTENT)
   deleteManagedPost(
-    @Param('postId')           postId:           string,
+    @Param('postId') postId: string,
     @Query('businessProfileId') businessProfileId: string,
   ) {
     return this.fbPosts.deleteManagedPost(postId, businessProfileId);
@@ -168,9 +194,9 @@ export class FacebookPostsController {
   @Get('posts/:businessProfileId')
   getPosts(
     @Param('businessProfileId') businessProfileId: string,
-    @Query('page')     page     = 1,
+    @Query('page') page = 1,
     @Query('pageSize') pageSize = 20,
-    @Query('search')   search?: string,
+    @Query('search') search?: string,
   ) {
     return this.fbPosts.getPostsForProfile(
       businessProfileId,
@@ -182,23 +208,26 @@ export class FacebookPostsController {
 
   @Get('posts/:postId/comments')
   getComments(
-    @Param('postId')   postId: string,
-    @Query('page')     page     = 1,
+    @Param('postId') postId: string,
+    @Query('page') page = 1,
     @Query('pageSize') pageSize = 50,
-    @Query('filter')   filter?: 'all' | 'pending' | 'replied' | 'useful',
-    @Query('search')   search?: string,
+    @Query('filter') filter?: 'all' | 'pending' | 'replied' | 'useful',
+    @Query('search') search?: string,
   ) {
-    return this.fbPosts.getCommentsForPost(postId, +page, +pageSize, filter, search);
+    return this.fbPosts.getCommentsForPost(
+      postId,
+      +page,
+      +pageSize,
+      filter,
+      search,
+    );
   }
 
   // ─── Sync comments ────────────────────────────────────────────────────────
 
   @Post('sync/comments/:postId')
   @HttpCode(HttpStatus.OK)
-  syncComments(
-    @Param('postId') postId: string,
-    @Query('limit') limit = 50,
-  ) {
+  syncComments(@Param('postId') postId: string, @Query('limit') limit = 50) {
     return this.fbPosts.syncPostComments(postId, +limit);
   }
 
