@@ -35,10 +35,13 @@ import { TokenService } from './services/token.service.js';
 import { WebhookService } from './services/webhook.service.js';
 
 // ── New providers ─────────────────────────────────────────────────────────────
-import { FacebookPostsController } from './controllers/facebook-posts.controller.js';
+import { OpenRouterClient } from '../ai/clients/openrouter.client.js';
+import { PromptBuilderService } from '../ai/services/prompt-builder.service.js';
+import { MediaDownloadService } from '../inbox/services/media-download.service.js';
+import { FacebookPostsController } from './facebook-posts/controllers/facebook-posts.controller.js';
+import { FacebookPostsService } from './facebook-posts/services/facebook-posts.service.js';
+import { PostCommentAiService } from './facebook-posts/services/post-comment-ai.service.js';
 import { FacebookController } from './facebook.controller.js';
-import { FacebookPostsService } from './services/facebook-posts.service.js';
-import { PostCommentAiService } from './services/post-comment-ai.service.js';
 
 @Module({
   imports: [
@@ -57,6 +60,10 @@ import { PostCommentAiService } from './services/post-comment-ai.service.js';
     FacebookGraphClient,
     TokenEncryptionService,
 
+    // AI clients/services used by PostCommentAiService
+    OpenRouterClient,
+    PromptBuilderService,
+
     // Auth & account
     FacebookAuthService,
     FacebookAccountService,
@@ -72,6 +79,9 @@ import { PostCommentAiService } from './services/post-comment-ai.service.js';
     // NEW: Posts, comments, and comment AI
     FacebookPostsService,
     PostCommentAiService,
+
+    // NEW: Media download for comment attachments (images, videos) — used by PostCommentAiService and also useful for InboxSyncModule
+    MediaDownloadService,
   ],
   exports: [
     FacebookGraphClient,

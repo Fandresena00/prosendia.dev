@@ -19,13 +19,17 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../../database/prisma.service.js';
-import { OpenRouterClient } from '../../ai/clients/openrouter.client.js';
+import { PrismaService } from '../../../../database/prisma.service.js';
+import { OpenRouterClient } from '../../../ai/clients/openrouter.client.js';
 import {
   REPLY_AI_FALLBACK_MODELS,
   REPLY_AI_MODEL,
-} from '../../ai/config/ai-models.config.js';
-import { PromptBuilderService, type BusinessContext, type ReferenceImage } from '../../ai/services/prompt-builder.service.js';
+} from '../../../ai/config/ai-models.config.js';
+import {
+  PromptBuilderService,
+  type BusinessContext,
+  type ReferenceImage,
+} from '../../../ai/services/prompt-builder.service.js';
 import { FacebookPostsService } from './facebook-posts.service.js';
 
 @Injectable()
@@ -33,10 +37,10 @@ export class PostCommentAiService {
   private readonly logger = new Logger(PostCommentAiService.name);
 
   constructor(
-    private readonly prisma:        PrismaService,
-    private readonly openRouter:    OpenRouterClient,
+    private readonly prisma: PrismaService,
+    private readonly openRouter: OpenRouterClient,
     private readonly promptBuilder: PromptBuilderService,
-    private readonly fbPosts:       FacebookPostsService,
+    private readonly fbPosts: FacebookPostsService,
   ) {}
 
   // ─── Main entry: process a new comment ───────────────────────────────────
@@ -47,17 +51,17 @@ export class PostCommentAiService {
    */
   async processNewComment(commentId: string): Promise<void> {
     const comment = await this.prisma.postComment.findUnique({
-      where:   { id: commentId },
+      where: { id: commentId },
       include: {
         post: {
           include: {
             postAiConfig: true,
             businessProfile: {
               include: {
-                aiConfig:     true,
+                aiConfig: true,
                 aiModelConfig: true,
                 chatResources: {
-                  where:   { isActive: true },
+                  where: { isActive: true },
                   include: { images: { orderBy: { sortOrder: 'asc' } } },
                 },
               },
@@ -73,7 +77,7 @@ export class PostCommentAiService {
     }
 
     const { post } = comment;
-    const config   = post.postAiConfig;
+    const config = post.postAiConfig;
     const { businessProfile } = post;
     const aiConfig = businessProfile.aiConfig;
 
@@ -104,23 +108,25 @@ export class PostCommentAiService {
 
     // ── Build context ─────────────────────────────────────────────────────────
     const businessCtx: BusinessContext = {
-      businessName:        businessProfile.name,
-      businessType:        businessProfile.businessType,
-      description:         businessProfile.description,
-      tone:                config?.tone                ?? aiConfig?.tone             ?? 'FRIENDLY',
-      responseStyle:       config?.responseStyle       ?? aiConfig?.responseStyle    ?? 'SHORT',
-      replyLanguage:       config?.replyLanguage       ?? aiConfig?.replyLanguage    ?? null,
-      systemPrompt:        aiConfig?.systemPrompt      ?? null,
-      inboxInstructions:   null,
+      businessName: businessProfile.name,
+      businessType: businessProfile.businessType,
+      description: businessProfile.description,
+      tone: config?.tone ?? aiConfig?.tone ?? 'FRIENDLY',
+      responseStyle:
+        config?.responseStyle ?? aiConfig?.responseStyle ?? 'SHORT',
+      replyLanguage: config?.replyLanguage ?? aiConfig?.replyLanguage ?? null,
+      systemPrompt: aiConfig?.systemPrompt ?? null,
+      inboxInstructions: null,
       personalizeGreeting: aiConfig?.personalizeGreeting ?? true,
-      blockedKeywords:     (aiConfig?.blockedKeywords as string[]) ?? [],
-      allowedTopics:       (aiConfig?.allowedTopics   as string[]) ?? [],
+      blockedKeywords: (aiConfig?.blockedKeywords as string[]) ?? [],
+      allowedTopics: (aiConfig?.allowedTopics as string[]) ?? [],
       escalationThreshold: aiConfig?.escalationThreshold ?? 0.6,
     };
 
-    const referenceImages: ReferenceImage[] = businessProfile.chatResources.flatMap(
-      (r) => r.images.map((img) => ({ url: img.url, description: img.description })),
-    );
+    const referenceImages: ReferenceImage[] =
+      businessProfile.chatResources.flatMap((r) =>
+        r.images.map((img) => ({ url: img.url, description: img.description })),
+      );
 
     const postCaption = post.message ?? '';
 
@@ -136,7 +142,9 @@ export class PostCommentAiService {
     );
 
     if (!publicReply) {
-      this.logger.warn(`Failed to generate public reply for comment=${commentId}`);
+      this.logger.warn(
+        `Failed to generate public reply for comment=${commentId}`,
+      );
       return;
     }
 
@@ -155,10 +163,14 @@ export class PostCommentAiService {
     this.logger.log(`AI replied publicly to comment=${commentId}`);
 
     // ── Private reply (optional) ──────────────────────────────────────────────
-    const privateEnabled = (config as { privateReplyEnabled?: boolean } | null)?.privateReplyEnabled ?? false;
+    const privateEnabled =
+      (config as { privateReplyEnabled?: boolean } | null)
+        ?.privateReplyEnabled ?? false;
 
     if (privateEnabled) {
-      const privateTemplate = (config as { privateReplyMessage?: string } | null)?.privateReplyMessage;
+      const privateTemplate = (
+        config as { privateReplyMessage?: string } | null
+      )?.privateReplyMessage;
 
       const privateReplyText = privateTemplate?.trim()
         ? privateTemplate
@@ -188,13 +200,13 @@ export class PostCommentAiService {
   // ─── Generate AI replies ─────────────────────────────────────────────────
 
   private async generateCommentReply(
-    ctx:                BusinessContext,
-    postCaption:        string,
-    commentText:        string,
+    ctx: BusinessContext,
+    postCaption: string,
+    commentText: string,
     customInstructions: string | null,
-    referenceImages:    ReferenceImage[],
-    maxTokens:          number,
-    modelConfig:        { replyModelId: string; replyTemperature: number } | null,
+    referenceImages: ReferenceImage[],
+    maxTokens: number,
+    modelConfig: { replyModelId: string; replyTemperature: number } | null,
   ): Promise<string | null> {
     const systemPrompt = this.promptBuilder.buildCommentReplySystemPrompt(
       ctx,
@@ -205,19 +217,23 @@ export class PostCommentAiService {
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
-      { role: 'user'   as const, content: commentText },
+      { role: 'user' as const, content: commentText },
     ];
 
-    return this.callWithFallback(messages, Math.min(maxTokens, 200), modelConfig);
+    return this.callWithFallback(
+      messages,
+      Math.min(maxTokens, 200),
+      modelConfig,
+    );
   }
 
   private async generatePrivateReply(
-    ctx:                BusinessContext,
-    postCaption:        string,
-    commentText:        string,
+    ctx: BusinessContext,
+    postCaption: string,
+    commentText: string,
     customInstructions: string | null,
-    referenceImages:    ReferenceImage[],
-    modelConfig:        { replyModelId: string; replyTemperature: number } | null,
+    referenceImages: ReferenceImage[],
+    modelConfig: { replyModelId: string; replyTemperature: number } | null,
   ): Promise<string | null> {
     const systemPrompt = this.promptBuilder.buildPrivateReplyPrompt(
       ctx,
@@ -229,19 +245,20 @@ export class PostCommentAiService {
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
-      { role: 'user'   as const, content: commentText },
+      { role: 'user' as const, content: commentText },
     ];
 
     return this.callWithFallback(messages, 300, modelConfig);
   }
 
   private async callWithFallback(
-    messages:    Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-    maxTokens:   number,
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    maxTokens: number,
     modelConfig: { replyModelId: string; replyTemperature: number } | null,
   ): Promise<string | null> {
     const primaryModelId = modelConfig?.replyModelId ?? REPLY_AI_MODEL.MODEL_ID;
-    const temperature    = modelConfig?.replyTemperature ?? REPLY_AI_MODEL.TEMPERATURE;
+    const temperature =
+      modelConfig?.replyTemperature ?? REPLY_AI_MODEL.TEMPERATURE;
 
     const modelsToTry = [
       primaryModelId,
@@ -251,7 +268,7 @@ export class PostCommentAiService {
     for (const modelId of modelsToTry) {
       try {
         const result = await this.openRouter.complete({
-          model:       modelId,
+          model: modelId,
           messages,
           maxTokens,
           temperature,

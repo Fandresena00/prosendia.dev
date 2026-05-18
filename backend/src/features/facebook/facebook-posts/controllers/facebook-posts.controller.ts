@@ -13,6 +13,10 @@
  *   POST /facebook/comments/:commentId/ai-reply      → trigger AI reply for one comment
  *   GET  /facebook/posts/:postId/ai-config           → get PostAiConfig
  *   PUT  /facebook/posts/:postId/ai-config           → update PostAiConfig
+ *
+ * FIX: UpdatePostAiConfigDto.tone and .responseStyle changed from `string` to Prisma
+ * enum types (`Tone`, `ResponseStyle`) to satisfy the typed UpdatePostAiConfigData
+ * interface exported from FacebookPostsService.
  */
 
 import {
@@ -27,33 +31,80 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { CurrentUser } from '../../../common/decorators/current-user.decorator.js';
-import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard.js';
-import type { AuthenticatedUser } from '../../auth/types/authenticated-user.types.js';
-import { PostCommentAiService } from '../services/post-comment-ai.service.js';
+import { Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
+import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard.js';
+import { ResponseStyle, Tone } from '../../../../generated/prisma/enums.js';
 import { FacebookPostsService } from '../services/facebook-posts.service.js';
+import { PostCommentAiService } from '../services/post-comment-ai.service.js';
+
+// ─── DTOs ─────────────────────────────────────────────────────────────────────
 
 class ReplyToCommentDto {
+  @IsString()
+  @MaxLength(8000)
   message!: string;
 }
 
+/**
+ * FIX: `tone` and `responseStyle` are now validated as Prisma enums via @IsEnum().
+ * This ensures the values passed to FacebookPostsService.updatePostAiConfig()
+ * match the expected `Tone` and `ResponseStyle` types — no more TS2322.
+ */
 class UpdatePostAiConfigDto {
-  autoReply?:            boolean;
-  privateReplyEnabled?:  boolean;
-  privateReplyMessage?:  string;
-  customInstructions?:   string;
-  replyLanguage?:        string;
-  maxReplyTokens?:       number;
-  tone?:                 string;
-  responseStyle?:        string;
+  @IsOptional()
+  @IsBoolean()
+  autoReply?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  privateReplyEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  privateReplyMessage?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  customInstructions?: string;
+
+  @IsOptional()
+  @IsString()
+  replyLanguage?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(50)
+  maxReplyTokens?: number;
+
+  @IsOptional()
+  @IsEnum(Tone) // FIX: was `string`, now validated as Tone enum
+  tone?: Tone;
+
+  @IsOptional()
+  @IsEnum(ResponseStyle) // FIX: was `string`, now validated as ResponseStyle enum
+  responseStyle?: ResponseStyle;
 }
+
+// ─── Controller ───────────────────────────────────────────────────────────────
 
 @UseGuards(JwtAuthGuard)
 @Controller('facebook')
 export class FacebookPostsController {
   constructor(
-    private readonly fbPosts:       FacebookPostsService,
-    private readonly commentAi:     PostCommentAiService,
+    private readonly fbPosts: FacebookPostsService,
+    private readonly commentAi: PostCommentAiService,
   ) {}
 
   // ─── Sync ─────────────────────────────────────────────────────────────────
@@ -69,10 +120,7 @@ export class FacebookPostsController {
 
   @Post('sync/comments/:postId')
   @HttpCode(HttpStatus.OK)
-  syncComments(
-    @Param('postId') postId: string,
-    @Query('limit') limit = 50,
-  ) {
+  syncComments(@Param('postId') postId: string, @Query('limit') limit = 50) {
     return this.fbPosts.syncPostComments(postId, +limit);
   }
 
@@ -81,9 +129,9 @@ export class FacebookPostsController {
   @Get('posts/:businessProfileId')
   getPosts(
     @Param('businessProfileId') businessProfileId: string,
-    @Query('page')     page     = 1,
+    @Query('page') page = 1,
     @Query('pageSize') pageSize = 20,
-    @Query('search')   search?: string,
+    @Query('search') search?: string,
   ) {
     return this.fbPosts.getPostsForProfile(
       businessProfileId,
@@ -95,13 +143,19 @@ export class FacebookPostsController {
 
   @Get('posts/:postId/comments')
   getComments(
-    @Param('postId')   postId: string,
-    @Query('page')     page     = 1,
+    @Param('postId') postId: string,
+    @Query('page') page = 1,
     @Query('pageSize') pageSize = 50,
-    @Query('filter')   filter?: 'all' | 'pending' | 'replied' | 'useful',
-    @Query('search')   search?: string,
+    @Query('filter') filter?: 'all' | 'pending' | 'replied' | 'useful',
+    @Query('search') search?: string,
   ) {
-    return this.fbPosts.getCommentsForPost(postId, +page, +pageSize, filter, search);
+    return this.fbPosts.getCommentsForPost(
+      postId,
+      +page,
+      +pageSize,
+      filter,
+      search,
+    );
   }
 
   // ─── PostAiConfig ─────────────────────────────────────────────────────────
@@ -119,9 +173,8 @@ export class FacebookPostsController {
     return this.fbPosts.updatePostAiConfig(postId, dto);
   }
 
-  // ─── Manual replies ────────────────────────────────────────────────────────
+  // ─── Manual replies ───────────────────────────────────────────────────────
 
-  /** Manual public reply from the app (human agent). */
   @Post('comments/:commentId/reply')
   @HttpCode(HttpStatus.NO_CONTENT)
   async replyPublic(
@@ -131,7 +184,6 @@ export class FacebookPostsController {
     await this.fbPosts.replyToCommentPublic(commentId, dto.message, false);
   }
 
-  /** Manual private reply (DM) from the app (human agent). */
   @Post('comments/:commentId/private-reply')
   @HttpCode(HttpStatus.NO_CONTENT)
   async replyPrivate(
@@ -141,7 +193,6 @@ export class FacebookPostsController {
     await this.fbPosts.sendPrivateReplyToComment(commentId, dto.message, false);
   }
 
-  /** Force AI reply for a specific comment (manual trigger). */
   @Post('comments/:commentId/ai-reply')
   @HttpCode(HttpStatus.NO_CONTENT)
   async aiReply(@Param('commentId') commentId: string) {

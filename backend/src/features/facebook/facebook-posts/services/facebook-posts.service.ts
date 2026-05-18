@@ -13,26 +13,63 @@
  *   Requires pages_messaging permission (same as regular DMs).
  *   Unlike unsolicited DMs, this is explicitly permitted because the user initiated
  *   contact by commenting on the page's post.
+ *
+ * FIXES
+ * ─────
+ * 1. FIX (line ~54): `post.attachments?.data?.[0]?.media?.image?.src` removed.
+ *    FbPost has no `attachments` field — only `full_picture` (see facebook-graph.client.ts).
+ *    Using `post.full_picture` is consistent with FacebookSyncService.syncPosts().
+ *
+ * 2. FIX (updatePostAiConfig): `tone` and `responseStyle` were typed as `string`,
+ *    which is incompatible with Prisma's generated `Tone` and `ResponseStyle` enums.
+ *    Fix: import the enums from generated/prisma/enums.js and use them as parameter types.
+ *    The spread `{ postId, ...data }` now satisfies Prisma's XOR constraint cleanly.
  */
 
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../../../database/prisma.service.js';
-import { FacebookGraphClient } from '../clients/facebook-graph.client.js';
-import { FacebookApiError } from '../clients/facebook-graph.errors.js';
-import { TokenEncryptionService } from '../security/token-encryption.service.js';
+import { PrismaService } from '../../../../database/prisma.service.js';
+import { ResponseStyle, Tone } from '../../../../generated/prisma/enums.js';
+import { FacebookGraphClient } from '../../clients/facebook-graph.client.js';
+import { FacebookApiError } from '../../clients/facebook-graph.errors.js';
+import { TokenEncryptionService } from '../../security/token-encryption.service.js';
 
-export interface SyncPostsResult  { synced: number; skipped: number }
-export interface SyncCommentsResult { synced: number }
-export interface ReplyResult       { success: boolean; messageId?: string }
+export interface SyncPostsResult {
+  synced: number;
+  skipped: number;
+}
+export interface SyncCommentsResult {
+  synced: number;
+}
+export interface ReplyResult {
+  success: boolean;
+  messageId?: string;
+}
+
+// ─── UpdatePostAiConfigData ───────────────────────────────────────────────────
+
+/**
+ * Uses Prisma enum types directly so the spread into upsert() is type-safe.
+ * FIX: `tone` and `responseStyle` were previously `string`, causing TS2322.
+ */
+export interface UpdatePostAiConfigData {
+  autoReply?: boolean;
+  privateReplyEnabled?: boolean;
+  privateReplyMessage?: string;
+  customInstructions?: string;
+  replyLanguage?: string;
+  maxReplyTokens?: number;
+  tone?: Tone; // FIX: was `string`
+  responseStyle?: ResponseStyle; // FIX: was `string`
+}
 
 @Injectable()
 export class FacebookPostsService {
   private readonly logger = new Logger(FacebookPostsService.name);
 
   constructor(
-    private readonly prisma:      PrismaService,
+    private readonly prisma: PrismaService,
     private readonly graphClient: FacebookGraphClient,
-    private readonly encryption:  TokenEncryptionService,
+    private readonly encryption: TokenEncryptionService,
   ) {}
 
   // ─── Sync posts from Facebook feed ────────────────────────────────────────
@@ -42,39 +79,46 @@ export class FacebookPostsService {
     limit = 20,
   ): Promise<SyncPostsResult> {
     const connection = await this.getConnection(businessProfileId);
-    const token      = this.encryption.decrypt(connection.encryptedAccessToken);
+    const token = this.encryption.decrypt(connection.encryptedAccessToken);
 
-    let synced = 0, skipped = 0;
+    let synced = 0,
+      skipped = 0;
 
     try {
-      const posts = await this.graphClient.getPageFeed(connection.pageId, token, limit);
+      const posts = await this.graphClient.getPageFeed(
+        connection.pageId,
+        token,
+        limit,
+      );
 
       for (const post of posts) {
         try {
-          const imageUrl = post.attachments?.data?.[0]?.media?.image?.src ?? null;
+          // FIX: FbPost has no `attachments` field — use `full_picture` instead.
+          // `attachments` only exists on FbMessage (Messenger), not on feed posts.
+          const imageUrl = post.full_picture ?? null;
 
           await this.prisma.facebookPost.upsert({
-            where:  { externalId: post.id },
+            where: { externalId: post.id },
             create: {
               businessProfileId,
-              externalId:     post.id,
-              message:        post.message        ?? null,
+              externalId: post.id,
+              message: post.message ?? null,
               imageUrl,
-              permalinkUrl:   post.permalink_url  ?? null,
+              permalinkUrl: post.permalink_url ?? null,
               reactionsCount: post.reactions?.summary?.total_count ?? 0,
-              commentsCount:  post.comments?.summary?.total_count  ?? 0,
-              sharesCount:    post.shares?.count                   ?? 0,
-              publishedAt:    new Date(post.created_time),
-              lastSyncedAt:   new Date(),
+              commentsCount: post.comments?.summary?.total_count ?? 0,
+              sharesCount: post.shares?.count ?? 0,
+              publishedAt: new Date(post.created_time),
+              lastSyncedAt: new Date(),
             },
             update: {
-              message:        post.message        ?? null,
+              message: post.message ?? null,
               imageUrl,
-              permalinkUrl:   post.permalink_url  ?? null,
+              permalinkUrl: post.permalink_url ?? null,
               reactionsCount: post.reactions?.summary?.total_count ?? 0,
-              commentsCount:  post.comments?.summary?.total_count  ?? 0,
-              sharesCount:    post.shares?.count                   ?? 0,
-              lastSyncedAt:   new Date(),
+              commentsCount: post.comments?.summary?.total_count ?? 0,
+              sharesCount: post.shares?.count ?? 0,
+              lastSyncedAt: new Date(),
             },
           });
           synced++;
@@ -83,10 +127,14 @@ export class FacebookPostsService {
         }
       }
 
-      this.logger.log(`Synced ${synced} posts for profile=${businessProfileId}`);
+      this.logger.log(
+        `Synced ${synced} posts for profile=${businessProfileId}`,
+      );
     } catch (err) {
       if (err instanceof FacebookApiError) {
-        this.logger.warn(`Post sync failed for profile=${businessProfileId}: ${err.message}`);
+        this.logger.warn(
+          `Post sync failed for profile=${businessProfileId}: ${err.message}`,
+        );
         return { synced: 0, skipped: 0 };
       }
       throw err;
@@ -99,19 +147,21 @@ export class FacebookPostsService {
 
   async syncPostComments(
     postId: string,
-    limit  = 50,
+    limit = 50,
   ): Promise<SyncCommentsResult> {
     const post = await this.prisma.facebookPost.findUnique({
-      where:   { id: postId },
+      where: { id: postId },
       include: { businessProfile: { include: { facebookConnection: true } } },
     });
 
     if (!post || !post.businessProfile.facebookConnection) {
-      throw new NotFoundException(`Post ${postId} not found or no FB connection`);
+      throw new NotFoundException(
+        `Post ${postId} not found or no FB connection`,
+      );
     }
 
     const connection = post.businessProfile.facebookConnection;
-    const token      = this.encryption.decrypt(connection.encryptedAccessToken);
+    const token = this.encryption.decrypt(connection.encryptedAccessToken);
     let synced = 0;
 
     try {
@@ -130,13 +180,13 @@ export class FacebookPostsService {
         await this.prisma.postComment.create({
           data: {
             postId,
-            externalId:     comment.id,
-            authorId:       comment.from?.id   ?? 'unknown',
-            authorName:     comment.from?.name ?? 'Anonyme',
+            externalId: comment.id,
+            authorId: comment.from?.id ?? 'unknown',
+            authorName: comment.from?.name ?? 'Anonyme',
             authorAvatarUrl: null,
-            message:        comment.message,
-            commentedAt:    new Date(comment.created_time),
-            lastSyncedAt:   new Date(),
+            message: comment.message,
+            commentedAt: new Date(comment.created_time),
+            lastSyncedAt: new Date(),
           },
         });
         synced++;
@@ -146,14 +196,16 @@ export class FacebookPostsService {
       if (synced > 0) {
         await this.prisma.facebookPost.update({
           where: { id: postId },
-          data:  { commentsCount: { increment: synced } },
+          data: { commentsCount: { increment: synced } },
         });
       }
 
       this.logger.log(`Synced ${synced} comments for post=${postId}`);
     } catch (err) {
       if (err instanceof FacebookApiError) {
-        this.logger.warn(`Comment sync failed for post=${postId}: ${err.message}`);
+        this.logger.warn(
+          `Comment sync failed for post=${postId}: ${err.message}`,
+        );
         return { synced: 0 };
       }
       throw err;
@@ -166,15 +218,17 @@ export class FacebookPostsService {
 
   async getPostsForProfile(
     businessProfileId: string,
-    page     = 1,
+    page = 1,
     pageSize = 20,
     search?: string,
   ) {
     const where = {
       businessProfileId,
-      ...(search ? {
-        message: { contains: search, mode: 'insensitive' as const },
-      } : {}),
+      ...(search
+        ? {
+            message: { contains: search, mode: 'insensitive' as const },
+          }
+        : {}),
     };
 
     const [posts, total] = await Promise.all([
@@ -182,23 +236,28 @@ export class FacebookPostsService {
         where,
         include: { postAiConfig: true, _count: { select: { comments: true } } },
         orderBy: { publishedAt: 'desc' },
-        skip:    (page - 1) * pageSize,
-        take:    pageSize,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
       }),
       this.prisma.facebookPost.count({ where }),
     ]);
 
     return {
       data: posts,
-      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
     };
   }
 
   // ─── Get comments for a post ──────────────────────────────────────────────
 
   async getCommentsForPost(
-    postId:   string,
-    page    = 1,
+    postId: string,
+    page = 1,
     pageSize = 50,
     filter?: 'all' | 'pending' | 'replied' | 'useful',
     search?: string,
@@ -209,7 +268,7 @@ export class FacebookPostsService {
     if (filter === 'replied') where.isReplied = true;
     if (search) {
       where.OR = [
-        { message:    { contains: search, mode: 'insensitive' } },
+        { message: { contains: search, mode: 'insensitive' } },
         { authorName: { contains: search, mode: 'insensitive' } },
       ];
     }
@@ -218,30 +277,37 @@ export class FacebookPostsService {
       this.prisma.postComment.findMany({
         where,
         orderBy: { commentedAt: 'desc' },
-        skip:    (page - 1) * pageSize,
-        take:    pageSize,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
       }),
       this.prisma.postComment.count({ where }),
     ]);
 
     return {
       data: comments,
-      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
     };
   }
 
   // ─── Reply to comment (public) ────────────────────────────────────────────
 
   async replyToCommentPublic(
-    commentId:   string,
-    replyText:   string,
+    commentId: string,
+    replyText: string,
     repliedByAi = false,
   ): Promise<ReplyResult> {
     const comment = await this.prisma.postComment.findUnique({
-      where:   { id: commentId },
+      where: { id: commentId },
       include: {
         post: {
-          include: { businessProfile: { include: { facebookConnection: true } } },
+          include: {
+            businessProfile: { include: { facebookConnection: true } },
+          },
         },
       },
     });
@@ -249,7 +315,8 @@ export class FacebookPostsService {
     if (!comment) throw new NotFoundException(`Comment ${commentId} not found`);
 
     const connection = comment.post.businessProfile.facebookConnection;
-    if (!connection) throw new NotFoundException('No active Facebook connection');
+    if (!connection)
+      throw new NotFoundException('No active Facebook connection');
 
     const token = this.encryption.decrypt(connection.encryptedAccessToken);
 
@@ -262,10 +329,10 @@ export class FacebookPostsService {
 
       await this.prisma.postComment.update({
         where: { id: commentId },
-        data:  {
-          isReplied:    true,
+        data: {
+          isReplied: true,
           replyContent: replyText,
-          repliedAt:    new Date(),
+          repliedAt: new Date(),
           repliedByAi,
         },
       });
@@ -277,7 +344,9 @@ export class FacebookPostsService {
       return { success: true, messageId: result.id };
     } catch (err) {
       if (err instanceof FacebookApiError) {
-        this.logger.warn(`Failed to reply to comment=${commentId}: ${err.message}`);
+        this.logger.warn(
+          `Failed to reply to comment=${commentId}: ${err.message}`,
+        );
         return { success: false };
       }
       throw err;
@@ -301,15 +370,17 @@ export class FacebookPostsService {
    *   - Only one private reply per comment is allowed
    */
   async sendPrivateReplyToComment(
-    commentId:   string,
-    replyText:   string,
+    commentId: string,
+    replyText: string,
     repliedByAi = false,
   ): Promise<ReplyResult> {
     const comment = await this.prisma.postComment.findUnique({
-      where:   { id: commentId },
+      where: { id: commentId },
       include: {
         post: {
-          include: { businessProfile: { include: { facebookConnection: true } } },
+          include: {
+            businessProfile: { include: { facebookConnection: true } },
+          },
         },
       },
     });
@@ -317,13 +388,12 @@ export class FacebookPostsService {
     if (!comment) throw new NotFoundException(`Comment ${commentId} not found`);
 
     const connection = comment.post.businessProfile.facebookConnection;
-    if (!connection) throw new NotFoundException('No active Facebook connection');
+    if (!connection)
+      throw new NotFoundException('No active Facebook connection');
 
     const token = this.encryption.decrypt(connection.encryptedAccessToken);
 
     try {
-      // Private Reply API: POST /{page-id}/messages
-      // with recipient.comment_id instead of recipient.id
       const result = await this.graphClient.sendPrivateReplyToComment(
         connection.pageId,
         comment.externalId,
@@ -333,13 +403,15 @@ export class FacebookPostsService {
 
       this.logger.log(
         `Private reply sent to comment=${commentId} author=${comment.authorId} ` +
-        `${repliedByAi ? '[AI]' : '[human]'}`,
+          `${repliedByAi ? '[AI]' : '[human]'}`,
       );
 
       return { success: true, messageId: result?.message_id };
     } catch (err) {
       if (err instanceof FacebookApiError) {
-        this.logger.warn(`Failed to send private reply to comment=${commentId}: ${err.message}`);
+        this.logger.warn(
+          `Failed to send private reply to comment=${commentId}: ${err.message}`,
+        );
         return { success: false };
       }
       throw err;
@@ -350,31 +422,27 @@ export class FacebookPostsService {
 
   async getOrCreatePostAiConfig(postId: string) {
     return this.prisma.postAiConfig.upsert({
-      where:  { postId },
+      where: { postId },
       create: {
         postId,
-        autoReply:          true,
+        autoReply: true,
         privateReplyEnabled: false,
       },
       update: {},
     });
   }
 
-  async updatePostAiConfig(
-    postId: string,
-    data: {
-      autoReply?:           boolean;
-      privateReplyEnabled?: boolean;
-      privateReplyMessage?: string;
-      customInstructions?:  string;
-      replyLanguage?:       string;
-      maxReplyTokens?:      number;
-      tone?:                string;
-      responseStyle?:       string;
-    },
-  ) {
+  /**
+   * FIX: Parameter type now uses Prisma's `Tone` and `ResponseStyle` enums instead
+   * of `string`. This resolves TS2322 on the upsert create/update spreads.
+   *
+   * Callers (e.g. FacebookPostsController) must pass enum values, not raw strings.
+   * The controller receives them from the request body and should validate with
+   * @IsEnum(Tone) / @IsEnum(ResponseStyle) in the DTO.
+   */
+  async updatePostAiConfig(postId: string, data: UpdatePostAiConfigData) {
     return this.prisma.postAiConfig.upsert({
-      where:  { postId },
+      where: { postId },
       create: { postId, ...data },
       update: data,
     });
@@ -387,7 +455,9 @@ export class FacebookPostsService {
       where: { businessProfileId, isActive: true },
     });
     if (!connection) {
-      throw new NotFoundException(`No active FB connection for profile=${businessProfileId}`);
+      throw new NotFoundException(
+        `No active FB connection for profile=${businessProfileId}`,
+      );
     }
     return connection;
   }
