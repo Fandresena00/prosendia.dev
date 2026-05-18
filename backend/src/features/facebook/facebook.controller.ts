@@ -1,3 +1,13 @@
+/**
+ * @file features/facebook/facebook.controller.ts
+ *
+ * Core Facebook controller — OAuth, connections, messaging, webhook, sync, tokens.
+ *
+ * ADDED: GET /facebook/pages/list
+ *   Returns connected pages formatted for the frontend with avatar URLs.
+ *   Used by the posts-comments feature to populate the page switcher.
+ */
+
 import {
   Body,
   Controller,
@@ -44,33 +54,81 @@ import {
   WebhookService,
 } from './services/webhook.service.js';
 
+// ─── Facebook page for frontend ───────────────────────────────────────────────
+
+export interface FacebookPageListItem {
+  /** businessProfileId — used as the page key in the frontend */
+  key:       string;
+  pageId:    string;
+  name:      string;
+  /** 2-letter initials for fallback avatar */
+  avatar:    string;
+  /** Tailwind color class for fallback avatar background */
+  color:     string;
+  /** Facebook CDN avatar URL — may return 403 for private pages */
+  avatarUrl: string;
+}
+
+/** Color palette for page avatars — cycles by index */
+const PAGE_COLORS = [
+  'bg-primary/15 text-primary',
+  'bg-violet-500/15 text-violet-600',
+  'bg-emerald-500/15 text-emerald-600',
+  'bg-amber-500/15 text-amber-600',
+  'bg-rose-500/15 text-rose-600',
+] as const;
+
 @Controller('facebook')
 export class FacebookController {
   constructor(
-    private readonly authService: FacebookAuthService,
-    private readonly accountService: FacebookAccountService,
-    private readonly syncService: FacebookSyncService,
+    private readonly authService:      FacebookAuthService,
+    private readonly accountService:   FacebookAccountService,
+    private readonly syncService:      FacebookSyncService,
     private readonly messagingService: FacebookMessagingService,
-    private readonly webhookService: WebhookService,
-    private readonly tokenService: TokenService,
-    private readonly configService: ConfigService,
+    private readonly webhookService:   WebhookService,
+    private readonly tokenService:     TokenService,
+    private readonly configService:    ConfigService,
   ) {}
+
+  // ─── Pages list (for frontend page switcher) ──────────────────────────────
+
+  /**
+   * GET /facebook/pages/list
+   * Returns all connected Facebook pages for the current user,
+   * formatted for the frontend page switcher (with avatar URLs).
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get('pages/list')
+  async listPages(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<FacebookPageListItem[]> {
+    const { data: connections } = await this.accountService.listForUser(
+      user.sub,
+      { page: 1, pageSize: 50 },
+    );
+
+    return connections.map((conn, index) => ({
+      key:       conn.businessProfileId,
+      pageId:    conn.pageId,
+      name:      conn.pageName,
+      avatar:    conn.pageName
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((w) => w[0]?.toUpperCase() ?? '')
+        .join(''),
+      color:     PAGE_COLORS[index % PAGE_COLORS.length],
+      avatarUrl: `https://graph.facebook.com/${conn.pageId}/picture?type=square`,
+    }));
+  }
 
   // ─── OAuth ────────────────────────────────────────────────────────────────
 
-  /** Step 1 — Frontend redirects the user to the returned URL. */
   @UseGuards(JwtAuthGuard)
   @Get('oauth/url')
-  getOAuthUrl(@Query('businessProfileId') businessProfileId: string): {
-    url: string;
-  } {
+  getOAuthUrl(@Query('businessProfileId') businessProfileId: string): { url: string } {
     return { url: this.authService.buildOAuthUrl(businessProfileId) };
   }
 
-  /**
-   * Step 2 — Frontend exchanges the code after Facebook redirects back.
-   * Returns the list of pages the user manages so they can pick one.
-   */
   @UseGuards(JwtAuthGuard)
   @Post('oauth/callback')
   async handleCallback(
@@ -81,10 +139,6 @@ export class FacebookController {
 
   // ─── Connections ──────────────────────────────────────────────────────────
 
-  /**
-   * Step 3 — User picks a page; we store the token and subscribe to the webhook.
-   * Returns 201 on success.
-   */
   @UseGuards(JwtAuthGuard)
   @Post('connect')
   @HttpCode(HttpStatus.CREATED)
@@ -95,7 +149,6 @@ export class FacebookController {
     return this.authService.connectPage(dto, user.sub);
   }
 
-  /** Remove a connection and unsubscribe the page's webhook. */
   @UseGuards(JwtAuthGuard)
   @Delete('disconnect/:businessProfileId')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -106,7 +159,6 @@ export class FacebookController {
     return this.authService.disconnectPage(businessProfileId, user.sub);
   }
 
-  /** List all connections for the authenticated user (paginated). */
   @UseGuards(JwtAuthGuard)
   @Get('connections')
   async listConnections(
@@ -116,7 +168,6 @@ export class FacebookController {
     return this.accountService.listForUser(user.sub, pagination);
   }
 
-  /** Get a single connection by its business profile ID. */
   @UseGuards(JwtAuthGuard)
   @Get('connections/:businessProfileId')
   async getConnection(
@@ -127,34 +178,6 @@ export class FacebookController {
   }
 
   // ─── Sync ─────────────────────────────────────────────────────────────────
-
-  @UseGuards(JwtAuthGuard)
-  @Post('sync/posts/:businessProfileId')
-  async syncPosts(
-    @Param('businessProfileId') businessProfileId: string,
-    @Query('limit') limit = 10,
-    @CurrentUser() user: AuthenticatedUser,
-  ): Promise<{ synced: number }> {
-    return {
-      synced: await this.syncService.syncPosts(
-        businessProfileId,
-        user.sub,
-        +limit,
-      ),
-    };
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Post('sync/comments/:postId')
-  async syncComments(
-    @Param('postId') postId: string,
-    @Query('limit') limit = 25,
-    @CurrentUser() user: AuthenticatedUser,
-  ): Promise<{ synced: number }> {
-    return {
-      synced: await this.syncService.syncPostComments(postId, user.sub, +limit),
-    };
-  }
 
   @UseGuards(JwtAuthGuard)
   @Post('sync/conversations/:businessProfileId')
@@ -168,12 +191,9 @@ export class FacebookController {
       user.sub,
       +limit,
     );
-    return {
-      synced: result.synced,
-    };
+    return { synced: result.synced };
   }
 
-  /** Pull individual messages for a conversation (called from the inbox UI). */
   @UseGuards(JwtAuthGuard)
   @Post('sync/messages/:conversationId')
   async syncMessages(
@@ -186,14 +206,11 @@ export class FacebookController {
       user.sub,
       +limit,
     );
-    return {
-      synced: result.synced,
-    };
+    return { synced: result.synced };
   }
 
-  // ─── Messaging (outbound) ─────────────────────────────────────────────────
+  // ─── Messaging ────────────────────────────────────────────────────────────
 
-  /** Send a text DM to a user. */
   @UseGuards(JwtAuthGuard)
   @Post('messages/send')
   @HttpCode(HttpStatus.CREATED)
@@ -209,7 +226,6 @@ export class FacebookController {
     );
   }
 
-  /** Reply to a Facebook comment. commentId is the external Facebook comment ID. */
   @UseGuards(JwtAuthGuard)
   @Post('comments/:commentId/reply')
   @HttpCode(HttpStatus.CREATED)
@@ -228,11 +244,6 @@ export class FacebookController {
 
   // ─── Token management ─────────────────────────────────────────────────────
 
-  /**
-   * Trigger a bulk validation of all active tokens.
-   * Intended to be called by a scheduled job (cron), but also available via API
-   * for manual runs or debugging.
-   */
   @UseGuards(JwtAuthGuard)
   @Post('tokens/validate')
   async validateTokens(
@@ -243,36 +254,23 @@ export class FacebookController {
 
   // ─── Webhook ──────────────────────────────────────────────────────────────
 
-  /**
-   * GET — Facebook's one-time verification challenge.
-   * Called once when you first register the webhook URL in the Meta dashboard.
-   */
   @Get('webhook')
   verifyWebhook(
     @Query('hub.mode') mode: string,
     @Query('hub.challenge') challenge: string,
     @Query('hub.verify_token') verifyToken: string,
   ): string {
-    const expected = this.configService.getOrThrow<string>(
-      'facebookVerifyToken',
-    );
+    const expected = this.configService.getOrThrow<string>('facebookVerifyToken');
     if (mode !== 'subscribe' || verifyToken !== expected) {
       throw new ForbiddenException('Webhook verification failed');
     }
     return challenge;
   }
 
-  /**
-   * POST — Receives real-time events (messages, comments, reactions) from Facebook.
-   * Protected by HMAC-SHA256 signature verification via WebhookSignatureGuard.
-   * Processing is fire-and-forget — we return 200 immediately to Facebook.
-   */
   @UseGuards(WebhookSignatureGuard)
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   async receiveWebhook(@Body() payload: FbWebhookPayload): Promise<void> {
-    // Dispatch is async fire-and-forget: Facebook requires a 200 response within
-    // 20s or it will retry. Processing happens in the background.
     void this.webhookService.dispatchPayload(payload);
   }
 }
