@@ -1,31 +1,22 @@
 /**
  * @file features/facebook/facebook.module.ts
  *
- * CHANGES:
- *   - Added FacebookPostsService    → posts/comments sync and reply
- *   - Added PostCommentAiService    → AI-powered comment handling + spam filter
- *   - Added FacebookPostsController → REST endpoints for posts/comments/config
+ * Core Facebook integration module — OAuth, connections, messaging, webhook, sync, tokens.
  *
- * Dependency graph (unchanged, no new circular deps):
- *   QueueModule      → (no feature modules)
- *   InboxEventsModule → (no deps)
- *   FacebookModule   → QueueModule, InboxEventsModule, forwardRef(InboxSyncModule)
- *   InboxSyncModule  → forwardRef(FacebookModule), PrismaModule, InboxEventsModule
- *   AiModule         → QueueModule, InboxEventsModule, forwardRef(FacebookModule)
- *
- * PostCommentAiService uses OpenRouterClient and PromptBuilderService from AiModule.
- * AiModule already exports these; FacebookModule imports AiModule via forwardRef.
+ * ADDITION: PostsEventsModule is now imported so WebhookService can inject
+ * PostsEventEmitter and emit comment:new in real-time when a webhook arrives.
+ * PostsEventsModule has zero deps → no circular dependency risk.
  */
 
 import { Module, forwardRef } from '@nestjs/common';
 import { PrismaModule } from '../../database/prisma.module.js';
-import { AiModule } from '../ai/ai.module.js';
 import { InboxEventsModule } from '../inbox/inbox-events.module.js';
 import { InboxSyncModule } from '../inbox/inbox-sync.module.js';
 import { QueueModule } from '../queue/queue.module.js';
 
-// ── Existing providers ────────────────────────────────────────────────────────
 import { FacebookGraphClient } from './clients/facebook-graph.client.js';
+import { PostsEventsModule } from './facebook-posts/posts-events/posts-events.module.js';
+import { FacebookController } from './facebook.controller.js';
 import { TokenEncryptionService } from './security/token-encryption.service.js';
 import { FacebookAccountService } from './services/facebook-account.service.js';
 import { FacebookAuthService } from './services/facebook-auth.service.js';
@@ -34,65 +25,33 @@ import { FacebookSyncService } from './services/facebook-sync.service.js';
 import { TokenService } from './services/token.service.js';
 import { WebhookService } from './services/webhook.service.js';
 
-// ── New providers ─────────────────────────────────────────────────────────────
-import { OpenRouterClient } from '../ai/clients/openrouter.client.js';
-import { PromptBuilderService } from '../ai/services/prompt-builder.service.js';
-import { MediaDownloadService } from '../inbox/services/media-download.service.js';
-import { FacebookPostsController } from './facebook-posts/controllers/facebook-posts.controller.js';
-import { FacebookPostsService } from './facebook-posts/services/facebook-posts.service.js';
-import { PostCommentAiService } from './facebook-posts/services/post-comment-ai.service.js';
-import { FacebookController } from './facebook.controller.js';
-
 @Module({
   imports: [
     PrismaModule,
     QueueModule,
     InboxEventsModule,
+    PostsEventsModule, // NEW: for WebhookService → PostsEventEmitter
     forwardRef(() => InboxSyncModule),
-    forwardRef(() => AiModule), // PostCommentAiService needs OpenRouterClient + PromptBuilderService
   ],
-  controllers: [
-    FacebookController,
-    FacebookPostsController, // NEW: posts/comments/ai-config endpoints
-  ],
+  controllers: [FacebookController],
   providers: [
-    // Infrastructure
     FacebookGraphClient,
     TokenEncryptionService,
-
-    // AI clients/services used by PostCommentAiService
-    OpenRouterClient,
-    PromptBuilderService,
-
-    // Auth & account
     FacebookAuthService,
     FacebookAccountService,
     TokenService,
-
-    // Messaging & webhooks
     FacebookMessagingService,
     WebhookService,
-
-    // Sync
     FacebookSyncService,
-
-    // NEW: Posts, comments, and comment AI
-    FacebookPostsService,
-    PostCommentAiService,
-
-    // NEW: Media download for comment attachments (images, videos) — used by PostCommentAiService and also useful for InboxSyncModule
-    MediaDownloadService,
   ],
   exports: [
     FacebookGraphClient,
+    TokenEncryptionService,
     FacebookAccountService,
     FacebookAuthService,
     FacebookMessagingService,
     FacebookSyncService,
-    FacebookPostsService, // exported so other modules can use if needed
-    PostCommentAiService,
     TokenService,
-    TokenEncryptionService,
   ],
 })
 export class FacebookModule {}

@@ -1,29 +1,87 @@
 "use client";
 /**
  * @file features/posts-comments/components/post-card.tsx
- * Post card with real page avatar, stats, AI badge, and delete button.
+ *
+ * next/image usage:
+ *   - Page avatar  → `width={28} height={28}` (known fixed size)
+ *   - Post image   → `fill` + `sizes="48px"` (unknown FB CDN dimensions)
+ *   Both use `unoptimized` to avoid requiring fbcdn.net in next.config.js.
+ *   Error state handled via local useState in sub-components.
  */
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IconBrandFacebook, IconMessage, IconThumbUp, IconTrash } from "@tabler/icons-react";
-import { Bot, ImageIcon } from "lucide-react";
+import { Bot } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
+import Image from "next/image";
+import { useState } from "react";
 import type { ApiPost, FacebookPage } from "../types/posts-comments.types";
 
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+/** Page avatar with initials fallback on image error. */
+function PageAvatarImg({
+  page,
+  size,
+}: {
+  page: FacebookPage;
+  size: number;
+}) {
+  const [error, setError] = useState(false);
+
+  if (!page.avatarUrl || error) {
+    return (
+      <div
+        className={`rounded-full flex items-center justify-center font-bold ${page.color}`}
+        style={{ width: size, height: size, fontSize: size * 0.32 }}
+      >
+        {page.avatar}
+      </div>
+    );
+  }
+
+  return (
+    <Image
+      src={page.avatarUrl}
+      alt={page.name}
+      width={size}
+      height={size}
+      className="rounded-full object-cover border border-border/30"
+      unoptimized
+      onError={() => setError(true)}
+    />
+  );
+}
+
+/** Post image thumbnail with fill layout. */
+function PostImageThumb({ src }: { src: string }) {
+  const [error, setError] = useState(false);
+  if (error) return null;
+  return (
+    <Image
+      src={src}
+      alt=""
+      fill
+      sizes="48px"
+      className="object-cover"
+      unoptimized
+      onError={() => setError(true)}
+    />
+  );
+}
+
+// ─── PostCard ─────────────────────────────────────────────────────────────────
+
 interface PostCardProps {
-  post:       ApiPost;
-  page:       FacebookPage;
-  active:     boolean;
-  deleting:   boolean;
-  onSelect:   () => void;
-  onDelete:   (e: React.MouseEvent) => void;
+  post:     ApiPost;
+  page:     FacebookPage;
+  active:   boolean;
+  deleting: boolean;
+  onSelect: () => void;
+  onDelete: (e: React.MouseEvent) => void;
 }
 
 export function PostCard({
@@ -36,9 +94,8 @@ export function PostCard({
 }: PostCardProps) {
   const timeAgo = formatDistanceToNow(new Date(post.publishedAt), {
     addSuffix: true,
-    locale:    fr,
+    locale: fr,
   });
-
   const aiEnabled = post.postAiConfig?.autoReply === true;
 
   return (
@@ -50,27 +107,10 @@ export function PostCard({
       }`}
       onClick={onSelect}
     >
-      {/* Header: page avatar + name + time */}
+      {/* Header: avatar + name + time + AI dot */}
       <div className="flex items-center gap-2 mb-2">
-        {/* Page avatar with initials fallback */}
-        <div className="relative shrink-0">
-          {page.avatarUrl ? (
-            <img
-              src={page.avatarUrl}
-              alt={page.name}
-              className="h-7 w-7 rounded-full object-cover border border-border/30"
-              onError={(e) => {
-                e.currentTarget.style.display = "none";
-                const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
-                if (fallback) fallback.style.removeProperty("display");
-              }}
-            />
-          ) : null}
-          <div
-            className={`h-7 w-7 rounded-full items-center justify-center text-[9px] font-bold ${page.color} ${page.avatarUrl ? "hidden" : "flex"}`}
-          >
-            {page.avatar}
-          </div>
+        <div className="shrink-0">
+          <PageAvatarImg page={page} size={28} />
         </div>
 
         <div className="flex-1 min-w-0">
@@ -81,38 +121,35 @@ export function PostCard({
           </p>
         </div>
 
-        {/* AI status dot */}
-        <div className={`shrink-0 h-5 w-5 rounded-full flex items-center justify-center ${
-          aiEnabled ? "bg-emerald-500/15" : "bg-secondary/60"
-        }`}>
-          <Bot className={`h-3 w-3 ${aiEnabled ? "text-emerald-600" : "text-muted-foreground/40"}`} />
+        <div
+          className={`shrink-0 h-5 w-5 rounded-full flex items-center justify-center ${
+            aiEnabled ? "bg-emerald-500/15" : "bg-secondary/60"
+          }`}
+        >
+          <Bot
+            className={`h-3 w-3 ${aiEnabled ? "text-emerald-600" : "text-muted-foreground/40"}`}
+          />
         </div>
       </div>
 
-      {/* Media thumbnail + caption */}
+      {/* Thumbnail + caption */}
       <div className="flex gap-2.5">
         {post.imageUrl && (
-          <div className="shrink-0 h-12 w-12 rounded-lg overflow-hidden bg-secondary/40 flex items-center justify-center">
-            <img
-              src={post.imageUrl}
-              alt=""
-              className="h-full w-full object-cover"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
-              }}
-            />
-            <ImageIcon className="h-5 w-5 text-muted-foreground/30 hidden" />
+          // `relative` is required for `fill` layout
+          <div className="relative shrink-0 h-12 w-12 rounded-lg overflow-hidden bg-secondary/40">
+            <PostImageThumb src={post.imageUrl} />
           </div>
         )}
-
         <div className="flex-1 min-w-0">
           <p className="text-[12px] font-medium leading-snug line-clamp-2 text-foreground">
-            {post.message ?? <span className="italic text-muted-foreground">Pas de légende</span>}
+            {post.message ?? (
+              <span className="italic text-muted-foreground">Pas de légende</span>
+            )}
           </p>
         </div>
       </div>
 
-      {/* Stats row */}
+      {/* Stats */}
       <div className="flex items-center gap-3 mt-2">
         <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
           <IconThumbUp className="h-3 w-3" />
@@ -136,7 +173,7 @@ export function PostCard({
         )}
       </div>
 
-      {/* Delete button — appears on hover */}
+      {/* Delete button on hover */}
       <Tooltip>
         <TooltipTrigger asChild>
           <Button

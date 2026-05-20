@@ -498,10 +498,7 @@ function extractImageTokens(text: string): {
 }
 
 function normalizeReplyText(input: string): string {
-  let text = input
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .trim();
+  let text = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
 
   // Convert inline bullet formatting into visible line breaks.
   text = text.replace(/\s-\s+/g, '\n- ');

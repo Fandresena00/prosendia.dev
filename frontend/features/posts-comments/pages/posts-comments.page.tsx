@@ -19,7 +19,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
-  IconBarChart,
+  IconArmchair,
   IconPlus,
   IconRefresh,
   IconSearch,
@@ -46,7 +46,9 @@ export function PostsCommentsPage() {
       <div className="flex items-center justify-center h-full">
         <div className="flex flex-col items-center gap-3">
           <div className="h-8 w-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-          <p className="text-sm text-muted-foreground">Chargement des pages Facebook…</p>
+          <p className="text-sm text-muted-foreground">
+            Chargement des pages Facebook…
+          </p>
         </div>
       </div>
     );
@@ -57,9 +59,12 @@ export function PostsCommentsPage() {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center space-y-2 max-w-xs">
-          <p className="text-sm font-semibold text-foreground">Aucune page connectée</p>
+          <p className="text-sm font-semibold text-foreground">
+            Aucune page connectée
+          </p>
           <p className="text-xs text-muted-foreground">
-            {hook.pagesError ?? "Connectez une page Facebook dans les paramètres pour commencer."}
+            {hook.pagesError ??
+              "Connectez une page Facebook dans les paramètres pour commencer."}
           </p>
         </div>
       </div>
@@ -69,10 +74,8 @@ export function PostsCommentsPage() {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="flex h-full overflow-hidden">
-
         {/* ── LEFT PANEL — Posts list ──────────────────────────────────────── */}
         <div className="w-[280px] shrink-0 flex flex-col border-r border-border/40">
-
           {/* Header */}
           <div className="shrink-0 px-4 pt-4 pb-3 space-y-3">
             <div className="flex items-center justify-between">
@@ -110,7 +113,8 @@ export function PostsCommentsPage() {
             {/* Post count + autoReply counter */}
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-muted-foreground">
-                {hook.posts.length} post{hook.posts.length !== 1 ? "s" : ""} gérés
+                {hook.posts.length} post{hook.posts.length !== 1 ? "s" : ""}{" "}
+                gérés
               </span>
               <Badge
                 variant="secondary"
@@ -136,7 +140,9 @@ export function PostsCommentsPage() {
                 ))
               ) : hook.posts.length === 0 ? (
                 <div className="text-center py-10 space-y-2">
-                  <p className="text-xs text-muted-foreground">Aucun post ajouté</p>
+                  <p className="text-xs text-muted-foreground">
+                    Aucun post ajouté
+                  </p>
                   <Button
                     variant="outline"
                     size="sm"
@@ -175,11 +181,13 @@ export function PostsCommentsPage() {
               <div className="shrink-0 px-5 py-3 border-b border-border/40 flex items-center justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold truncate">
-                    {hook.selectedPost.message?.slice(0, 60) ?? "Post sans légende"}
+                    {hook.selectedPost.message?.slice(0, 60) ??
+                      "Post sans légende"}
                     {(hook.selectedPost.message?.length ?? 0) > 60 ? "…" : ""}
                   </p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {hook.commentTotal} commentaire{hook.commentTotal !== 1 ? "s" : ""}
+                    {hook.commentTotal} commentaire
+                    {hook.commentTotal !== 1 ? "s" : ""}
                   </p>
                 </div>
 
@@ -195,7 +203,11 @@ export function PostsCommentsPage() {
                           : "border-border/40 text-muted-foreground hover:border-border"
                       }`}
                     >
-                      {f === "all" ? "Tous" : f === "pending" ? "En attente" : "Répondus"}
+                      {f === "all"
+                        ? "Tous"
+                        : f === "pending"
+                          ? "En attente"
+                          : "Répondus"}
                     </button>
                   ))}
                 </div>
@@ -242,9 +254,12 @@ export function PostsCommentsPage() {
                     ))
                   ) : hook.comments.length === 0 ? (
                     <div className="text-center py-12">
-                      <p className="text-sm text-muted-foreground">Aucun commentaire</p>
+                      <p className="text-sm text-muted-foreground">
+                        Aucun commentaire
+                      </p>
                       <p className="text-xs text-muted-foreground/60 mt-1">
-                        Cliquez sur le bouton de synchronisation pour charger les commentaires.
+                        Cliquez sur le bouton de synchronisation pour charger
+                        les commentaires.
                       </p>
                     </div>
                   ) : (
@@ -253,7 +268,9 @@ export function PostsCommentsPage() {
                         key={comment.id}
                         comment={comment}
                         isReplyingTo={hook.replyingTo === comment.id}
-                        replyText={hook.replyingTo === comment.id ? hook.replyText : ""}
+                        replyText={
+                          hook.replyingTo === comment.id ? hook.replyText : ""
+                        }
                         replyMode={hook.replyMode}
                         replySending={hook.replySending}
                         onStartReply={() => {
@@ -277,7 +294,9 @@ export function PostsCommentsPage() {
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center space-y-2">
-                <p className="text-sm text-muted-foreground">Sélectionnez un post</p>
+                <p className="text-sm text-muted-foreground">
+                  Sélectionnez un post
+                </p>
                 <p className="text-xs text-muted-foreground/60">
                   Cliquez sur un post dans la liste pour voir ses commentaires.
                 </p>
@@ -288,13 +307,18 @@ export function PostsCommentsPage() {
 
         {/* ── RIGHT PANEL — Config + Stats ─────────────────────────────────── */}
         <div className="w-[300px] shrink-0 flex flex-col border-l border-border/40">
-
           {/* Tab switcher */}
           <div className="shrink-0 flex border-b border-border/40">
-            {([
-              { key: "comments" as const, icon: IconSettings, label: "Config IA" },
-              { key: "config"   as const, icon: IconBarChart,  label: "Stats" },
-            ] as { key: ActiveTab; icon: React.ElementType; label: string }[]).map(({ key, icon: Icon, label }) => (
+            {(
+              [
+                {
+                  key: "comments" as const,
+                  icon: IconSettings,
+                  label: "Config IA",
+                },
+                { key: "config" as const, icon: IconArmchair, label: "Stats" },
+              ] as { key: ActiveTab; icon: React.ElementType; label: string }[]
+            ).map(({ key, icon: Icon, label }) => (
               <button
                 key={key}
                 onClick={() => setRightTab(key)}
@@ -325,7 +349,9 @@ export function PostsCommentsPage() {
                 />
               ) : (
                 <div className="flex items-center justify-center h-full">
-                  <p className="text-xs text-muted-foreground">Sélectionnez un post</p>
+                  <p className="text-xs text-muted-foreground">
+                    Sélectionnez un post
+                  </p>
                 </div>
               )
             ) : (

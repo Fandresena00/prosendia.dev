@@ -2,7 +2,11 @@
 /**
  * @file features/posts-comments/components/add-post-dialog.tsx
  * Dialog to add a post from the live Facebook feed.
- * Fetches real feed from the backend — no mock data.
+ *
+ * FIX: next/image requires either `fill` (parent must be `relative`) or
+ * explicit `width`/`height`. Facebook CDN images have unknown dimensions,
+ * so we use `fill` + `sizes` + `unoptimized` (skips Next.js Image Optimization
+ * API, avoiding the need to whitelist fbcdn.net in next.config.js).
  */
 
 import {
@@ -32,14 +36,39 @@ import { useState } from "react";
 import type { FacebookPage, FbFeedPost } from "../types/posts-comments.types";
 
 interface AddPostDialogProps {
-  open: boolean;
-  feedPosts: FbFeedPost[];
+  open:        boolean;
+  feedPosts:   FbFeedPost[];
   feedLoading: boolean;
-  adding: boolean;
-  activePage: FacebookPage | null;
-  onClose: () => void;
-  onAdd: (post: FbFeedPost) => void;
+  adding:      boolean;
+  activePage:  FacebookPage | null;
+  onClose:     () => void;
+  onAdd:       (post: FbFeedPost) => void;
 }
+
+// ─── Post thumbnail with next/image ───────────────────────────────────────────
+
+function PostThumbnail({ src }: { src: string }) {
+  const [error, setError] = useState(false);
+  if (error) return null;
+  return (
+    /**
+     * `fill` requires the parent to have `position: relative` and defined
+     * dimensions. The parent div has `h-12 w-12` (48×48px) and `relative`.
+     * `unoptimized` bypasses domain whitelist — safe for external FB CDN URLs.
+     */
+    <Image
+      src={src}
+      alt=""
+      fill
+      sizes="48px"
+      className="object-cover"
+      unoptimized
+      onError={() => setError(true)}
+    />
+  );
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export function AddPostDialog({
   open,
@@ -50,23 +79,17 @@ export function AddPostDialog({
   onClose,
   onAdd,
 }: AddPostDialogProps) {
-  const [search, setSearch] = useState("");
+  const [search,   setSearch]   = useState("");
   const [selected, setSelected] = useState<FbFeedPost | null>(null);
 
-  const filtered = feedPosts.filter((p) => {
-    if (!search.trim()) return true;
-    return (p.message ?? "").toLowerCase().includes(search.toLowerCase());
-  });
+  const filtered = feedPosts.filter((p) =>
+    !search.trim() || (p.message ?? "").toLowerCase().includes(search.toLowerCase()),
+  );
 
   const handleClose = () => {
     setSearch("");
     setSelected(null);
     onClose();
-  };
-
-  const handleAdd = () => {
-    if (!selected || selected.alreadyAdded) return;
-    onAdd(selected);
   };
 
   return (
@@ -85,7 +108,7 @@ export function AddPostDialog({
           </AlertDialogTitle>
           <AlertDialogDescription className="text-xs">
             {activePage
-              ? `Posts récents de "${activePage.name}". Sélectionnez un post pour activer la gestion IA des commentaires.`
+              ? `Posts récents de "${activePage.name}". Sélectionnez un post pour activer la gestion IA.`
               : "Chargement…"}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -133,21 +156,13 @@ export function AddPostDialog({
                       }`}
                     >
                       <div className="flex items-start gap-2.5">
-                        {/* Thumbnail */}
+                        {/* Thumbnail — `relative` required for `fill` */}
                         {post.imageUrl && (
-                          <div className="shrink-0 h-12 w-12 rounded-lg overflow-hidden bg-secondary/40">
-                            <Image
-                              src={post.imageUrl}
-                              alt=""
-                              className="h-full w-full object-cover"
-                              onError={(e) => {
-                                (
-                                  e.currentTarget as HTMLImageElement
-                                ).style.display = "none";
-                              }}
-                            />
+                          <div className="relative shrink-0 h-12 w-12 rounded-lg overflow-hidden bg-secondary/40">
+                            <PostThumbnail src={post.imageUrl} />
                           </div>
                         )}
+
                         <div className="flex-1 min-w-0">
                           <p className="text-[12px] font-medium line-clamp-2 leading-snug">
                             {post.message ?? (
@@ -163,7 +178,8 @@ export function AddPostDialog({
                             })}
                           </p>
                         </div>
-                        {/* State indicator */}
+
+                        {/* State badge */}
                         {post.alreadyAdded ? (
                           <Badge
                             variant="secondary"
@@ -204,7 +220,7 @@ export function AddPostDialog({
             <Button
               className="flex-1 h-9 text-sm gap-2"
               disabled={!selected || selected.alreadyAdded || adding}
-              onClick={handleAdd}
+              onClick={() => selected && !selected.alreadyAdded && onAdd(selected)}
             >
               {adding ? (
                 <>

@@ -1,5 +1,20 @@
 /**
  * @file src/lib/api-client.ts
+ *
+ * FIX 1 — NestJS validation errors (parseResponse)
+ * ──────────────────────────────────────────────────
+ * NestJS ValidationPipe returns: { message: string[], error: "Bad Request", statusCode: 400 }
+ * The previous parseResponse only checked `data.errors` (our custom format), not `data.message`.
+ * Result: validation messages like "businessProfileId should not be empty" were lost,
+ * and the displayed error fell back to the generic "Bad Request" string.
+ *
+ * Fix: check both `data.errors` and `data.message` (array form) for validation errors.
+ *
+ * FIX 2 — parseResponse message extraction order
+ * ───────────────────────────────────────────────
+ * The previous code filtered out "Bad Request" from `data.error` but didn't
+ * suppress it as the final fallback. Now the first validation error is always
+ * surfaced as the primary message.
  */
 
 import { env } from "./env";
@@ -11,13 +26,13 @@ export interface ApiClientOptions extends RequestInit {
 }
 
 interface NestErrorEnvelope {
-  message?: string;
-  error?: string;
-  errors?: string[];
-  code?: string;
+  message?: string | string[];
+  error?:   string;
+  errors?:  string[];
+  code?:    string;
 }
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES        = 3;
 const RETRY_BASE_DELAY_MS = 1_000;
 
 function sleep(ms: number): Promise<void> {
@@ -25,8 +40,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 let isRefreshing = false;
-let pendingQueue: Array<{ resolve: () => void; reject: (e: unknown) => void }> =
-  [];
+let pendingQueue: Array<{ resolve: () => void; reject: (e: unknown) => void }> = [];
 
 function processQueue(error: unknown): void {
   for (const { resolve, reject } of pendingQueue) {
@@ -37,20 +51,15 @@ function processQueue(error: unknown): void {
 }
 
 async function fetchWithRetry(
-  url: string,
+  url:     string,
   options: ApiClientOptions,
   attempt = 0,
 ): Promise<Response> {
   try {
     const headers: Record<string, string> = {};
-
-    // On ne définit Content-Type que si le corps est une chaîne JSON
-    // (pour FormData, fetch le fera automatiquement avec la boundary)
     if (typeof options.body === "string") {
       headers["Content-Type"] = "application/json";
     }
-
-    // Fusionne avec les headers éventuels passés dans options
     Object.assign(headers, options.headers);
 
     return await fetch(url, {
@@ -68,7 +77,6 @@ async function fetchWithRetry(
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
-  // Read body ONCE — reused in both success and error branches
   const text = await response.text();
 
   let data: (NestErrorEnvelope & Record<string, unknown>) | null = null;
@@ -80,23 +88,37 @@ async function parseResponse<T>(response: Response): Promise<T> {
     }
   }
 
-  if (response.ok) {
-    return data as T;
-  }
+  if (response.ok) return data as T;
 
-  // Extract specific class-validator messages from `errors` array
+  // ── FIX: Handle NestJS validation error format ─────────────────────────────
+  // NestJS ValidationPipe:  { message: string[], error: "Bad Request", statusCode: 400 }
+  // Our custom API format:  { errors: string[], message: string, code?: string }
+  const rawErrors: unknown[] =
+    Array.isArray(data?.errors) && (data.errors as unknown[]).length > 0
+      ? (data.errors as unknown[])
+      : Array.isArray(data?.message) && (data.message as unknown[]).length > 0
+      ? (data.message as unknown[])              // ← NestJS ValidationPipe format
+      : [];
+
   const validationErrors: string[] | undefined =
-    Array.isArray(data?.errors) && data.errors.length > 0
-      ? (data.errors as string[])
+    rawErrors.length > 0
+      ? rawErrors.filter((e): e is string => typeof e === "string")
       : undefined;
 
-  // Priority: specific validation error > meaningful message > generic label > fallback
+  // Message priority:
+  //  1. First validation error (most specific)
+  //  2. message field if it's a non-generic string
+  //  3. error field (e.g. "Unauthorized")
+  //  4. Plain text body
+  //  5. Generic fallback
   const message =
     validationErrors?.[0] ??
     (typeof data?.message === "string" && data.message !== "Bad Request"
       ? data.message
       : undefined) ??
-    (typeof data?.error === "string" ? data.error : undefined) ??
+    (typeof data?.error === "string" && data.error !== "Bad Request"
+      ? data.error
+      : undefined) ??
     (text.trim().length > 0 && !text.trim().startsWith("{")
       ? text.trim()
       : undefined) ??
@@ -114,9 +136,9 @@ async function silentRefresh(): Promise<void> {
   let response: Response;
   try {
     response = await fetch(`${env.API_URL}/auth/refresh`, {
-      method: "POST",
+      method:      "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers:     { "Content-Type": "application/json" },
     });
   } catch {
     throw new NetworkError("Cannot reach server to refresh session.");
@@ -129,12 +151,11 @@ async function silentRefresh(): Promise<void> {
   if (!response.ok) {
     throw new NetworkError(`Refresh endpoint returned ${response.status}.`);
   }
-
   setSessionCookie();
 }
 
 async function executeRequest<T>(
-  url: string,
+  url:     string,
   options: ApiClientOptions,
 ): Promise<T> {
   const response = await fetchWithRetry(url, options);
@@ -142,7 +163,7 @@ async function executeRequest<T>(
 }
 
 export async function apiClient<T>(
-  path: string,
+  path:    string,
   options: ApiClientOptions = {},
 ): Promise<T> {
   const url = path.startsWith("http") ? path : `${env.API_URL}${path}`;
@@ -163,8 +184,7 @@ export async function apiClient<T>(
     if (isRefreshing) {
       return new Promise<T>((resolve, reject) => {
         pendingQueue.push({
-          resolve: () =>
-            executeRequest<T>(url, options).then(resolve).catch(reject),
+          resolve: () => executeRequest<T>(url, options).then(resolve).catch(reject),
           reject,
         });
       });
