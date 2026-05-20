@@ -24,6 +24,7 @@ import { Module, forwardRef } from '@nestjs/common';
 
 import { PrismaModule } from '../../../database/prisma.module.js';
 import { AiModule } from '../../ai/ai.module.js';
+import { OpenRouterClient } from '../../ai/clients/openrouter.client.js';
 import { QueueModule } from '../../queue/queue.module.js';
 import { FacebookModule } from '../facebook.module.js';
 import { FacebookPostsController } from './controllers/facebook-posts.controller.js';
@@ -51,6 +52,7 @@ import { PostsSyncSchedulerService } from './services/posts-sync-scheduler.servi
     FacebookPostsService,
     PostCommentAiService,
     PostsSyncSchedulerService, // NEW: 5-min fallback scheduler
+    OpenRouterClient,
   ],
   exports: [
     FacebookPostsService,
