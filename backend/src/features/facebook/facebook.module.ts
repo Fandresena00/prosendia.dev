@@ -14,6 +14,7 @@ import { InboxEventsModule } from '../inbox/inbox-events.module.js';
 import { InboxSyncModule } from '../inbox/inbox-sync.module.js';
 import { QueueModule } from '../queue/queue.module.js';
 
+import { MediaDownloadService } from '../inbox/services/media-download.service.js';
 import { FacebookGraphClient } from './clients/facebook-graph.client.js';
 import { PostsEventsModule } from './facebook-posts/posts-events/posts-events.module.js';
 import { FacebookController } from './facebook.controller.js';
@@ -43,6 +44,7 @@ import { WebhookService } from './services/webhook.service.js';
     FacebookMessagingService,
     WebhookService,
     FacebookSyncService,
+    MediaDownloadService,
   ],
   exports: [
     FacebookGraphClient,
