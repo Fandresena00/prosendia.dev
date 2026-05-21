@@ -160,6 +160,7 @@ export class FacebookPostsService {
         lastSyncedAt: new Date(),
       },
       update: {
+        businessProfileId,
         ...rest,
         lastSyncedAt: new Date(),
       },
@@ -441,6 +442,11 @@ export class FacebookPostsService {
       ];
     }
 
+    const post = await this.prisma.facebookPost.findUnique({
+      where: { id: postId },
+      include: { businessProfile: { include: { facebookConnection: true } } },
+    });
+
     const [comments, total] = await Promise.all([
       this.prisma.postComment.findMany({
         where,
@@ -450,6 +456,35 @@ export class FacebookPostsService {
       }),
       this.prisma.postComment.count({ where }),
     ]);
+
+    // Read-time repair: if authorId exists but authorName is anonymous,
+    // try to fetch and persist the real name before returning to frontend.
+    const conn = post?.businessProfile.facebookConnection;
+    if (conn) {
+      const token = this.encryption.decrypt(conn.encryptedAccessToken);
+      for (const c of comments) {
+        const isAnonymousName =
+          c.authorName === 'Anonyme' || c.authorName === 'Unknown';
+        const hasUsableId = c.authorId && c.authorId !== 'unknown';
+        if (!isAnonymousName || !hasUsableId) continue;
+
+        try {
+          const resolvedName = await this.graphClient.getUserNameById(
+            c.authorId,
+            token,
+          );
+          if (!resolvedName) continue;
+
+          await this.prisma.postComment.update({
+            where: { id: c.id },
+            data: { authorName: resolvedName, lastSyncedAt: new Date() },
+          });
+          c.authorName = resolvedName;
+        } catch {
+          // Keep existing value when Graph does not return name.
+        }
+      }
+    }
 
     return {
       data: comments,
