@@ -497,8 +497,8 @@ export class FacebookPostsService {
 
     // Read-time repair: resolve anonymous/unknown authors before returning.
     const conn = post?.businessProfile.facebookConnection;
-    if (conn) {
-      const token = this.encryption.decrypt(conn.encryptedAccessToken);
+    const token = conn ? this.encryption.decrypt(conn.encryptedAccessToken) : null;
+    if (conn && token) {
       for (const c of comments) {
         const isAnonymousName =
           this.isFallbackAuthorName(c.authorName);
@@ -584,8 +584,28 @@ export class FacebookPostsService {
       }
     }
 
+    const commentsWithReplies = conn && token
+      ? await Promise.all(
+          comments.map(async (comment) => ({
+            ...comment,
+            replies: await this.getCommentRepliesForDisplay(
+              comment.externalId,
+              token,
+              conn.pageId,
+              conn.pageName,
+              comment.replyContent,
+              comment.repliedAt,
+              comment.repliedByAi,
+            ),
+          })),
+        )
+      : comments.map((comment) => ({
+          ...comment,
+          replies: this.getStoredReplyForDisplay(comment),
+        }));
+
     return {
-      data: comments,
+      data: commentsWithReplies,
       pagination: {
         page,
         pageSize,
@@ -593,6 +613,93 @@ export class FacebookPostsService {
         totalPages: Math.ceil(total / pageSize),
       },
     };
+  }
+
+  private async getCommentRepliesForDisplay(
+    commentExternalId: string,
+    token: string,
+    pageId: string,
+    pageName: string,
+    storedReplyContent: string | null,
+    storedRepliedAt: Date | null,
+    storedRepliedByAi: boolean | null,
+  ) {
+    try {
+      const replies = await this.graphClient.getCommentReplies(
+        commentExternalId,
+        token,
+        50,
+      );
+
+      return replies
+        .filter((reply) => reply.message?.trim())
+        .sort(
+          (a, b) =>
+            new Date(a.created_time).getTime() -
+            new Date(b.created_time).getTime(),
+        )
+        .map((reply) => {
+          const authorId = reply.from?.id?.trim() || 'unknown';
+          const isPageReply = authorId === pageId;
+          const message = reply.message.trim();
+
+          return {
+            id: reply.id,
+            externalId: reply.id,
+            authorId,
+            authorName:
+              (isPageReply ? pageName : null) ||
+              reply.from?.name?.trim() ||
+              FALLBACK_COMMENT_AUTHOR_NAME,
+            authorAvatarUrl: null,
+            message,
+            commentedAt: reply.created_time,
+            isPageReply,
+            repliedByAi:
+              isPageReply && storedReplyContent?.trim() === message
+                ? storedRepliedByAi
+                : null,
+          };
+        });
+    } catch {
+      return storedReplyContent
+        ? [
+            {
+              id: `stored-${commentExternalId}`,
+              externalId: `stored-${commentExternalId}`,
+              authorId: pageId,
+              authorName: pageName || 'Votre page',
+              authorAvatarUrl: null,
+              message: storedReplyContent,
+              commentedAt: storedRepliedAt?.toISOString() ?? new Date().toISOString(),
+              isPageReply: true,
+              repliedByAi: storedRepliedByAi,
+            },
+          ]
+        : [];
+    }
+  }
+
+  private getStoredReplyForDisplay(comment: {
+    externalId: string;
+    replyContent: string | null;
+    repliedAt: Date | null;
+    repliedByAi: boolean | null;
+  }) {
+    if (!comment.replyContent) return [];
+    return [
+      {
+        id: `stored-${comment.externalId}`,
+        externalId: `stored-${comment.externalId}`,
+        authorId: 'page',
+        authorName: 'Votre page',
+        authorAvatarUrl: null,
+        message: comment.replyContent,
+        commentedAt: comment.repliedAt?.toISOString() ?? new Date().toISOString(),
+        isPageReply: true,
+        repliedByAi: comment.repliedByAi,
+      },
+    ];
   }
 
   private async findPageReply(

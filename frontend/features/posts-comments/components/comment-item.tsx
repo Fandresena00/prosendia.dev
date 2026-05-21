@@ -21,7 +21,7 @@ import {
 } from "@tabler/icons-react";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
-import type { ApiComment } from "../types/posts-comments.types";
+import type { ApiComment, ApiCommentReply } from "../types/posts-comments.types";
 
 // Inline MessageBubble icon (avoids importing from tabler which has naming conflicts)
 function IconMessageBubble({ className }: { className?: string }) {
@@ -71,6 +71,24 @@ export function CommentItem({
     addSuffix: true,
     locale: fr,
   });
+  const replies =
+    comment.replies?.length
+      ? comment.replies
+      : comment.replyContent
+        ? [
+            {
+              id: `stored-${comment.id}`,
+              externalId: `stored-${comment.externalId}`,
+              authorId: "page",
+              authorName: pageName?.trim() || "Votre page",
+              authorAvatarUrl: null,
+              message: comment.replyContent,
+              commentedAt: comment.repliedAt ?? new Date().toISOString(),
+              isPageReply: true,
+              repliedByAi: comment.repliedByAi,
+            },
+          ]
+        : [];
 
   return (
     <div className="group">
@@ -142,21 +160,12 @@ export function CommentItem({
             )}
           </div>
 
-          {/* Previous reply */}
-          {comment.isReplied && comment.replyContent && (
-            <div className="mt-2 ml-3 flex gap-2">
-              <div className="w-0.5 bg-border/60 rounded-full shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="rounded-2xl rounded-tl-sm bg-primary/6 border border-primary/15 px-3 py-2">
-                  <p className="text-[11px] font-semibold text-primary mb-0.5 flex items-center gap-1">
-                    {comment.repliedByAi && <IconRobot className="h-3 w-3" />}
-                    {pageName?.trim() || "Votre page"}
-                  </p>
-                  <p className="text-[12px] text-foreground leading-snug">
-                    {comment.replyContent}
-                  </p>
-                </div>
-              </div>
+          {/* Replies */}
+          {replies.length > 0 && (
+            <div className="mt-2 ml-4 space-y-2 border-l border-border/60 pl-3">
+              {replies.map((reply) => (
+                <CommentReplyItem key={reply.id} reply={reply} />
+              ))}
             </div>
           )}
 
@@ -238,6 +247,64 @@ export function CommentItem({
               </div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CommentReplyItem({ reply }: { reply: ApiCommentReply }) {
+  const timeAgo = formatDistanceToNow(new Date(reply.commentedAt), {
+    addSuffix: true,
+    locale: fr,
+  });
+
+  return (
+    <div className="flex gap-2 group/reply">
+      <div
+        className={`h-6 w-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 border ${
+          reply.isPageReply
+            ? "bg-primary/10 border-primary/20"
+            : "bg-secondary border-border/30"
+        }`}
+      >
+        {reply.repliedByAi ? (
+          <IconRobot className="h-3.5 w-3.5 text-primary" />
+        ) : (
+          <IconUser className="h-3.5 w-3.5 text-muted-foreground/60" />
+        )}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div
+          className={`inline-block max-w-full rounded-2xl rounded-tl-sm px-3 py-2 ${
+            reply.isPageReply
+              ? "bg-primary/6 border border-primary/15"
+              : "bg-secondary/45 border border-border/25"
+          }`}
+        >
+          <a
+            href={
+              reply.authorId && reply.authorId !== "unknown"
+                ? `https://www.facebook.com/${reply.authorId}`
+                : undefined
+            }
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`text-[11px] font-semibold hover:underline flex items-center gap-1 ${
+              reply.isPageReply ? "text-primary" : "text-foreground"
+            }`}
+          >
+            {reply.repliedByAi && <IconRobot className="h-3 w-3" />}
+            {reply.authorName}
+            <IconBrandFacebook className="h-2.5 w-2.5 text-[#1877F2] shrink-0" />
+          </a>
+          <p className="text-[12px] text-foreground leading-snug mt-0.5">
+            {reply.message}
+          </p>
+        </div>
+        <div className="mt-1 px-1 text-[10px] text-muted-foreground">
+          {timeAgo}
         </div>
       </div>
     </div>

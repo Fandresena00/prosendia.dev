@@ -62,7 +62,20 @@ export interface ApiComment {
   replyContent:    string | null;
   repliedAt:       string | null;
   repliedByAi:     boolean | null;
+  replies?:        ApiCommentReply[];
   spamScore?:      number;
+}
+
+export interface ApiCommentReply {
+  id:              string;
+  externalId:      string;
+  authorId:        string;
+  authorName:      string;
+  authorAvatarUrl: string | null;
+  message:         string;
+  commentedAt:     string;
+  isPageReply:     boolean;
+  repliedByAi:     boolean | null;
 }
 
 /** Live feed post from Facebook (for add-post dialog). */

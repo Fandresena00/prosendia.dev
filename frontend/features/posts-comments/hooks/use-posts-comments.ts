@@ -105,11 +105,13 @@ export function usePostsComments() {
   // These refs always point to the latest values, preventing stale closures
   // in usePostsRealtime handlers (which are created once with [] deps).
   const selectedPostIdRef = useRef<string | null>(null);
+  const activePageRef = useRef<FacebookPage | null>(null);
   const loadCommentsRef = useRef<(page?: number) => Promise<void>>(
     async () => {},
   );
 
   selectedPostIdRef.current = selectedPostId;
+  activePageRef.current = activePage;
 
   // ── Load pages on mount ────────────────────────────────────────────────────
   useEffect(() => {
@@ -284,6 +286,23 @@ export function usePostsComments() {
                   replyContent: reply.content,
                   repliedAt: new Date().toISOString(),
                   repliedByAi: reply.repliedByAi,
+                  replies: c.replies?.some((r) => r.message === reply.content)
+                    ? c.replies
+                    : [
+                        ...(c.replies ?? []),
+                        {
+                          id: `local-${commentId}-${Date.now()}`,
+                          externalId: `local-${commentId}-${Date.now()}`,
+                          authorId: activePageRef.current?.pageId ?? "page",
+                          authorName:
+                            activePageRef.current?.name ?? "Votre page",
+                          authorAvatarUrl: null,
+                          message: reply.content,
+                          commentedAt: new Date().toISOString(),
+                          isPageReply: true,
+                          repliedByAi: reply.repliedByAi,
+                        },
+                      ],
                 }
               : c,
           ),
@@ -415,15 +434,34 @@ export function usePostsComments() {
         await api.replyToCommentPublic(replyingTo, replyText.trim());
       }
       // Optimistic update — real-time SSE will confirm if needed
+      const submittedAt = new Date().toISOString();
       setComments((prev) =>
         prev.map((c) =>
           c.id === replyingTo
             ? {
                 ...c,
                 isReplied: true,
-                replyContent: replyText.trim(),
-                repliedAt: new Date().toISOString(),
+                replyContent:
+                  replyMode === "public" ? replyText.trim() : c.replyContent,
+                repliedAt: submittedAt,
                 repliedByAi: false,
+                replies:
+                  replyMode === "public"
+                    ? [
+                        ...(c.replies ?? []),
+                        {
+                          id: `local-${replyingTo}-${submittedAt}`,
+                          externalId: `local-${replyingTo}-${submittedAt}`,
+                          authorId: activePage?.pageId ?? "page",
+                          authorName: activePage?.name ?? "Votre page",
+                          authorAvatarUrl: null,
+                          message: replyText.trim(),
+                          commentedAt: submittedAt,
+                          isPageReply: true,
+                          repliedByAi: false,
+                        },
+                      ]
+                    : c.replies,
               }
             : c,
         ),
@@ -433,7 +471,7 @@ export function usePostsComments() {
     } finally {
       setReplySending(false);
     }
-  }, [replyingTo, replyText, replyMode]);
+  }, [replyingTo, replyText, replyMode, activePage]);
 
   const triggerAiReply = useCallback(async (commentId: string) => {
     await api.triggerAiReply(commentId);
