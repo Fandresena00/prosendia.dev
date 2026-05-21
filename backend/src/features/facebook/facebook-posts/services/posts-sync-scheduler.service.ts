@@ -176,8 +176,10 @@ export class PostsSyncSchedulerService implements OnModuleInit {
         }
       }
 
-      // Ignore page-authored comments (our own public replies).
-      if (authorId && authorId === pageId) continue;
+      const normalizedAuthorName =
+        (authorId && authorId === pageId ? await this.resolvePageName(postId) : null) ||
+        authorName ||
+        (authorId ? `Compte ${authorId}` : 'Anonyme');
 
       if (exists) {
         await this.prisma.postComment.update({
@@ -188,8 +190,8 @@ export class PostsSyncSchedulerService implements OnModuleInit {
               exists.authorId === 'unknown' && authorId ? authorId : exists.authorId,
             authorName:
               (exists.authorName === 'Anonyme' || exists.authorName === 'Unknown') &&
-              authorName
-                ? authorName
+              normalizedAuthorName
+                ? normalizedAuthorName
                 : exists.authorName,
             lastSyncedAt: new Date(),
           },
@@ -202,7 +204,7 @@ export class PostsSyncSchedulerService implements OnModuleInit {
           postId,
           externalId: fc.id,
           authorId: authorId ?? 'unknown',
-          authorName: authorName ?? 'Anonyme',
+          authorName: normalizedAuthorName,
           authorAvatarUrl: null,
           message: fc.message,
           commentedAt: new Date(fc.created_time),
@@ -302,6 +304,14 @@ export class PostsSyncSchedulerService implements OnModuleInit {
         autoReply: p.postAiConfig?.autoReply ?? false,
       })),
     }));
+  }
+
+  private async resolvePageName(postId: string): Promise<string | null> {
+    const post = await this.prisma.facebookPost.findUnique({
+      where: { id: postId },
+      include: { businessProfile: { include: { facebookConnection: true } } },
+    });
+    return post?.businessProfile.facebookConnection?.pageName ?? null;
   }
 }
 

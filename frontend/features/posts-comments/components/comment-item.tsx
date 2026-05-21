@@ -40,6 +40,7 @@ function IconMessageBubble({ className }: { className?: string }) {
 
 interface CommentItemProps {
   comment: ApiComment;
+  pageName?: string | null;
   isReplyingTo: boolean;
   replyText: string;
   replyMode: "public" | "private";
@@ -54,6 +55,7 @@ interface CommentItemProps {
 
 export function CommentItem({
   comment,
+  pageName,
   isReplyingTo,
   replyText,
   replyMode,
@@ -108,19 +110,19 @@ export function CommentItem({
           <div className="flex items-center gap-3 mt-1 px-1">
             <span className="text-[10px] text-muted-foreground">{timeAgo}</span>
 
-            {comment.isReplied ? (
+            {comment.isReplied && (
               <span className="flex items-center gap-1 text-[10px] text-emerald-600 font-medium">
                 <IconCheck className="h-3 w-3" />
                 {comment.repliedByAi ? "Répondu par IA" : "Répondu"}
               </span>
-            ) : (
-              <button
-                onClick={onStartReply}
-                className="text-[10px] font-semibold text-primary hover:text-primary/80 transition-colors"
-              >
-                Répondre
-              </button>
             )}
+
+            <button
+              onClick={onStartReply}
+              className="text-[10px] font-semibold text-primary hover:text-primary/80 transition-colors"
+            >
+              {comment.isReplied ? "Répondre à nouveau" : "Répondre"}
+            </button>
 
             {!comment.isReplied && (
               <Tooltip>
@@ -148,7 +150,7 @@ export function CommentItem({
                 <div className="rounded-2xl rounded-tl-sm bg-primary/6 border border-primary/15 px-3 py-2">
                   <p className="text-[11px] font-semibold text-primary mb-0.5 flex items-center gap-1">
                     {comment.repliedByAi && <IconRobot className="h-3 w-3" />}
-                    Votre page
+                    {pageName?.trim() || "Votre page"}
                   </p>
                   <p className="text-[12px] text-foreground leading-snug">
                     {comment.replyContent}

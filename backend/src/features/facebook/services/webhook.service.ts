@@ -526,16 +526,6 @@ export class WebhookService {
       authorId = authorId ?? hydrated?.id ?? null;
       authorNameRaw = authorNameRaw ?? hydrated?.name ?? null;
     }
-    if (authorId === pageId) {
-      await this.markWebhookEventProcessed(
-        connectionId,
-        fbCommentId,
-        WebhookEventType.FEED_COMMENT,
-        'IGNORED_PAGE_COMMENT',
-      );
-      return;
-    }
-
     const normalizedAuthorId = authorId || 'unknown';
     const authorName =
       authorNameRaw ||
@@ -543,20 +533,29 @@ export class WebhookService {
         ? `Compte ${normalizedAuthorId}`
         : 'Anonyme');
 
+    const finalAuthorName =
+      normalizedAuthorId === pageId
+        ? (await this.resolvePageNameFromPost(parentPost.id)) ?? authorName
+        : authorName;
+
     const savedComment = await this.prisma.postComment.upsert({
       where: { externalId: fbCommentId },
       create: {
         postId: parentPost.id,
         externalId: fbCommentId,
         authorId: normalizedAuthorId,
-        authorName,
+        authorName: finalAuthorName,
         message: feedValue.message,
         commentedAt: feedValue.created_time
           ? new Date(feedValue.created_time * 1000)
           : new Date(),
         lastSyncedAt: new Date(),
       },
-      update: { message: feedValue.message, lastSyncedAt: new Date() },
+      update: {
+        message: feedValue.message,
+        authorName: finalAuthorName,
+        lastSyncedAt: new Date(),
+      },
     });
 
     await this.markWebhookEventProcessed(
@@ -565,6 +564,14 @@ export class WebhookService {
       WebhookEventType.FEED_COMMENT,
       savedComment.id,
     );
+  }
+
+  private async resolvePageNameFromPost(postId: string): Promise<string | null> {
+    const post = await this.prisma.facebookPost.findUnique({
+      where: { id: postId },
+      include: { businessProfile: { include: { facebookConnection: true } } },
+    });
+    return post?.businessProfile.facebookConnection?.pageName ?? null;
   }
 
   private async hydrateCommentAuthor(

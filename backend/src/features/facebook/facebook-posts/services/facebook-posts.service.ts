@@ -307,10 +307,8 @@ export class FacebookPostsService {
           }
         }
 
-        // Ignore comments authored by the managed page itself (public replies).
-        if (authorId === connection.pageId) continue;
-
         const authorName =
+          (authorId === connection.pageId ? connection.pageName : null) ||
           authorNameRaw ||
           (authorId !== 'unknown' ? `Compte ${authorId}` : 'Anonyme');
 

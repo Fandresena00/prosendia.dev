@@ -267,6 +267,7 @@ export function PostsCommentsPage() {
                       <CommentItem
                         key={comment.id}
                         comment={comment}
+                        pageName={hook.activePage?.name ?? null}
                         isReplyingTo={hook.replyingTo === comment.id}
                         replyText={
                           hook.replyingTo === comment.id ? hook.replyText : ""
