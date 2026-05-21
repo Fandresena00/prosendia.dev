@@ -140,8 +140,11 @@ export class FacebookAuthService {
     // 4. Encrypt and upsert the connection
     const encryptedAccessToken = this.encryption.encrypt(dto.pageAccessToken);
     const appId = this.configService.getOrThrow<string>('facebookAppId');
+    const debug = await this.graphClient.debugToken(dto.pageAccessToken);
     const grantedScopes =
-      dto.grantedScopes?.split(',').map((s) => s.trim()) ?? [];
+      debug?.scopes?.map((s) => s.trim()).filter(Boolean) ??
+      dto.grantedScopes?.split(',').map((s) => s.trim()).filter(Boolean) ??
+      [];
 
     const connection = await this.prisma.facebookConnection.upsert({
       where: { pageId: dto.pageId },
@@ -167,6 +170,10 @@ export class FacebookAuthService {
         isActive: true,
       },
     });
+
+    this.logger.log(
+      `Connected page ${dto.pageId} with scopes: ${grantedScopes.join(', ') || '(none)'}`,
+    );
 
     // 5. Subscribe to webhook (best-effort — failure should not block the connect)
     await this.trySubscribeWebhook(
