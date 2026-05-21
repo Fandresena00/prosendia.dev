@@ -29,6 +29,7 @@ export interface SyncPostsResult {
 }
 export interface SyncCommentsResult {
   synced: number;
+  repaired?: number;
 }
 export interface ReplyResult {
   success: boolean;
@@ -267,6 +268,7 @@ export class FacebookPostsService {
     const connection = post.businessProfile.facebookConnection;
     const token = this.encryption.decrypt(connection.encryptedAccessToken);
     let synced = 0;
+    let repaired = 0;
 
     try {
       const comments = await this.graphClient.getPostComments(
@@ -324,6 +326,56 @@ export class FacebookPostsService {
         synced++;
       }
 
+      // Repair pass: old comments may already exist with anonymous author data.
+      // Even when synced=0, we still try to hydrate missing author info.
+      const anonymousRows = await this.prisma.postComment.findMany({
+        where: {
+          postId,
+          OR: [
+            { authorId: 'unknown' },
+            { authorName: 'Anonyme' },
+            { authorName: 'Unknown' },
+          ],
+        },
+        select: { id: true, externalId: true, authorId: true, authorName: true },
+        take: Math.max(limit, 50),
+      });
+
+      for (const row of anonymousRows) {
+        try {
+          const fullComment = await this.graphClient.getCommentById(
+            row.externalId,
+            token,
+          );
+          const hydratedId = fullComment.from?.id?.trim();
+          const hydratedName = fullComment.from?.name?.trim();
+          if (!hydratedId || !hydratedName) continue;
+
+          const nextAuthorId = row.authorId === 'unknown' ? hydratedId : row.authorId;
+          const nextAuthorName =
+            row.authorName === 'Anonyme' || row.authorName === 'Unknown'
+              ? hydratedName
+              : row.authorName;
+
+          if (
+            nextAuthorId !== row.authorId ||
+            nextAuthorName !== row.authorName
+          ) {
+            await this.prisma.postComment.update({
+              where: { id: row.id },
+              data: {
+                authorId: nextAuthorId,
+                authorName: nextAuthorName,
+                lastSyncedAt: new Date(),
+              },
+            });
+            repaired++;
+          }
+        } catch {
+          // Non-fatal: one comment may no longer be readable via Graph.
+        }
+      }
+
       if (synced > 0) {
         await this.prisma.facebookPost.update({
           where: { id: postId },
@@ -331,18 +383,20 @@ export class FacebookPostsService {
         });
       }
 
-      this.logger.log(`Synced ${synced} comments for post=${postId}`);
+      this.logger.log(
+        `Synced ${synced} comments for post=${postId} (repaired authors: ${repaired})`,
+      );
     } catch (err) {
       if (err instanceof FacebookApiError) {
         this.logger.warn(
           `Comment sync failed for post=${postId}: ${err.message}`,
         );
-        return { synced: 0 };
+        return { synced: 0, repaired: 0 };
       }
       throw err;
     }
 
-    return { synced };
+    return { synced, repaired };
   }
 
   // ─── Get comments for a post ──────────────────────────────────────────────
