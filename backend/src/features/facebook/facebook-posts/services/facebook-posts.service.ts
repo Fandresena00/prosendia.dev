@@ -64,6 +64,7 @@ export interface UpdatePostAiConfigData {
 }
 
 const MAX_AUTO_REPLY_POSTS = 10;
+const FALLBACK_COMMENT_AUTHOR_NAME = 'Utilisateur Facebook';
 
 @Injectable()
 export class FacebookPostsService {
@@ -310,7 +311,9 @@ export class FacebookPostsService {
         const authorName =
           (authorId === connection.pageId ? connection.pageName : null) ||
           authorNameRaw ||
-          (authorId !== 'unknown' ? `Compte ${authorId}` : 'Anonyme');
+          (authorId !== 'unknown'
+            ? `Compte ${authorId}`
+            : FALLBACK_COMMENT_AUTHOR_NAME);
         const pageReply = await this.findPageReply(
           comment.id,
           token,
@@ -333,10 +336,8 @@ export class FacebookPostsService {
                   ? authorId
                   : existing.authorId,
               authorName:
-                (existing.authorName === 'Anonyme' ||
-                  existing.authorName === 'Unknown') &&
-                authorNameRaw
-                  ? authorNameRaw
+                this.isFallbackAuthorName(existing.authorName)
+                  ? authorName
                   : existing.authorName,
               ...(pageReply
                 ? {
@@ -403,10 +404,9 @@ export class FacebookPostsService {
           if (!hydratedId || !hydratedName) continue;
 
           const nextAuthorId = row.authorId === 'unknown' ? hydratedId : row.authorId;
-          const nextAuthorName =
-            row.authorName === 'Anonyme' || row.authorName === 'Unknown'
-              ? hydratedName
-              : row.authorName;
+          const nextAuthorName = this.isFallbackAuthorName(row.authorName)
+            ? hydratedName
+            : row.authorName;
 
           if (
             nextAuthorId !== row.authorId ||
@@ -459,7 +459,22 @@ export class FacebookPostsService {
     filter?: 'all' | 'pending' | 'replied' | 'useful',
     search?: string,
   ) {
-    const where: Record<string, unknown> = { postId };
+    const post = await this.prisma.facebookPost.findUnique({
+      where: { id: postId },
+      include: { businessProfile: { include: { facebookConnection: true } } },
+    });
+
+    const where: Record<string, unknown> = {
+      postId,
+      ...(post?.businessProfile.facebookConnection?.pageId
+        ? {
+            NOT: [
+              { authorId: post.businessProfile.facebookConnection.pageId },
+              { authorName: post.businessProfile.facebookConnection.pageName },
+            ],
+          }
+        : {}),
+    };
 
     if (filter === 'pending') where.isReplied = false;
     if (filter === 'replied') where.isReplied = true;
@@ -469,11 +484,6 @@ export class FacebookPostsService {
         { authorName: { contains: search, mode: 'insensitive' } },
       ];
     }
-
-    const post = await this.prisma.facebookPost.findUnique({
-      where: { id: postId },
-      include: { businessProfile: { include: { facebookConnection: true } } },
-    });
 
     const [comments, total] = await Promise.all([
       this.prisma.postComment.findMany({
@@ -491,7 +501,7 @@ export class FacebookPostsService {
       const token = this.encryption.decrypt(conn.encryptedAccessToken);
       for (const c of comments) {
         const isAnonymousName =
-          c.authorName === 'Anonyme' || c.authorName === 'Unknown';
+          this.isFallbackAuthorName(c.authorName);
         const hasUsableId = !!c.authorId && c.authorId !== 'unknown';
         if (!isAnonymousName && hasUsableId && c.replyContent) continue;
 
@@ -521,7 +531,16 @@ export class FacebookPostsService {
             ? await this.findPageReply(c.externalId, token, conn.pageId)
             : null;
 
-          if ((!resolvedName || !nextAuthorId) && !pageReply) continue;
+          if ((!resolvedName || !nextAuthorId) && !pageReply) {
+            if (this.isFallbackAuthorName(c.authorName)) {
+              await this.prisma.postComment.update({
+                where: { id: c.id },
+                data: { authorName: FALLBACK_COMMENT_AUTHOR_NAME },
+              });
+              c.authorName = FALLBACK_COMMENT_AUTHOR_NAME;
+            }
+            continue;
+          }
 
           await this.prisma.postComment.update({
             where: { id: c.id },
@@ -550,8 +569,17 @@ export class FacebookPostsService {
             c.repliedAt = new Date(pageReply.created_time);
             c.repliedByAi = false;
           }
+          if (this.isFallbackAuthorName(c.authorName)) {
+            c.authorName = FALLBACK_COMMENT_AUTHOR_NAME;
+          }
         } catch {
-          // Keep existing value when Graph does not return name.
+          if (this.isFallbackAuthorName(c.authorName)) {
+            await this.prisma.postComment.update({
+              where: { id: c.id },
+              data: { authorName: FALLBACK_COMMENT_AUTHOR_NAME },
+            });
+            c.authorName = FALLBACK_COMMENT_AUTHOR_NAME;
+          }
         }
       }
     }
@@ -590,6 +618,16 @@ export class FacebookPostsService {
     } catch {
       return null;
     }
+  }
+
+  private isFallbackAuthorName(name: string | null | undefined): boolean {
+    return (
+      !name ||
+      name === 'Anonyme' ||
+      name === 'Unknown' ||
+      name === FALLBACK_COMMENT_AUTHOR_NAME ||
+      name.startsWith('Compte ')
+    );
   }
 
   // ─── Reply to comment (public) ────────────────────────────────────────────

@@ -14,6 +14,8 @@ export interface SyncMessagesResult {
   synced: number;
 }
 
+const FALLBACK_COMMENT_AUTHOR_NAME = 'Utilisateur Facebook';
+
 @Injectable()
 export class FacebookSyncService {
   private readonly logger = new Logger(FacebookSyncService.name);
@@ -143,7 +145,7 @@ export class FacebookSyncService {
         (!existingNameIsFallback ? existing?.authorName : null) ||
         (normalizedAuthorId !== 'unknown'
           ? `Compte ${normalizedAuthorId}`
-          : 'Anonyme');
+          : FALLBACK_COMMENT_AUTHOR_NAME);
       const pageReply = await this.findPageReply(c.id, token, connection.pageId);
 
       await this.prisma.postComment.upsert({

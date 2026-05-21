@@ -468,7 +468,7 @@ export class FacebookGraphClient {
         access_token: accessToken,
         limit,
         fields: 'id,message,from,created_time',
-        filter: 'stream',
+        filter: 'toplevel',
       },
     );
     return result.data;

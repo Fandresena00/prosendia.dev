@@ -83,6 +83,8 @@ export interface FbWebhookPayload {
   entry: FbWebhookEntry[];
 }
 
+const FALLBACK_COMMENT_AUTHOR_NAME = 'Utilisateur Facebook';
+
 // ─── Service ───────────────────────────────────────────────────────────────────
 
 @Injectable()
@@ -542,7 +544,7 @@ export class WebhookService {
       (!existingNameIsFallback ? existingComment?.authorName : null) ||
       (normalizedAuthorId !== 'unknown'
         ? `Compte ${normalizedAuthorId}`
-        : 'Anonyme');
+        : FALLBACK_COMMENT_AUTHOR_NAME);
 
     const finalAuthorName =
       normalizedAuthorId === pageId

@@ -38,6 +38,7 @@ import { PostCommentAiService } from './post-comment-ai.service.js';
 const SCHEDULER_JOB = '__posts.sync.fallback__';
 const CRON_5MIN = '*/5 * * * *';
 const MAX_AI_PER_POST_CYCLE = 10;
+const FALLBACK_COMMENT_AUTHOR_NAME = 'Utilisateur Facebook';
 
 @Injectable()
 export class PostsSyncSchedulerService implements OnModuleInit {
@@ -156,7 +157,7 @@ export class PostsSyncSchedulerService implements OnModuleInit {
         select: { id: true, authorId: true, authorName: true },
       });
 
-      // Preserve author name — only set 'Anonyme' if Facebook truly didn't return `from`
+      // Preserve author name; use a neutral fallback only when Facebook omits `from`.
       let authorName = fc.from?.name?.trim() || null;
       let authorId = fc.from?.id?.trim() || null;
       if (!authorId || !authorName) {
@@ -179,7 +180,7 @@ export class PostsSyncSchedulerService implements OnModuleInit {
       const normalizedAuthorName =
         (authorId && authorId === pageId ? await this.resolvePageName(postId) : null) ||
         authorName ||
-        (authorId ? `Compte ${authorId}` : 'Anonyme');
+        (authorId ? `Compte ${authorId}` : FALLBACK_COMMENT_AUTHOR_NAME);
       const pageReply = await this.findPageReply(fc.id, token, pageId);
 
       if (exists) {
@@ -193,6 +194,8 @@ export class PostsSyncSchedulerService implements OnModuleInit {
               (exists.authorName === 'Anonyme' || exists.authorName === 'Unknown') &&
               normalizedAuthorName
                 ? normalizedAuthorName
+                : exists.authorName?.startsWith('Compte ')
+                  ? normalizedAuthorName
                 : exists.authorName,
             ...(pageReply
               ? {
