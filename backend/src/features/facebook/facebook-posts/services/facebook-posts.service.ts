@@ -285,8 +285,17 @@ export class FacebookPostsService {
       );
 
       for (const comment of comments) {
-        const authorId = comment.from?.id?.trim() || 'unknown';
+        let authorId = comment.from?.id?.trim() || 'unknown';
         let authorNameRaw = comment.from?.name?.trim() || null;
+        if (authorId === 'unknown' || !authorNameRaw) {
+          try {
+            const full = await this.graphClient.getCommentById(comment.id, token);
+            authorId = full.from?.id?.trim() || authorId;
+            authorNameRaw = full.from?.name?.trim() || authorNameRaw;
+          } catch {
+            // keep available values
+          }
+        }
         if (!authorNameRaw && authorId !== 'unknown') {
           try {
             authorNameRaw = await this.graphClient.getUserNameById(
@@ -297,6 +306,10 @@ export class FacebookPostsService {
             // keep null, fallback below
           }
         }
+
+        // Ignore comments authored by the managed page itself (public replies).
+        if (authorId === connection.pageId) continue;
+
         const authorName =
           authorNameRaw ||
           (authorId !== 'unknown' ? `Compte ${authorId}` : 'Anonyme');
@@ -457,28 +470,49 @@ export class FacebookPostsService {
       this.prisma.postComment.count({ where }),
     ]);
 
-    // Read-time repair: if authorId exists but authorName is anonymous,
-    // try to fetch and persist the real name before returning to frontend.
+    // Read-time repair: resolve anonymous/unknown authors before returning.
     const conn = post?.businessProfile.facebookConnection;
     if (conn) {
       const token = this.encryption.decrypt(conn.encryptedAccessToken);
       for (const c of comments) {
         const isAnonymousName =
           c.authorName === 'Anonyme' || c.authorName === 'Unknown';
-        const hasUsableId = c.authorId && c.authorId !== 'unknown';
-        if (!isAnonymousName || !hasUsableId) continue;
+        const hasUsableId = !!c.authorId && c.authorId !== 'unknown';
+        if (!isAnonymousName && hasUsableId) continue;
 
         try {
-          const resolvedName = await this.graphClient.getUserNameById(
-            c.authorId,
-            token,
-          );
-          if (!resolvedName) continue;
+          let nextAuthorId = c.authorId;
+          let resolvedName: string | null = null;
+
+          // First try by current authorId when usable.
+          if (hasUsableId) {
+            resolvedName = await this.graphClient.getUserNameById(c.authorId, token);
+          }
+
+          // If still unresolved, fetch full comment by externalId.
+          if (!resolvedName || !nextAuthorId || nextAuthorId === 'unknown') {
+            const full = await this.graphClient.getCommentById(c.externalId, token);
+            const hydratedId = full.from?.id?.trim() || null;
+            const hydratedName = full.from?.name?.trim() || null;
+            if (hydratedId) nextAuthorId = hydratedId;
+            resolvedName =
+              hydratedName ||
+              (hydratedId
+                ? await this.graphClient.getUserNameById(hydratedId, token)
+                : null);
+          }
+
+          if (!resolvedName || !nextAuthorId) continue;
 
           await this.prisma.postComment.update({
             where: { id: c.id },
-            data: { authorName: resolvedName, lastSyncedAt: new Date() },
+            data: {
+              authorId: nextAuthorId,
+              authorName: resolvedName,
+              lastSyncedAt: new Date(),
+            },
           });
+          c.authorId = nextAuthorId;
           c.authorName = resolvedName;
         } catch {
           // Keep existing value when Graph does not return name.

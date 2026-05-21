@@ -81,6 +81,7 @@ export async function getConnection(
 }
 
 export async function connectPage(payload: {
+  businessProfileId?: string;
   pageId: string;
   pageAccessToken: string;
   pageName: string;

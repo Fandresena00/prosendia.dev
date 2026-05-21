@@ -23,6 +23,11 @@ export default function FacebookCallbackPage() {
       .then((data) => {
         // 2. Store pages for the AddPageDialog
         sessionStorage.setItem("fb_oauth_pages", JSON.stringify(data.pages));
+        if (state) {
+          sessionStorage.setItem("fb_oauth_business_profile_id", state);
+        } else {
+          sessionStorage.removeItem("fb_oauth_business_profile_id");
+        }
         // 3. Redirect to main page with success flag
         router.push("/facebook-page?oauth=ok");
       })

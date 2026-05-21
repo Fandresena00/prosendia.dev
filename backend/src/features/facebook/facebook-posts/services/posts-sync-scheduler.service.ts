@@ -86,6 +86,7 @@ export class PostsSyncSchedulerService implements OnModuleInit {
         const newCount = await this.syncPostComments(
           post.id,
           post.externalId,
+          profile.facebookConnection.pageId,
           profile.userId,
           token,
         );
@@ -132,6 +133,7 @@ export class PostsSyncSchedulerService implements OnModuleInit {
   private async syncPostComments(
     postId: string,
     externalId: string,
+    pageId: string,
     userId: string,
     token: string,
   ): Promise<number> {
@@ -156,7 +158,16 @@ export class PostsSyncSchedulerService implements OnModuleInit {
 
       // Preserve author name — only set 'Anonyme' if Facebook truly didn't return `from`
       let authorName = fc.from?.name?.trim() || null;
-      const authorId = fc.from?.id?.trim() || null;
+      let authorId = fc.from?.id?.trim() || null;
+      if (!authorId || !authorName) {
+        try {
+          const full = await this.graphClient.getCommentById(fc.id, token);
+          authorId = authorId ?? full.from?.id?.trim() ?? null;
+          authorName = authorName ?? full.from?.name?.trim() ?? null;
+        } catch {
+          // keep fallback flow below
+        }
+      }
       if (!authorName && authorId) {
         try {
           authorName = await this.graphClient.getUserNameById(authorId, token);
@@ -164,6 +175,9 @@ export class PostsSyncSchedulerService implements OnModuleInit {
           // keep null fallback below
         }
       }
+
+      // Ignore page-authored comments (our own public replies).
+      if (authorId && authorId === pageId) continue;
 
       if (exists) {
         await this.prisma.postComment.update({

@@ -62,7 +62,11 @@ export function SelectPageDialog({
     setError(null);
 
     try {
+      const businessProfileId =
+        sessionStorage.getItem("fb_oauth_business_profile_id") ?? undefined;
+
       await connectPage({
+        businessProfileId,
         pageId:              selectedPage.id,
         pageAccessToken:     selectedPage.accessToken,
         pageName:            selectedPage.name,
@@ -71,6 +75,7 @@ export function SelectPageDialog({
 
       // Clear sessionStorage — pages are now connected
       sessionStorage.removeItem("fb_oauth_pages");
+      sessionStorage.removeItem("fb_oauth_business_profile_id");
 
       setStep("done");
       onSuccess?.();

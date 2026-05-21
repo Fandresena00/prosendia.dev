@@ -526,6 +526,15 @@ export class WebhookService {
       authorId = authorId ?? hydrated?.id ?? null;
       authorNameRaw = authorNameRaw ?? hydrated?.name ?? null;
     }
+    if (authorId === pageId) {
+      await this.markWebhookEventProcessed(
+        connectionId,
+        fbCommentId,
+        WebhookEventType.FEED_COMMENT,
+        'IGNORED_PAGE_COMMENT',
+      );
+      return;
+    }
 
     const normalizedAuthorId = authorId || 'unknown';
     const authorName =
