@@ -37,13 +37,13 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../../database/prisma.service.js';
-import { OpenRouterClient } from '../../ai/clients/openrouter.client.js';
+import { PrismaService } from '../../../../database/prisma.service.js';
+import { OpenRouterClient } from '../../../ai/clients/openrouter.client.js';
 import {
   REPLY_AI_FALLBACK_MODELS,
   REPLY_AI_MODEL,
-} from '../../ai/config/ai-models.config.js';
-import { PostsEventEmitter } from '../../posts-events/posts-event-emitter.js';
+} from '../../../ai/config/ai-models.config.js';
+import { PostsEventEmitter } from '../posts-events/posts-event-emitter.js';
 import {
   CommentPromptBuilderService,
   type CommentBusinessContext,
@@ -53,7 +53,7 @@ import {
 import { FacebookPostsService } from './facebook-posts.service.js';
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
-type ModelConfig  = { replyModelId: string; replyTemperature: number } | null;
+type ModelConfig = { replyModelId: string; replyTemperature: number } | null;
 
 export interface ProcessCommentOptions {
   /**
@@ -70,33 +70,33 @@ export class PostCommentAiService {
   private readonly logger = new Logger(PostCommentAiService.name);
 
   constructor(
-    private readonly prisma:         PrismaService,
-    private readonly openRouter:     OpenRouterClient,
+    private readonly prisma: PrismaService,
+    private readonly openRouter: OpenRouterClient,
     private readonly commentPrompts: CommentPromptBuilderService,
-    private readonly fbPosts:        FacebookPostsService,
-    private readonly sseEmitter:     PostsEventEmitter,
+    private readonly fbPosts: FacebookPostsService,
+    private readonly sseEmitter: PostsEventEmitter,
   ) {}
 
   // ─── Main entry ──────────────────────────────────────────────────────────
 
   async processNewComment(
     commentId: string,
-    options:   ProcessCommentOptions = {},
+    options: ProcessCommentOptions = {},
   ): Promise<void> {
     const { emitNew = true } = options;
 
     const comment = await this.prisma.postComment.findUnique({
-      where:   { id: commentId },
+      where: { id: commentId },
       include: {
         post: {
           include: {
             postAiConfig: true,
             businessProfile: {
               include: {
-                aiConfig:      true,
+                aiConfig: true,
                 aiModelConfig: true,
                 chatResources: {
-                  where:   { isActive: true },
+                  where: { isActive: true },
                   include: { images: { orderBy: { sortOrder: 'asc' } } },
                 },
               },
@@ -111,10 +111,10 @@ export class PostCommentAiService {
       return;
     }
 
-    const { post }   = comment;
-    const config     = post.postAiConfig;
-    const bp         = post.businessProfile;
-    const aiConfig   = bp.aiConfig;
+    const { post } = comment;
+    const config = post.postAiConfig;
+    const bp = post.businessProfile;
+    const aiConfig = bp.aiConfig;
 
     // Guards
     if (!aiConfig?.autoReply || config?.autoReply === false) return;
@@ -132,18 +132,18 @@ export class PostCommentAiService {
     // ── Emit comment:new (only for truly new comments from webhook path) ──────
     if (emitNew) {
       this.sseEmitter.commentAdded(bp.userId, post.id, {
-        id:              comment.id,
-        postId:          comment.postId,
-        externalId:      comment.externalId,
-        authorId:        comment.authorId,
-        authorName:      comment.authorName,
+        id: comment.id,
+        postId: comment.postId,
+        externalId: comment.externalId,
+        authorId: comment.authorId,
+        authorName: comment.authorName,
         authorAvatarUrl: comment.authorAvatarUrl,
-        message:         comment.message,
-        commentedAt:     comment.commentedAt.toISOString(),
-        isReplied:       false,
-        replyContent:    null,
-        repliedAt:       null,
-        repliedByAi:     null,
+        message: comment.message,
+        commentedAt: comment.commentedAt.toISOString(),
+        isReplied: false,
+        replyContent: null,
+        repliedAt: null,
+        repliedByAi: null,
       });
     }
 
@@ -153,15 +153,15 @@ export class PostCommentAiService {
       this.commentPrompts.detectLanguage(comment.message);
 
     const ctx: CommentBusinessContext = {
-      businessName:    bp.name,
-      businessType:    bp.businessType,
-      description:     bp.description,
-      tone:            config?.tone          ?? aiConfig.tone          ?? 'FRIENDLY',
-      responseStyle:   config?.responseStyle ?? aiConfig.responseStyle ?? 'SHORT',
-      replyLanguage:   config?.replyLanguage ?? aiConfig.replyLanguage ?? null,
-      systemPrompt:    aiConfig.systemPrompt ?? null,
+      businessName: bp.name,
+      businessType: bp.businessType,
+      description: bp.description,
+      tone: config?.tone ?? aiConfig.tone ?? 'FRIENDLY',
+      responseStyle: config?.responseStyle ?? aiConfig.responseStyle ?? 'SHORT',
+      replyLanguage: config?.replyLanguage ?? aiConfig.replyLanguage ?? null,
+      systemPrompt: aiConfig.systemPrompt ?? null,
       blockedKeywords: (aiConfig.blockedKeywords as string[]) ?? [],
-      allowedTopics:   (aiConfig.allowedTopics  as string[]) ?? [],
+      allowedTopics: (aiConfig.allowedTopics as string[]) ?? [],
     };
 
     const images: CommentReferenceImage[] = bp.chatResources.flatMap((r) =>
@@ -177,13 +177,17 @@ export class PostCommentAiService {
     );
 
     const publicPrompt = this.commentPrompts.buildPublicCommentReplyPrompt(
-      ctx, postCaption, config?.customInstructions ?? null, images, commentLang,
+      ctx,
+      postCaption,
+      config?.customInstructions ?? null,
+      images,
+      commentLang,
     );
 
     const publicReply = await this.callModel(
       [
         { role: 'system', content: publicPrompt },
-        { role: 'user',   content: comment.message },
+        { role: 'user', content: comment.message },
       ],
       publicMaxTokens,
       bp.aiModelConfig,
@@ -195,7 +199,9 @@ export class PostCommentAiService {
     }
 
     const publicResult = await this.fbPosts.replyToCommentPublic(
-      commentId, publicReply, true,
+      commentId,
+      publicReply,
+      true,
     );
 
     if (!publicResult.success) return;
@@ -204,7 +210,7 @@ export class PostCommentAiService {
     // This is the key event for real-time updates: the frontend updates the
     // comment inline without any manual refresh.
     this.sseEmitter.commentReplied(bp.userId, post.id, commentId, {
-      content:     publicReply,
+      content: publicReply,
       repliedByAi: true,
     });
 
@@ -212,26 +218,31 @@ export class PostCommentAiService {
 
     // ── Private DM (optional) ─────────────────────────────────────────────────
     const privateEnabled =
-      (config as { privateReplyEnabled?: boolean } | null)?.privateReplyEnabled ?? false;
+      (config as { privateReplyEnabled?: boolean } | null)
+        ?.privateReplyEnabled ?? false;
 
     if (!privateEnabled) return;
 
-    const fixedTemplate =
-      (config as { privateReplyMessage?: string } | null)?.privateReplyMessage?.trim();
+    const fixedTemplate = (
+      config as { privateReplyMessage?: string } | null
+    )?.privateReplyMessage?.trim();
 
     let dmText: string | null = fixedTemplate ?? null;
 
     if (!dmText) {
       const dmPrompt = this.commentPrompts.buildPrivateDmReplyPrompt(
-        ctx, postCaption, comment.message,
+        ctx,
+        postCaption,
+        comment.message,
         config?.customInstructions ?? null,
-        images, commentLang,
+        images,
+        commentLang,
       );
 
       dmText = await this.callModel(
         [
           { role: 'system', content: dmPrompt },
-          { role: 'user',   content: 'Génère le message privé de bienvenue.' },
+          { role: 'user', content: 'Génère le message privé de bienvenue.' },
         ],
         150,
         bp.aiModelConfig,
@@ -247,12 +258,13 @@ export class PostCommentAiService {
   // ─── Model call with fallback ─────────────────────────────────────────────
 
   private async callModel(
-    messages:    ChatMessage[],
-    maxTokens:   number,
+    messages: ChatMessage[],
+    maxTokens: number,
     modelConfig: ModelConfig,
   ): Promise<string | null> {
-    const primary     = modelConfig?.replyModelId ?? REPLY_AI_MODEL.MODEL_ID;
-    const temperature = modelConfig?.replyTemperature ?? REPLY_AI_MODEL.TEMPERATURE;
+    const primary = modelConfig?.replyModelId ?? REPLY_AI_MODEL.MODEL_ID;
+    const temperature =
+      modelConfig?.replyTemperature ?? REPLY_AI_MODEL.TEMPERATURE;
 
     const models = [
       primary,
@@ -262,7 +274,10 @@ export class PostCommentAiService {
     for (const modelId of models) {
       try {
         const result = await this.openRouter.complete({
-          model: modelId, messages, maxTokens, temperature,
+          model: modelId,
+          messages,
+          maxTokens,
+          temperature,
         });
         if (result.content.trim()) return result.content.trim();
       } catch (err) {

@@ -28,15 +28,15 @@
 
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PgBoss } from 'pg-boss';
-import { PrismaService } from '../../../database/prisma.service.js';
-import { FacebookGraphClient } from '../../facebook/clients/facebook-graph.client.js';
-import { TokenEncryptionService } from '../../facebook/security/token-encryption.service.js';
-import { PG_BOSS_TOKEN } from '../../queue/providers/pg-boss.provider.js';
-import { PostsEventEmitter } from '../../posts-events/posts-event-emitter.js';
+import { PrismaService } from '../../../../database/prisma.service.js';
+import { PG_BOSS_TOKEN } from '../../../queue/providers/pg-boss.provider.js';
+import { FacebookGraphClient } from '../../clients/facebook-graph.client.js';
+import { TokenEncryptionService } from '../../security/token-encryption.service.js';
+import { PostsEventEmitter } from '../posts-events/posts-event-emitter.js';
 import { PostCommentAiService } from './post-comment-ai.service.js';
 
-const SCHEDULER_JOB        = '__posts.sync.fallback__';
-const CRON_5MIN            = '*/5 * * * *';
+const SCHEDULER_JOB = '__posts.sync.fallback__';
+const CRON_5MIN = '*/5 * * * *';
 const MAX_AI_PER_POST_CYCLE = 10;
 
 @Injectable()
@@ -45,12 +45,12 @@ export class PostsSyncSchedulerService implements OnModuleInit {
 
   constructor(
     @Inject(PG_BOSS_TOKEN)
-    private readonly boss:        PgBoss,
-    private readonly prisma:      PrismaService,
+    private readonly boss: PgBoss,
+    private readonly prisma: PrismaService,
     private readonly graphClient: FacebookGraphClient,
-    private readonly encryption:  TokenEncryptionService,
-    private readonly sseEmitter:  PostsEventEmitter,
-    private readonly commentAi:   PostCommentAiService,
+    private readonly encryption: TokenEncryptionService,
+    private readonly sseEmitter: PostsEventEmitter,
+    private readonly commentAi: PostCommentAiService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -84,15 +84,18 @@ export class PostsSyncSchedulerService implements OnModuleInit {
       try {
         // 1. Sync new comments from Facebook API
         const newCount = await this.syncPostComments(
-          post.id, post.externalId, profile.userId, token,
+          post.id,
+          post.externalId,
+          profile.userId,
+          token,
         );
         totalNew += newCount;
 
         if (newCount > 0) {
           // Update commentsCount in DB
           const updated = await this.prisma.facebookPost.update({
-            where:  { id: post.id },
-            data:   { commentsCount: { increment: newCount } },
+            where: { id: post.id },
+            data: { commentsCount: { increment: newCount } },
             select: { commentsCount: true },
           });
           // Emit post:updated so frontend cards refresh inline
@@ -109,7 +112,7 @@ export class PostsSyncSchedulerService implements OnModuleInit {
       } catch (err: unknown) {
         this.logger.warn(
           `Sync failed for post=${post.id}: ` +
-          (err instanceof Error ? err.message : String(err)),
+            (err instanceof Error ? err.message : String(err)),
         );
       }
     }
@@ -119,7 +122,7 @@ export class PostsSyncSchedulerService implements OnModuleInit {
       this.sseEmitter.syncCompleted(profile.userId);
       this.logger.log(
         `Fallback sync: +${totalNew} new comments across ` +
-        `${profile.managedPosts.length} posts for profile=${profile.id}`,
+          `${profile.managedPosts.length} posts for profile=${profile.id}`,
       );
     }
   }
@@ -127,14 +130,18 @@ export class PostsSyncSchedulerService implements OnModuleInit {
   // ─── Sync new comments from Facebook ────────────────────────────────────
 
   private async syncPostComments(
-    postId:     string,
+    postId: string,
     externalId: string,
-    userId:     string,
-    token:      string,
+    userId: string,
+    token: string,
   ): Promise<number> {
     let fbComments;
     try {
-      fbComments = await this.graphClient.getPostComments(externalId, token, 25);
+      fbComments = await this.graphClient.getPostComments(
+        externalId,
+        token,
+        25,
+      );
     } catch {
       return 0;
     }
@@ -144,25 +151,25 @@ export class PostsSyncSchedulerService implements OnModuleInit {
     for (const fc of fbComments) {
       // Skip comments already in DB
       const exists = await this.prisma.postComment.findUnique({
-        where:  { externalId: fc.id },
+        where: { externalId: fc.id },
         select: { id: true },
       });
       if (exists) continue;
 
       // Preserve author name — only set 'Anonyme' if Facebook truly didn't return `from`
       const authorName = fc.from?.name?.trim() || null;
-      const authorId   = fc.from?.id?.trim()   || null;
+      const authorId = fc.from?.id?.trim() || null;
 
       const created = await this.prisma.postComment.create({
         data: {
           postId,
-          externalId:      fc.id,
-          authorId:        authorId   ?? 'unknown',
-          authorName:      authorName ?? 'Anonyme',
+          externalId: fc.id,
+          authorId: authorId ?? 'unknown',
+          authorName: authorName ?? 'Anonyme',
           authorAvatarUrl: null,
-          message:         fc.message,
-          commentedAt:     new Date(fc.created_time),
-          lastSyncedAt:    new Date(),
+          message: fc.message,
+          commentedAt: new Date(fc.created_time),
+          lastSyncedAt: new Date(),
         },
       });
 
@@ -170,18 +177,18 @@ export class PostsSyncSchedulerService implements OnModuleInit {
 
       // Emit comment:new for TRULY new comments — correct and desired
       this.sseEmitter.commentAdded(userId, postId, {
-        id:              created.id,
-        postId:          created.postId,
-        externalId:      created.externalId,
-        authorId:        created.authorId,
-        authorName:      created.authorName,
+        id: created.id,
+        postId: created.postId,
+        externalId: created.externalId,
+        authorId: created.authorId,
+        authorName: created.authorName,
         authorAvatarUrl: null,
-        message:         created.message,
-        commentedAt:     created.commentedAt.toISOString(),
-        isReplied:       false,
-        replyContent:    null,
-        repliedAt:       null,
-        repliedByAi:     null,
+        message: created.message,
+        commentedAt: created.commentedAt.toISOString(),
+        isReplied: false,
+        replyContent: null,
+        repliedAt: null,
+        repliedByAi: null,
       });
     }
 
@@ -200,20 +207,22 @@ export class PostsSyncSchedulerService implements OnModuleInit {
    */
   private async processPendingComments(postId: string): Promise<void> {
     const pending = await this.prisma.postComment.findMany({
-      where:   { postId, isReplied: false },
+      where: { postId, isReplied: false },
       orderBy: { commentedAt: 'asc' },
-      take:    MAX_AI_PER_POST_CYCLE,
-      select:  { id: true },
+      take: MAX_AI_PER_POST_CYCLE,
+      select: { id: true },
     });
 
     for (const { id } of pending) {
       // FIX: emitNew=false — comment is already visible, no need to re-announce it
-      void this.commentAi.processNewComment(id, { emitNew: false }).catch((err: unknown) => {
-        this.logger.warn(
-          `AI fallback failed for comment=${id}: ` +
-          (err instanceof Error ? err.message : String(err)),
-        );
-      });
+      void this.commentAi
+        .processNewComment(id, { emitNew: false })
+        .catch((err: unknown) => {
+          this.logger.warn(
+            `AI fallback failed for comment=${id}: ` +
+              (err instanceof Error ? err.message : String(err)),
+          );
+        });
     }
   }
 
@@ -226,19 +235,19 @@ export class PostsSyncSchedulerService implements OnModuleInit {
         facebookPosts: { some: { postAiConfig: { isNot: null } } },
       },
       select: {
-        id:     true,
+        id: true,
         userId: true,
         facebookConnection: {
           select: {
-            pageId:               true,
+            pageId: true,
             encryptedAccessToken: true,
-            tokenStatus:          true,
+            tokenStatus: true,
           },
         },
         facebookPosts: {
           where: { postAiConfig: { isNot: null } },
           select: {
-            id:         true,
+            id: true,
             externalId: true,
             postAiConfig: { select: { autoReply: true } },
           },
@@ -247,13 +256,13 @@ export class PostsSyncSchedulerService implements OnModuleInit {
     });
 
     return rows.map((r) => ({
-      id:     r.id,
+      id: r.id,
       userId: r.userId,
       facebookConnection: r.facebookConnection ?? null,
       managedPosts: r.facebookPosts.map((p) => ({
-        id:         p.id,
+        id: p.id,
         externalId: p.externalId,
-        autoReply:  p.postAiConfig?.autoReply ?? false,
+        autoReply: p.postAiConfig?.autoReply ?? false,
       })),
     }));
   }
@@ -262,16 +271,16 @@ export class PostsSyncSchedulerService implements OnModuleInit {
 // ─── Internal types ───────────────────────────────────────────────────────────
 
 interface SyncProfile {
-  id:     string;
+  id: string;
   userId: string;
   facebookConnection: {
-    pageId:               string;
+    pageId: string;
     encryptedAccessToken: string;
-    tokenStatus:          string;
+    tokenStatus: string;
   } | null;
   managedPosts: Array<{
-    id:         string;
+    id: string;
     externalId: string;
-    autoReply:  boolean;
+    autoReply: boolean;
   }>;
 }
