@@ -517,13 +517,18 @@ export class WebhookService {
       return;
     }
 
+    const authorId = feedValue.from?.id?.trim() || 'unknown';
+    const authorNameRaw = feedValue.from?.name?.trim() || null;
+    const authorName =
+      authorNameRaw || (authorId !== 'unknown' ? `Compte ${authorId}` : 'Anonyme');
+
     const savedComment = await this.prisma.postComment.upsert({
       where: { externalId: fbCommentId },
       create: {
         postId: parentPost.id,
         externalId: fbCommentId,
-        authorId: feedValue.from?.id ?? 'unknown',
-        authorName: feedValue.from?.name ?? 'Unknown',
+        authorId,
+        authorName,
         message: feedValue.message,
         commentedAt: feedValue.created_time
           ? new Date(feedValue.created_time * 1000)

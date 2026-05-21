@@ -280,12 +280,18 @@ export class FacebookPostsService {
         });
         if (existing) continue;
 
+        const authorId = comment.from?.id?.trim() || 'unknown';
+        const authorNameRaw = comment.from?.name?.trim() || null;
+        const authorName =
+          authorNameRaw ||
+          (authorId !== 'unknown' ? `Compte ${authorId}` : 'Anonyme');
+
         await this.prisma.postComment.create({
           data: {
             postId,
             externalId: comment.id,
-            authorId: comment.from?.id ?? 'unknown',
-            authorName: comment.from?.name ?? 'Anonyme',
+            authorId,
+            authorName,
             authorAvatarUrl: null,
             message: comment.message,
             commentedAt: new Date(comment.created_time),

@@ -146,10 +146,10 @@ export async function sendMessage(payload: {
 }
 
 export async function replyToComment(
-  externalCommentId: string,
-  payload: { businessProfileId: string; message: string },
-): Promise<{ commentId: string }> {
-  return apiClient(`${BASE}/comments/${encodeURIComponent(externalCommentId)}/reply`, {
+  commentId: string,
+  payload: { message: string },
+): Promise<void> {
+  return apiClient(`${BASE}/comments/${encodeURIComponent(commentId)}/reply`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

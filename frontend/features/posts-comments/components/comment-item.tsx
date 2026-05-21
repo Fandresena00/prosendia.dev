@@ -93,6 +93,9 @@ export function CommentItem({
                 {comment.authorName}
                 <IconBrandFacebook className="h-2.5 w-2.5 text-[#1877F2] shrink-0" />
               </a>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                ID: {comment.authorId}
+              </p>
               <p className="text-[13px] text-foreground leading-snug mt-0.5">
                 {comment.message}
               </p>
