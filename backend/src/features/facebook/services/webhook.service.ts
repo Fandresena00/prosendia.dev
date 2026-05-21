@@ -517,6 +517,11 @@ export class WebhookService {
       return;
     }
 
+    const existingComment = await this.prisma.postComment.findUnique({
+      where: { externalId: fbCommentId },
+      select: { authorId: true, authorName: true },
+    });
+
     // Webhook payload may omit `from` for some events.
     // Rehydrate from Graph API before writing to DB to avoid anonymous authors.
     let authorId = feedValue.from?.id?.trim() || null;
@@ -526,9 +531,15 @@ export class WebhookService {
       authorId = authorId ?? hydrated?.id ?? null;
       authorNameRaw = authorNameRaw ?? hydrated?.name ?? null;
     }
-    const normalizedAuthorId = authorId || 'unknown';
+    const normalizedAuthorId =
+      authorId || existingComment?.authorId || 'unknown';
+    const existingNameIsFallback =
+      existingComment?.authorName === 'Anonyme' ||
+      existingComment?.authorName === 'Unknown' ||
+      existingComment?.authorName?.startsWith('Compte ');
     const authorName =
       authorNameRaw ||
+      (!existingNameIsFallback ? existingComment?.authorName : null) ||
       (normalizedAuthorId !== 'unknown'
         ? `Compte ${normalizedAuthorId}`
         : 'Anonyme');
@@ -553,6 +564,10 @@ export class WebhookService {
       },
       update: {
         message: feedValue.message,
+        authorId:
+          existingComment?.authorId === 'unknown' && authorId
+            ? authorId
+            : normalizedAuthorId,
         authorName: finalAuthorName,
         lastSyncedAt: new Date(),
       },

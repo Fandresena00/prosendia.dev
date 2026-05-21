@@ -484,6 +484,23 @@ export class FacebookGraphClient {
     });
   }
 
+  async getCommentReplies(
+    commentId: string,
+    accessToken: string,
+    limit = 25,
+  ): Promise<FbComment[]> {
+    const result = await this.get<FbPaginatedResponse<FbComment>>(
+      `/${commentId}/comments`,
+      {
+        access_token: accessToken,
+        limit,
+        fields: 'id,message,from,created_time',
+        filter: 'stream',
+      },
+    );
+    return result.data;
+  }
+
   async getUserNameById(
     userId: string,
     accessToken: string,

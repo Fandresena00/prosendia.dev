@@ -362,6 +362,11 @@ export function usePostsComments() {
           sharesCount: post.sharesCount,
           publishedAt: post.publishedAt,
         });
+        try {
+          await api.syncComments(created.id);
+        } catch {
+          // The selected post will still be shown; users can retry sync manually.
+        }
         setPosts((prev) => [created, ...prev]);
         setSelectedPostId(created.id);
         setAddDialogOpen(false);

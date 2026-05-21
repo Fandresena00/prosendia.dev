@@ -180,6 +180,7 @@ export class PostsSyncSchedulerService implements OnModuleInit {
         (authorId && authorId === pageId ? await this.resolvePageName(postId) : null) ||
         authorName ||
         (authorId ? `Compte ${authorId}` : 'Anonyme');
+      const pageReply = await this.findPageReply(fc.id, token, pageId);
 
       if (exists) {
         await this.prisma.postComment.update({
@@ -193,6 +194,14 @@ export class PostsSyncSchedulerService implements OnModuleInit {
               normalizedAuthorName
                 ? normalizedAuthorName
                 : exists.authorName,
+            ...(pageReply
+              ? {
+                  isReplied: true,
+                  replyContent: pageReply.message,
+                  repliedAt: new Date(pageReply.created_time),
+                  repliedByAi: false,
+                }
+              : {}),
             lastSyncedAt: new Date(),
           },
         });
@@ -208,6 +217,10 @@ export class PostsSyncSchedulerService implements OnModuleInit {
           authorAvatarUrl: null,
           message: fc.message,
           commentedAt: new Date(fc.created_time),
+          isReplied: !!pageReply,
+          replyContent: pageReply?.message ?? null,
+          repliedAt: pageReply ? new Date(pageReply.created_time) : null,
+          repliedByAi: pageReply ? false : null,
           lastSyncedAt: new Date(),
         },
       });
@@ -224,10 +237,10 @@ export class PostsSyncSchedulerService implements OnModuleInit {
         authorAvatarUrl: null,
         message: created.message,
         commentedAt: created.commentedAt.toISOString(),
-        isReplied: false,
-        replyContent: null,
-        repliedAt: null,
-        repliedByAi: null,
+        isReplied: created.isReplied,
+        replyContent: created.replyContent,
+        repliedAt: created.repliedAt?.toISOString() ?? null,
+        repliedByAi: created.repliedByAi,
       });
     }
 
@@ -312,6 +325,31 @@ export class PostsSyncSchedulerService implements OnModuleInit {
       include: { businessProfile: { include: { facebookConnection: true } } },
     });
     return post?.businessProfile.facebookConnection?.pageName ?? null;
+  }
+
+  private async findPageReply(
+    commentExternalId: string,
+    token: string,
+    pageId: string,
+  ) {
+    try {
+      const replies = await this.graphClient.getCommentReplies(
+        commentExternalId,
+        token,
+        25,
+      );
+      return (
+        replies
+          .filter((r) => r.from?.id === pageId && r.message?.trim())
+          .sort(
+            (a, b) =>
+              new Date(a.created_time).getTime() -
+              new Date(b.created_time).getTime(),
+          )[0] ?? null
+      );
+    } catch {
+      return null;
+    }
   }
 }
 

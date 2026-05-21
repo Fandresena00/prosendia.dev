@@ -89,7 +89,11 @@ export class FacebookSyncService {
           include: {
             facebookConnection: {
               where: { isActive: true },
-              select: { encryptedAccessToken: true, pageId: true },
+              select: {
+                encryptedAccessToken: true,
+                pageId: true,
+                pageName: true,
+              },
             },
           },
         },
@@ -98,24 +102,83 @@ export class FacebookSyncService {
 
     if (!post?.businessProfile.facebookConnection) return 0;
 
-    const token = this.encryption.decrypt(post.businessProfile.facebookConnection.encryptedAccessToken);
+    const connection = post.businessProfile.facebookConnection;
+    const token = this.encryption.decrypt(connection.encryptedAccessToken);
     const comments = await this.graphClient.getPostComments(post.externalId, token, limit);
 
     let synced = 0;
     for (const c of comments) {
+      const existing = await this.prisma.postComment.findUnique({
+        where: { externalId: c.id },
+        select: { id: true, authorId: true, authorName: true },
+      });
+
+      let authorId = c.from?.id?.trim() || null;
+      let authorName = c.from?.name?.trim() || null;
+      if (!authorId || !authorName) {
+        try {
+          const full = await this.graphClient.getCommentById(c.id, token);
+          authorId = authorId ?? full.from?.id?.trim() ?? null;
+          authorName = authorName ?? full.from?.name?.trim() ?? null;
+        } catch {
+          // Keep available values and fall back below.
+        }
+      }
+      if (!authorName && authorId) {
+        try {
+          authorName = await this.graphClient.getUserNameById(authorId, token);
+        } catch {
+          // Keep fallback below.
+        }
+      }
+
+      const normalizedAuthorId = authorId ?? existing?.authorId ?? 'unknown';
+      const existingNameIsFallback =
+        existing?.authorName === 'Anonyme' ||
+        existing?.authorName === 'Unknown' ||
+        existing?.authorName?.startsWith('Compte ');
+      const normalizedAuthorName =
+        (normalizedAuthorId === connection.pageId ? connection.pageName : null) ||
+        authorName ||
+        (!existingNameIsFallback ? existing?.authorName : null) ||
+        (normalizedAuthorId !== 'unknown'
+          ? `Compte ${normalizedAuthorId}`
+          : 'Anonyme');
+      const pageReply = await this.findPageReply(c.id, token, connection.pageId);
+
       await this.prisma.postComment.upsert({
         where: { externalId: c.id },
         create: {
           postId: post.id,
           externalId: c.id,
-          authorId: c.from?.id ?? 'unknown',
-          authorName: c.from?.name ?? 'Unknown',
+          authorId: normalizedAuthorId,
+          authorName: normalizedAuthorName,
           message: c.message,
           commentedAt: new Date(c.created_time),
+          isReplied: !!pageReply,
+          replyContent: pageReply?.message ?? null,
+          repliedAt: pageReply ? new Date(pageReply.created_time) : null,
+          repliedByAi: pageReply ? false : null,
           lastSyncedAt: new Date(),
         },
         update: {
           message: c.message,
+          authorId:
+            existing?.authorId === 'unknown' && authorId
+              ? authorId
+              : normalizedAuthorId,
+          authorName:
+            existingNameIsFallback || !existing?.authorName
+              ? normalizedAuthorName
+              : existing.authorName,
+          ...(pageReply
+            ? {
+                isReplied: true,
+                replyContent: pageReply.message,
+                repliedAt: new Date(pageReply.created_time),
+                repliedByAi: false,
+              }
+            : {}),
           lastSyncedAt: new Date(),
         },
       });
@@ -123,6 +186,31 @@ export class FacebookSyncService {
     }
 
     return synced;
+  }
+
+  private async findPageReply(
+    commentExternalId: string,
+    token: string,
+    pageId: string,
+  ) {
+    try {
+      const replies = await this.graphClient.getCommentReplies(
+        commentExternalId,
+        token,
+        25,
+      );
+      return (
+        replies
+          .filter((r) => r.from?.id === pageId && r.message?.trim())
+          .sort(
+            (a, b) =>
+              new Date(a.created_time).getTime() -
+              new Date(b.created_time).getTime(),
+          )[0] ?? null
+      );
+    } catch {
+      return null;
+    }
   }
 
   async syncConversations(

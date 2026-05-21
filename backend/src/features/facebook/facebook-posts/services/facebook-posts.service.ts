@@ -311,6 +311,11 @@ export class FacebookPostsService {
           (authorId === connection.pageId ? connection.pageName : null) ||
           authorNameRaw ||
           (authorId !== 'unknown' ? `Compte ${authorId}` : 'Anonyme');
+        const pageReply = await this.findPageReply(
+          comment.id,
+          token,
+          connection.pageId,
+        );
 
         const existing = await this.prisma.postComment.findUnique({
           where: { externalId: comment.id },
@@ -333,6 +338,14 @@ export class FacebookPostsService {
                 authorNameRaw
                   ? authorNameRaw
                   : existing.authorName,
+              ...(pageReply
+                ? {
+                    isReplied: true,
+                    replyContent: pageReply.message,
+                    repliedAt: new Date(pageReply.created_time),
+                    repliedByAi: false,
+                  }
+                : {}),
               lastSyncedAt: new Date(),
             },
           });
@@ -348,6 +361,10 @@ export class FacebookPostsService {
             authorAvatarUrl: null,
             message: comment.message,
             commentedAt: new Date(comment.created_time),
+            isReplied: !!pageReply,
+            replyContent: pageReply?.message ?? null,
+            repliedAt: pageReply ? new Date(pageReply.created_time) : null,
+            repliedByAi: pageReply ? false : null,
             lastSyncedAt: new Date(),
           },
         });
@@ -476,7 +493,7 @@ export class FacebookPostsService {
         const isAnonymousName =
           c.authorName === 'Anonyme' || c.authorName === 'Unknown';
         const hasUsableId = !!c.authorId && c.authorId !== 'unknown';
-        if (!isAnonymousName && hasUsableId) continue;
+        if (!isAnonymousName && hasUsableId && c.replyContent) continue;
 
         try {
           let nextAuthorId = c.authorId;
@@ -500,18 +517,39 @@ export class FacebookPostsService {
                 : null);
           }
 
-          if (!resolvedName || !nextAuthorId) continue;
+          const pageReply = !c.replyContent
+            ? await this.findPageReply(c.externalId, token, conn.pageId)
+            : null;
+
+          if ((!resolvedName || !nextAuthorId) && !pageReply) continue;
 
           await this.prisma.postComment.update({
             where: { id: c.id },
             data: {
-              authorId: nextAuthorId,
-              authorName: resolvedName,
+              ...(resolvedName && nextAuthorId
+                ? { authorId: nextAuthorId, authorName: resolvedName }
+                : {}),
+              ...(pageReply
+                ? {
+                    isReplied: true,
+                    replyContent: pageReply.message,
+                    repliedAt: new Date(pageReply.created_time),
+                    repliedByAi: false,
+                  }
+                : {}),
               lastSyncedAt: new Date(),
             },
           });
-          c.authorId = nextAuthorId;
-          c.authorName = resolvedName;
+          if (resolvedName && nextAuthorId) {
+            c.authorId = nextAuthorId;
+            c.authorName = resolvedName;
+          }
+          if (pageReply) {
+            c.isReplied = true;
+            c.replyContent = pageReply.message;
+            c.repliedAt = new Date(pageReply.created_time);
+            c.repliedByAi = false;
+          }
         } catch {
           // Keep existing value when Graph does not return name.
         }
@@ -527,6 +565,31 @@ export class FacebookPostsService {
         totalPages: Math.ceil(total / pageSize),
       },
     };
+  }
+
+  private async findPageReply(
+    commentExternalId: string,
+    token: string,
+    pageId: string,
+  ) {
+    try {
+      const replies = await this.graphClient.getCommentReplies(
+        commentExternalId,
+        token,
+        25,
+      );
+      return (
+        replies
+          .filter((r) => r.from?.id === pageId && r.message?.trim())
+          .sort(
+            (a, b) =>
+              new Date(a.created_time).getTime() -
+              new Date(b.created_time).getTime(),
+          )[0] ?? null
+      );
+    } catch {
+      return null;
+    }
   }
 
   // ─── Reply to comment (public) ────────────────────────────────────────────
