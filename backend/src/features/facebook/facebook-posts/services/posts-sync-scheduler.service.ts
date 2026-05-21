@@ -149,16 +149,32 @@ export class PostsSyncSchedulerService implements OnModuleInit {
     let synced = 0;
 
     for (const fc of fbComments) {
-      // Skip comments already in DB
       const exists = await this.prisma.postComment.findUnique({
         where: { externalId: fc.id },
-        select: { id: true },
+        select: { id: true, authorId: true, authorName: true },
       });
-      if (exists) continue;
 
       // Preserve author name — only set 'Anonyme' if Facebook truly didn't return `from`
       const authorName = fc.from?.name?.trim() || null;
       const authorId = fc.from?.id?.trim() || null;
+
+      if (exists) {
+        await this.prisma.postComment.update({
+          where: { id: exists.id },
+          data: {
+            message: fc.message,
+            authorId:
+              exists.authorId === 'unknown' && authorId ? authorId : exists.authorId,
+            authorName:
+              (exists.authorName === 'Anonyme' || exists.authorName === 'Unknown') &&
+              authorName
+                ? authorName
+                : exists.authorName,
+            lastSyncedAt: new Date(),
+          },
+        });
+        continue;
+      }
 
       const created = await this.prisma.postComment.create({
         data: {

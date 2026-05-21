@@ -11,6 +11,7 @@
  */
 
 import {
+  BadGatewayException,
   BadRequestException,
   Injectable,
   Logger,
@@ -275,16 +276,38 @@ export class FacebookPostsService {
       );
 
       for (const comment of comments) {
-        const existing = await this.prisma.postComment.findUnique({
-          where: { externalId: comment.id },
-        });
-        if (existing) continue;
-
         const authorId = comment.from?.id?.trim() || 'unknown';
         const authorNameRaw = comment.from?.name?.trim() || null;
         const authorName =
           authorNameRaw ||
           (authorId !== 'unknown' ? `Compte ${authorId}` : 'Anonyme');
+
+        const existing = await this.prisma.postComment.findUnique({
+          where: { externalId: comment.id },
+          select: { id: true, authorId: true, authorName: true },
+        });
+
+        if (existing) {
+          await this.prisma.postComment.update({
+            where: { id: existing.id },
+            data: {
+              message: comment.message,
+              // Repair previously anonymous records when Graph now has author.
+              authorId:
+                existing.authorId === 'unknown' && authorId !== 'unknown'
+                  ? authorId
+                  : existing.authorId,
+              authorName:
+                (existing.authorName === 'Anonyme' ||
+                  existing.authorName === 'Unknown') &&
+                authorNameRaw
+                  ? authorNameRaw
+                  : existing.authorName,
+              lastSyncedAt: new Date(),
+            },
+          });
+          continue;
+        }
 
         await this.prisma.postComment.create({
           data: {
@@ -412,7 +435,9 @@ export class FacebookPostsService {
         this.logger.warn(
           `Failed to reply to comment=${commentId}: ${err.message}`,
         );
-        return { success: false };
+        throw new BadGatewayException(
+          `Facebook a refusé la réponse publique: ${err.message}`,
+        );
       }
       throw err;
     }
@@ -457,7 +482,9 @@ export class FacebookPostsService {
         this.logger.warn(
           `Failed private reply comment=${commentId}: ${err.message}`,
         );
-        return { success: false };
+        throw new BadGatewayException(
+          `Facebook a refusé la réponse privée: ${err.message}`,
+        );
       }
       throw err;
     }

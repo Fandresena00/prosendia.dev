@@ -517,17 +517,29 @@ export class WebhookService {
       return;
     }
 
-    const authorId = feedValue.from?.id?.trim() || 'unknown';
-    const authorNameRaw = feedValue.from?.name?.trim() || null;
+    // Webhook payload may omit `from` for some events.
+    // Rehydrate from Graph API before writing to DB to avoid anonymous authors.
+    let authorId = feedValue.from?.id?.trim() || null;
+    let authorNameRaw = feedValue.from?.name?.trim() || null;
+    if (!authorId || !authorNameRaw) {
+      const hydrated = await this.hydrateCommentAuthor(pageId, fbCommentId);
+      authorId = authorId ?? hydrated?.id ?? null;
+      authorNameRaw = authorNameRaw ?? hydrated?.name ?? null;
+    }
+
+    const normalizedAuthorId = authorId || 'unknown';
     const authorName =
-      authorNameRaw || (authorId !== 'unknown' ? `Compte ${authorId}` : 'Anonyme');
+      authorNameRaw ||
+      (normalizedAuthorId !== 'unknown'
+        ? `Compte ${normalizedAuthorId}`
+        : 'Anonyme');
 
     const savedComment = await this.prisma.postComment.upsert({
       where: { externalId: fbCommentId },
       create: {
         postId: parentPost.id,
         externalId: fbCommentId,
-        authorId,
+        authorId: normalizedAuthorId,
         authorName,
         message: feedValue.message,
         commentedAt: feedValue.created_time
@@ -544,6 +556,26 @@ export class WebhookService {
       WebhookEventType.FEED_COMMENT,
       savedComment.id,
     );
+  }
+
+  private async hydrateCommentAuthor(
+    pageId: string,
+    commentId: string,
+  ): Promise<{ id: string; name: string } | null> {
+    try {
+      const connection = await this.facebookAccounts.getByPageId(pageId);
+      if (!connection) return null;
+      const fullComment = await this.facebookGraph.getCommentById(
+        commentId,
+        connection.decryptedToken,
+      );
+      const id = fullComment.from?.id?.trim();
+      const name = fullComment.from?.name?.trim();
+      if (!id || !name) return null;
+      return { id, name };
+    } catch {
+      return null;
+    }
   }
 
   // ─── SSE emitter helper ───────────────────────────────────────────────────

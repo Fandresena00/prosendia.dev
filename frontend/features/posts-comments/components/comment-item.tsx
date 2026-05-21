@@ -6,7 +6,11 @@
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   IconBrandFacebook,
   IconCheck,
@@ -22,24 +26,30 @@ import type { ApiComment } from "../types/posts-comments.types";
 // Inline MessageBubble icon (avoids importing from tabler which has naming conflicts)
 function IconMessageBubble({ className }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
   );
 }
 
 interface CommentItemProps {
-  comment:       ApiComment;
-  isReplyingTo:  boolean;
-  replyText:     string;
-  replyMode:     "public" | "private";
-  replySending:  boolean;
-  onStartReply:  () => void;
+  comment: ApiComment;
+  isReplyingTo: boolean;
+  replyText: string;
+  replyMode: "public" | "private";
+  replySending: boolean;
+  onStartReply: () => void;
   onCancelReply: () => void;
-  onChangeText:  (text: string) => void;
-  onChangeMode:  (mode: "public" | "private") => void;
+  onChangeText: (text: string) => void;
+  onChangeMode: (mode: "public" | "private") => void;
   onSubmitReply: () => void;
-  onAiReply:     () => void;
+  onAiReply: () => void;
 }
 
 export function CommentItem({
@@ -57,7 +67,7 @@ export function CommentItem({
 }: CommentItemProps) {
   const timeAgo = formatDistanceToNow(new Date(comment.commentedAt), {
     addSuffix: true,
-    locale:    fr,
+    locale: fr,
   });
 
   return (
@@ -79,11 +89,13 @@ export function CommentItem({
         <div className="flex-1 min-w-0">
           {/* Bubble */}
           <div className="inline-block max-w-full">
-            <div className={`rounded-2xl rounded-tl-sm px-3.5 py-2.5 ${
-              comment.repliedByAi
-                ? "bg-emerald-500/8 border border-emerald-500/15"
-                : "bg-secondary/60 border border-border/30"
-            }`}>
+            <div
+              className={`rounded-2xl rounded-tl-sm px-3.5 py-2.5 ${
+                comment.repliedByAi
+                  ? "bg-emerald-500/8 border border-emerald-500/15"
+                  : "bg-secondary/60 border border-border/30"
+              }`}
+            >
               <a
                 href={`https://www.facebook.com/${comment.authorId}`}
                 target="_blank"
@@ -93,9 +105,6 @@ export function CommentItem({
                 {comment.authorName}
                 <IconBrandFacebook className="h-2.5 w-2.5 text-[#1877F2] shrink-0" />
               </a>
-              <p className="text-[10px] text-muted-foreground mt-0.5">
-                ID: {comment.authorId}
-              </p>
               <p className="text-[13px] text-foreground leading-snug mt-0.5">
                 {comment.message}
               </p>
@@ -131,7 +140,9 @@ export function CommentItem({
                     IA
                   </button>
                 </TooltipTrigger>
-                <TooltipContent className="text-xs">Déclencher une réponse IA</TooltipContent>
+                <TooltipContent className="text-xs">
+                  Déclencher une réponse IA
+                </TooltipContent>
               </Tooltip>
             )}
           </div>
@@ -193,7 +204,11 @@ export function CommentItem({
                 <Textarea
                   value={replyText}
                   onChange={(e) => onChangeText(e.target.value)}
-                  placeholder={replyMode === "private" ? "Message privé…" : "Répondre publiquement…"}
+                  placeholder={
+                    replyMode === "private"
+                      ? "Message privé…"
+                      : "Répondre publiquement…"
+                  }
                   rows={2}
                   className="text-xs resize-none bg-secondary/20 flex-1"
                   onKeyDown={(e) => {
@@ -210,10 +225,11 @@ export function CommentItem({
                     disabled={!replyText.trim() || replySending}
                     onClick={onSubmitReply}
                   >
-                    {replySending
-                      ? <div className="h-3.5 w-3.5 rounded-full border-2 border-transparent border-t-current animate-spin" />
-                      : <IconSend className="h-3.5 w-3.5" />
-                    }
+                    {replySending ? (
+                      <div className="h-3.5 w-3.5 rounded-full border-2 border-transparent border-t-current animate-spin" />
+                    ) : (
+                      <IconSend className="h-3.5 w-3.5" />
+                    )}
                   </Button>
                   <Button
                     size="icon"

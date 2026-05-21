@@ -469,6 +469,16 @@ export class FacebookGraphClient {
     return result.data;
   }
 
+  async getCommentById(
+    commentId: string,
+    accessToken: string,
+  ): Promise<FbComment> {
+    return this.get<FbComment>(`/${commentId}`, {
+      access_token: accessToken,
+      fields: 'id,message,from,created_time',
+    });
+  }
+
   async replyToComment(
     commentId: string,
     message: string,
