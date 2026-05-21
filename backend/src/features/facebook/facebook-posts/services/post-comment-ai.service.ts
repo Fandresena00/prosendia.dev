@@ -1,38 +1,49 @@
 /**
  * @file features/facebook-posts/services/post-comment-ai.service.ts
  *
- * Orchestrates AI-powered comment handling for Facebook posts.
+ * FIX — `processNewComment` now accepts `{ emitNew: boolean }` options.
  *
- * PROMPT SEPARATION (fix applied)
- * ──────────────────────────────
- * Now uses CommentPromptBuilderService exclusively.
- * The old PromptBuilderService (inbox system) is no longer imported here,
- * preventing the "redirect to DM inside a DM" contamination bug.
+ * WHY THIS MATTERS
+ * ────────────────
+ * `processNewComment` is called from two paths:
  *
- * SSE EMISSION
- * ────────────
- * Emits PostsEventEmitter events so the frontend receives real-time updates:
- *   - comment:new     → when a comment is loaded for processing (before AI reply)
- *   - comment:replied → after a successful AI public reply
+ *   1. WEBHOOK path (via pg-boss queue worker)
+ *      A comment just arrived via Facebook webhook — it's truly new.
+ *      → `emitNew: true` (default) — emit `comment:new` SSE immediately
+ *        so the frontend sees the comment before AI replies.
  *
- * FLOW
- * ────
- * 1. WebhookService receives a new comment → queues processNewComment
- * 2. processNewComment:
- *    a. Load comment + business context
- *    b. Spam filter
- *    c. Emit comment:new SSE (frontend sees comment immediately)
- *    d. Generate + send public reply
- *    e. Emit comment:replied SSE
- *    f. If privateReplyEnabled → generate + send private DM
+ *   2. SCHEDULER fallback path (`PostsSyncSchedulerService.processPendingComments`)
+ *      The comment already exists in DB and is already visible on the frontend.
+ *      Re-emitting `comment:new` caused duplicates and "Anonyme" author names
+ *      because the SSE payload might arrive between two render cycles.
+ *      → `emitNew: false` — skip `comment:new`, only emit `comment:replied`
+ *        after the AI successfully replies.
+ *
+ * REAL-TIME FLOW (no manual refresh needed)
+ * ──────────────────────────────────────────
+ *   Webhook arrives
+ *     └─ WebhookService creates PostComment in DB
+ *     └─ Queues processNewComment job
+ *         └─ processNewComment({ emitNew: true })
+ *             ├─ Emits comment:new  → frontend prepends comment immediately
+ *             ├─ AI generates reply
+ *             ├─ Sends reply via Facebook API
+ *             └─ Emits comment:replied → frontend updates comment inline
+ *
+ *   Scheduler (5-min fallback)
+ *     └─ syncPostComments: new FB comments → creates in DB + emits comment:new
+ *     └─ processPendingComments: pending comments → processNewComment({ emitNew: false })
+ *         └─ AI replies → emits comment:replied → frontend updates inline
  */
 
 import { Injectable, Logger } from '@nestjs/common';
-
-import { PrismaService } from '../../../../database/prisma.service.js';
-import { OpenRouterClient } from '../../../ai/clients/openrouter.client.js';
-import { REPLY_AI_FALLBACK_MODELS, REPLY_AI_MODEL } from '../../../ai/config/ai-models.config.js';
-import { PostsEventEmitter } from '../posts-events/posts-event-emitter.js';
+import { PrismaService } from '../../../database/prisma.service.js';
+import { OpenRouterClient } from '../../ai/clients/openrouter.client.js';
+import {
+  REPLY_AI_FALLBACK_MODELS,
+  REPLY_AI_MODEL,
+} from '../../ai/config/ai-models.config.js';
+import { PostsEventEmitter } from '../../posts-events/posts-event-emitter.js';
 import {
   CommentPromptBuilderService,
   type CommentBusinessContext,
@@ -44,21 +55,36 @@ import { FacebookPostsService } from './facebook-posts.service.js';
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 type ModelConfig  = { replyModelId: string; replyTemperature: number } | null;
 
+export interface ProcessCommentOptions {
+  /**
+   * Whether to emit `comment:new` SSE before processing.
+   * Set to `false` when the comment already exists in the frontend
+   * (e.g. scheduler fallback path) to avoid duplicate/anonymous entries.
+   * Default: true (webhook path — comment is genuinely new).
+   */
+  emitNew?: boolean;
+}
+
 @Injectable()
 export class PostCommentAiService {
   private readonly logger = new Logger(PostCommentAiService.name);
 
   constructor(
-    private readonly prisma:          PrismaService,
-    private readonly openRouter:      OpenRouterClient,
-    private readonly commentPrompts:  CommentPromptBuilderService, // NEW — separated
-    private readonly fbPosts:         FacebookPostsService,
-    private readonly sseEmitter:      PostsEventEmitter,           // NEW — real-time
+    private readonly prisma:         PrismaService,
+    private readonly openRouter:     OpenRouterClient,
+    private readonly commentPrompts: CommentPromptBuilderService,
+    private readonly fbPosts:        FacebookPostsService,
+    private readonly sseEmitter:     PostsEventEmitter,
   ) {}
 
-  // ─── Main entry ───────────────────────────────────────────────────────────
+  // ─── Main entry ──────────────────────────────────────────────────────────
 
-  async processNewComment(commentId: string): Promise<void> {
+  async processNewComment(
+    commentId: string,
+    options:   ProcessCommentOptions = {},
+  ): Promise<void> {
+    const { emitNew = true } = options;
+
     const comment = await this.prisma.postComment.findUnique({
       where:   { id: commentId },
       include: {
@@ -85,10 +111,10 @@ export class PostCommentAiService {
       return;
     }
 
-    const { post } = comment;
-    const config   = post.postAiConfig;
-    const bp       = post.businessProfile;
-    const aiConfig = bp.aiConfig;
+    const { post }   = comment;
+    const config     = post.postAiConfig;
+    const bp         = post.businessProfile;
+    const aiConfig   = bp.aiConfig;
 
     // Guards
     if (!aiConfig?.autoReply || config?.autoReply === false) return;
@@ -103,23 +129,25 @@ export class PostCommentAiService {
       return;
     }
 
-    // ── Emit comment:new so the frontend sees it immediately ─────────────────
-    this.sseEmitter.commentAdded(bp.userId, post.id, {
-      id:              comment.id,
-      postId:          comment.postId,
-      externalId:      comment.externalId,
-      authorId:        comment.authorId,
-      authorName:      comment.authorName,
-      authorAvatarUrl: comment.authorAvatarUrl,
-      message:         comment.message,
-      commentedAt:     comment.commentedAt.toISOString(),
-      isReplied:       false,
-      replyContent:    null,
-      repliedAt:       null,
-      repliedByAi:     null,
-    });
+    // ── Emit comment:new (only for truly new comments from webhook path) ──────
+    if (emitNew) {
+      this.sseEmitter.commentAdded(bp.userId, post.id, {
+        id:              comment.id,
+        postId:          comment.postId,
+        externalId:      comment.externalId,
+        authorId:        comment.authorId,
+        authorName:      comment.authorName,
+        authorAvatarUrl: comment.authorAvatarUrl,
+        message:         comment.message,
+        commentedAt:     comment.commentedAt.toISOString(),
+        isReplied:       false,
+        replyContent:    null,
+        repliedAt:       null,
+        repliedByAi:     null,
+      });
+    }
 
-    // ── Build shared context ──────────────────────────────────────────────────
+    // ── Build context ─────────────────────────────────────────────────────────
     const commentLang: DetectedLanguage =
       (config?.replyLanguage as DetectedLanguage | null) ??
       this.commentPrompts.detectLanguage(comment.message);
@@ -128,10 +156,10 @@ export class PostCommentAiService {
       businessName:    bp.name,
       businessType:    bp.businessType,
       description:     bp.description,
-      tone:            config?.tone            ?? aiConfig.tone            ?? 'FRIENDLY',
-      responseStyle:   config?.responseStyle   ?? aiConfig.responseStyle   ?? 'SHORT',
-      replyLanguage:   config?.replyLanguage   ?? aiConfig.replyLanguage   ?? null,
-      systemPrompt:    aiConfig.systemPrompt   ?? null,
+      tone:            config?.tone          ?? aiConfig.tone          ?? 'FRIENDLY',
+      responseStyle:   config?.responseStyle ?? aiConfig.responseStyle ?? 'SHORT',
+      replyLanguage:   config?.replyLanguage ?? aiConfig.replyLanguage ?? null,
+      systemPrompt:    aiConfig.systemPrompt ?? null,
       blockedKeywords: (aiConfig.blockedKeywords as string[]) ?? [],
       allowedTopics:   (aiConfig.allowedTopics  as string[]) ?? [],
     };
@@ -172,13 +200,15 @@ export class PostCommentAiService {
 
     if (!publicResult.success) return;
 
-    // ── Emit comment:replied SSE ──────────────────────────────────────────────
+    // ── Emit comment:replied — always (both webhook and scheduler paths) ──────
+    // This is the key event for real-time updates: the frontend updates the
+    // comment inline without any manual refresh.
     this.sseEmitter.commentReplied(bp.userId, post.id, commentId, {
       content:     publicReply,
       repliedByAi: true,
     });
 
-    this.logger.log(`AI replied publicly to comment=${commentId}`);
+    this.logger.log(`AI replied to comment=${commentId}`);
 
     // ── Private DM (optional) ─────────────────────────────────────────────────
     const privateEnabled =
@@ -193,25 +223,17 @@ export class PostCommentAiService {
 
     if (!dmText) {
       const dmPrompt = this.commentPrompts.buildPrivateDmReplyPrompt(
-        ctx,
-        postCaption,
-        comment.message,
+        ctx, postCaption, comment.message,
         config?.customInstructions ?? null,
-        images,
-        commentLang,
+        images, commentLang,
       );
 
       dmText = await this.callModel(
         [
           { role: 'system', content: dmPrompt },
-          /**
-           * Neutral trigger — NOT the comment text again.
-           * Passing the comment as the user message caused the AI to
-           * respond TO the comment rather than generate a welcoming opener.
-           */
-          { role: 'user', content: 'Génère le message privé de bienvenue.' },
+          { role: 'user',   content: 'Génère le message privé de bienvenue.' },
         ],
-        150, // DMs should be short — 2-3 sentences max
+        150,
         bp.aiModelConfig,
       );
     }
@@ -240,10 +262,7 @@ export class PostCommentAiService {
     for (const modelId of models) {
       try {
         const result = await this.openRouter.complete({
-          model:       modelId,
-          messages,
-          maxTokens,
-          temperature,
+          model: modelId, messages, maxTokens, temperature,
         });
         if (result.content.trim()) return result.content.trim();
       } catch (err) {

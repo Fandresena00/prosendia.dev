@@ -35,33 +35,38 @@ import type { ApiComment } from "../types/posts-comments.types";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ReplyData {
-  content:     string;
+  content: string;
   repliedByAi: boolean;
 }
 
 export interface PostsRealtimeHandlers {
-  onCommentAdded?:   (comment: ApiComment) => void;
-  onCommentReplied?: (postId: string, commentId: string, reply: ReplyData) => void;
-  onPostUpdated?:    (postId: string, updates: Record<string, unknown>) => void;
-  onSyncCompleted?:  () => void;
+  onCommentAdded?: (comment: ApiComment) => void;
+  onCommentReplied?: (
+    postId: string,
+    commentId: string,
+    reply: ReplyData,
+  ) => void;
+  onPostUpdated?: (postId: string, updates: Record<string, unknown>) => void;
+  onSyncCompleted?: () => void;
 }
 
 export interface PostsRealtimeState {
   connected: boolean;
-  error:     string | null;
+  error: string | null;
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function usePostsRealtime(
   businessProfileId: string | undefined | null,
-  handlers:          PostsRealtimeHandlers,
+  handlers: PostsRealtimeHandlers,
 ): PostsRealtimeState {
   const [connected, setConnected] = useState(false);
-  const [error,     setError]     = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Keep handlers in a ref so the effect doesn't need to re-run on each render
   const handlersRef = useRef(handlers);
+  // eslint-disable-next-line react-hooks/refs
   handlersRef.current = handlers;
 
   useEffect(() => {
@@ -88,9 +93,9 @@ export function usePostsRealtime(
     es.onmessage = (event: MessageEvent<string>) => {
       try {
         const payload = JSON.parse(event.data) as {
-          type:    string;
+          type: string;
           postId?: string;
-          data:    Record<string, unknown>;
+          data: Record<string, unknown>;
         };
 
         switch (payload.type) {
@@ -112,10 +117,7 @@ export function usePostsRealtime(
 
           case "post:updated":
             if (payload.postId) {
-              handlersRef.current.onPostUpdated?.(
-                payload.postId,
-                payload.data,
-              );
+              handlersRef.current.onPostUpdated?.(payload.postId, payload.data);
             }
             break;
 

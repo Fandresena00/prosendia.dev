@@ -1,11 +1,26 @@
 /**
  * @file features/facebook/facebook.controller.ts
  *
- * Core Facebook controller — OAuth, connections, messaging, webhook, sync, tokens.
+ * Core Facebook controller — OAuth, connections, messaging (inbox), webhook, sync, tokens.
  *
- * ADDED: GET /facebook/pages/list
- *   Returns connected pages formatted for the frontend with avatar URLs.
- *   Used by the posts-comments feature to populate the page switcher.
+ * FIX: Removed `POST /facebook/comments/:commentId/reply` from this controller.
+ *
+ * WHY IT WAS BROKEN
+ * ─────────────────
+ * Both FacebookController and FacebookPostsController declared:
+ *   POST /facebook/comments/:commentId/reply
+ *
+ * NestJS registers FacebookModule before FacebookPostsModule in AppModule,
+ * so this controller's route was matched first. It expects { businessProfileId, message }
+ * in the body (from messaging.dto.ts), but the frontend only sends { message }.
+ * Result: "businessProfileId should not be empty" 400 error.
+ *
+ * THE FIX
+ * ───────
+ * Post comment replies are now handled exclusively by FacebookPostsController,
+ * which uses the internal DB comment ID and resolves everything internally.
+ * The inbox-level comment reply (external ID + businessProfileId) is no longer
+ * needed as a separate endpoint — clients always have the internal ID.
  */
 
 import {
@@ -28,8 +43,6 @@ import type { AuthenticatedUser } from '../auth/types/authenticated-user.types.j
 import { ConnectPageDto } from './dto/auth/connect-page.dto.js';
 import { FacebookConnectionResponseDto } from './dto/auth/facebook-connection-response.dto.js';
 import {
-  ReplyToCommentDto,
-  ReplyToCommentResponseDto,
   SendMessageDto,
   SendMessageResponseDto,
 } from './dto/messaging/messaging.dto.js';
@@ -54,22 +67,17 @@ import {
   WebhookService,
 } from './services/webhook.service.js';
 
-// ─── Facebook page for frontend ───────────────────────────────────────────────
+// ─── Page list (for frontend page switcher) ───────────────────────────────────
 
 export interface FacebookPageListItem {
-  /** businessProfileId — used as the page key in the frontend */
   key:       string;
   pageId:    string;
   name:      string;
-  /** 2-letter initials for fallback avatar */
   avatar:    string;
-  /** Tailwind color class for fallback avatar background */
   color:     string;
-  /** Facebook CDN avatar URL — may return 403 for private pages */
   avatarUrl: string;
 }
 
-/** Color palette for page avatars — cycles by index */
 const PAGE_COLORS = [
   'bg-primary/15 text-primary',
   'bg-violet-500/15 text-violet-600',
@@ -90,13 +98,8 @@ export class FacebookController {
     private readonly configService:    ConfigService,
   ) {}
 
-  // ─── Pages list (for frontend page switcher) ──────────────────────────────
+  // ─── Pages list ───────────────────────────────────────────────────────────
 
-  /**
-   * GET /facebook/pages/list
-   * Returns all connected Facebook pages for the current user,
-   * formatted for the frontend page switcher (with avatar URLs).
-   */
   @UseGuards(JwtAuthGuard)
   @Get('pages/list')
   async listPages(
@@ -106,7 +109,6 @@ export class FacebookController {
       user.sub,
       { page: 1, pageSize: 50 },
     );
-
     return connections.map((conn, index) => ({
       key:       conn.businessProfileId,
       pageId:    conn.pageId,
@@ -125,7 +127,9 @@ export class FacebookController {
 
   @UseGuards(JwtAuthGuard)
   @Get('oauth/url')
-  getOAuthUrl(@Query('businessProfileId') businessProfileId: string): { url: string } {
+  getOAuthUrl(
+    @Query('businessProfileId') businessProfileId: string,
+  ): { url: string } {
     return { url: this.authService.buildOAuthUrl(businessProfileId) };
   }
 
@@ -209,7 +213,7 @@ export class FacebookController {
     return { synced: result.synced };
   }
 
-  // ─── Messaging ────────────────────────────────────────────────────────────
+  // ─── Messaging (inbox DMs only — post comment replies via FacebookPostsController) ──
 
   @UseGuards(JwtAuthGuard)
   @Post('messages/send')
@@ -226,21 +230,9 @@ export class FacebookController {
     );
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Post('comments/:commentId/reply')
-  @HttpCode(HttpStatus.CREATED)
-  async replyToComment(
-    @Param('commentId') externalCommentId: string,
-    @Body() dto: ReplyToCommentDto,
-    @CurrentUser() user: AuthenticatedUser,
-  ): Promise<ReplyToCommentResponseDto> {
-    return this.messagingService.replyToComment(
-      dto.businessProfileId,
-      user.sub,
-      externalCommentId,
-      dto.message,
-    );
-  }
+  // NOTE: POST /facebook/comments/:commentId/reply was intentionally removed.
+  // It is now handled by FacebookPostsController which uses the internal DB
+  // comment ID and does not require businessProfileId in the request body.
 
   // ─── Token management ─────────────────────────────────────────────────────
 
