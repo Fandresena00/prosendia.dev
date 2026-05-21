@@ -74,17 +74,10 @@ export function CommentItem({
     <div className="group">
       <div className="flex gap-2.5">
         {/* Avatar */}
-        {comment.authorAvatarUrl ? (
-          <img
-            src={comment.authorAvatarUrl}
-            alt={comment.authorName}
-            className="h-8 w-8 rounded-full object-cover shrink-0 border border-border/30 mt-0.5"
-          />
-        ) : (
-          <div className="h-8 w-8 rounded-full bg-secondary flex items-center justify-center shrink-0 mt-0.5 border border-border/30">
-            <IconUser className="h-4 w-4 text-muted-foreground/50" />
-          </div>
-        )}
+
+        <div className="h-8 w-8 rounded-full bg-secondary flex items-center justify-center shrink-0 mt-0.5 border border-border/30">
+          <IconUser className="h-4 w-4 text-muted-foreground/50" />
+        </div>
 
         <div className="flex-1 min-w-0">
           {/* Bubble */}

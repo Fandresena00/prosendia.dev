@@ -112,6 +112,11 @@ export interface FbMessengerUserProfile {
   readonly profile_pic?: string;
 }
 
+interface FbGraphUserName {
+  readonly id: string;
+  readonly name?: string;
+}
+
 // ─── Internal types ───────────────────────────────────────────────────────────
 
 interface GraphRequestConfig {
@@ -477,6 +482,17 @@ export class FacebookGraphClient {
       access_token: accessToken,
       fields: 'id,message,from,created_time',
     });
+  }
+
+  async getUserNameById(
+    userId: string,
+    accessToken: string,
+  ): Promise<string | null> {
+    const user = await this.get<FbGraphUserName>(`/${userId}`, {
+      access_token: accessToken,
+      fields: 'id,name',
+    });
+    return user.name?.trim() || null;
   }
 
   async replyToComment(

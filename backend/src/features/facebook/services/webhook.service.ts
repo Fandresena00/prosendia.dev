@@ -570,7 +570,13 @@ export class WebhookService {
         connection.decryptedToken,
       );
       const id = fullComment.from?.id?.trim();
-      const name = fullComment.from?.name?.trim();
+      let name = fullComment.from?.name?.trim() || null;
+      if (id && !name) {
+        name = await this.facebookGraph.getUserNameById(
+          id,
+          connection.decryptedToken,
+        );
+      }
       if (!id || !name) return null;
       return { id, name };
     } catch {

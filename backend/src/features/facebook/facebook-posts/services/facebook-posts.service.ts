@@ -266,6 +266,12 @@ export class FacebookPostsService {
     }
 
     const connection = post.businessProfile.facebookConnection;
+    const grantedScopes = (connection.grantedScopes as string[]) ?? [];
+    if (!grantedScopes.includes('pages_read_engagement')) {
+      this.logger.warn(
+        `Missing scope pages_read_engagement for page=${connection.pageId}. Comment authors may be unavailable.`,
+      );
+    }
     const token = this.encryption.decrypt(connection.encryptedAccessToken);
     let synced = 0;
     let repaired = 0;
@@ -279,7 +285,17 @@ export class FacebookPostsService {
 
       for (const comment of comments) {
         const authorId = comment.from?.id?.trim() || 'unknown';
-        const authorNameRaw = comment.from?.name?.trim() || null;
+        let authorNameRaw = comment.from?.name?.trim() || null;
+        if (!authorNameRaw && authorId !== 'unknown') {
+          try {
+            authorNameRaw = await this.graphClient.getUserNameById(
+              authorId,
+              token,
+            );
+          } catch {
+            // keep null, fallback below
+          }
+        }
         const authorName =
           authorNameRaw ||
           (authorId !== 'unknown' ? `Compte ${authorId}` : 'Anonyme');
@@ -348,7 +364,13 @@ export class FacebookPostsService {
             token,
           );
           const hydratedId = fullComment.from?.id?.trim();
-          const hydratedName = fullComment.from?.name?.trim();
+          let hydratedName = fullComment.from?.name?.trim() || null;
+          if (!hydratedName && hydratedId) {
+            hydratedName = await this.graphClient.getUserNameById(
+              hydratedId,
+              token,
+            );
+          }
           if (!hydratedId || !hydratedName) continue;
 
           const nextAuthorId = row.authorId === 'unknown' ? hydratedId : row.authorId;
@@ -463,6 +485,12 @@ export class FacebookPostsService {
     const connection = comment.post.businessProfile.facebookConnection;
     if (!connection)
       throw new NotFoundException('No active Facebook connection');
+    const grantedScopes = (connection.grantedScopes as string[]) ?? [];
+    if (!grantedScopes.includes('pages_manage_engagement')) {
+      throw new BadRequestException(
+        'Permission manquante: pages_manage_engagement. Reconnectez la page Facebook avec toutes les permissions.',
+      );
+    }
 
     const token = this.encryption.decrypt(connection.encryptedAccessToken);
 

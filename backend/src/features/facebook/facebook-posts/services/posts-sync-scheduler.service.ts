@@ -155,8 +155,15 @@ export class PostsSyncSchedulerService implements OnModuleInit {
       });
 
       // Preserve author name — only set 'Anonyme' if Facebook truly didn't return `from`
-      const authorName = fc.from?.name?.trim() || null;
+      let authorName = fc.from?.name?.trim() || null;
       const authorId = fc.from?.id?.trim() || null;
+      if (!authorName && authorId) {
+        try {
+          authorName = await this.graphClient.getUserNameById(authorId, token);
+        } catch {
+          // keep null fallback below
+        }
+      }
 
       if (exists) {
         await this.prisma.postComment.update({
