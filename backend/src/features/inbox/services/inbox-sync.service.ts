@@ -1,15 +1,19 @@
 /**
  * @file features/inbox/services/inbox-sync.service.ts
  *
- * Polls Facebook for new messages and conversations on a schedule,
- * then pushes SSE events to connected clients.
+ * Polls Facebook and persists conversations + messages locally.
  *
- * This is a fallback for messages that arrive between webhook deliveries.
- * The webhook (WebhookService) handles real-time inbound messages;
- * this service catches any gaps.
+ * Two sync modes:
+ *   initialSync  — first connection for a profile: fetches 40 conversations
+ *                  and 50 messages each. Called once per page connection.
+ *   syncProfile  — regular on-demand sync (e.g. manual trigger, POST /inbox/sync/:id):
+ *                  fetches 25 conversations and 25 messages each.
  *
- * Schedule: every 60 seconds per active business profile.
- * Use @nestjs/schedule for the cron in the real app.
+ * Both modes:
+ *   - Upsert conversations and messages into the DB.
+ *   - Emit SSE events so the inbox UI updates in real time.
+ *   - Enqueue AI replies for any new client message in AI-mode conversations.
+ *   - Emit sync_complete at the end so the frontend can stop its loading state.
  */
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -24,6 +28,18 @@ import { AiQueueProducer } from '../../queue/producers/ai-queue.producer.js';
 import type { SyncCompleteEvent } from '../dto/inbox.dto.js';
 import { InboxEventEmitter } from '../gateways/inbox-sse.gateway.js';
 
+/** Conversations fetched on first connection. */
+const INITIAL_CONVERSATIONS = 40;
+
+/** Messages fetched per conversation on first connection. */
+const INITIAL_MESSAGES = 50;
+
+/** Conversations fetched during a regular on-demand sync. */
+const REGULAR_CONVERSATIONS = 25;
+
+/** Messages fetched per conversation during a regular sync. */
+const REGULAR_MESSAGES = 25;
+
 @Injectable()
 export class InboxSyncService {
   private readonly logger = new Logger(InboxSyncService.name);
@@ -36,29 +52,90 @@ export class InboxSyncService {
     private readonly aiQueue: AiQueueProducer,
   ) {}
 
+  // ─── Initial sync (first connection) ──────────────────────────────────────
+
   /**
-   * Sync all conversations for a business profile.
-   * Called by:
-   *   - Cron job (every 60s)
-   *   - POST /inbox/sync/:businessProfileId (manual trigger)
-   *   - After webhook delivery to backfill context
+   * Called when a user opens the inbox for the first time for a given profile
+   * (i.e. no conversations are stored yet in the DB).
+   *
+   * Fetches INITIAL_CONVERSATIONS conversations with INITIAL_MESSAGES messages
+   * each. The frontend shows a loading state until sync_complete is emitted.
+   */
+  async initialSync(
+    businessProfileId: string,
+    userId: string,
+  ): Promise<SyncCompleteEvent> {
+    this.logger.log(`Initial sync — profile=${businessProfileId}`);
+    return this.runSync(
+      businessProfileId,
+      userId,
+      INITIAL_CONVERSATIONS,
+      INITIAL_MESSAGES,
+    );
+  }
+
+  // ─── Regular on-demand sync ────────────────────────────────────────────────
+
+  /**
+   * Called by the manual sync endpoint (POST /inbox/sync/:businessProfileId)
+   * or after a webhook triggers a backfill.
    */
   async syncProfile(
     businessProfileId: string,
     userId: string,
   ): Promise<SyncCompleteEvent> {
-    this.logger.log(`Syncing inbox for profile ${businessProfileId}`);
+    this.logger.log(`On-demand sync — profile=${businessProfileId}`);
+    return this.runSync(
+      businessProfileId,
+      userId,
+      REGULAR_CONVERSATIONS,
+      REGULAR_MESSAGES,
+    );
+  }
 
+  // ─── Sync all active profiles (called by cron-level services if needed) ───
+
+  async syncAllProfiles(): Promise<void> {
+    const connections = await this.prisma.facebookConnection.findMany({
+      where: { isActive: true },
+      include: { businessProfile: true },
+    });
+
+    await Promise.allSettled(
+      connections.map((conn) =>
+        this.syncProfile(
+          conn.businessProfileId,
+          conn.businessProfile.userId,
+        ).catch((err: Error) =>
+          this.logger.warn(
+            `Sync failed for profile ${conn.businessProfileId}: ${err.message}`,
+          ),
+        ),
+      ),
+    );
+
+    await this.cleanupOldWebhookEvents().catch((err: Error) =>
+      this.logger.warn(`Webhook event cleanup failed: ${err.message}`),
+    );
+  }
+
+  // ─── Core sync implementation ─────────────────────────────────────────────
+
+  private async runSync(
+    businessProfileId: string,
+    userId: string,
+    conversationLimit: number,
+    messageLimit: number,
+  ): Promise<SyncCompleteEvent> {
     const conn = await this.accounts.requireByProfileId(
       businessProfileId,
       userId,
     );
 
-    // ── 1. Fetch conversations from Facebook ──────────────────────────────
     const fbConvs = await this.graphClient.getConversations(
       conn.pageId,
       conn.decryptedToken,
-      25,
+      conversationLimit,
     );
 
     let newConversations = 0;
@@ -68,19 +145,17 @@ export class InboxSyncService {
       const client = fbConv.participants?.data.find(
         (p) => p.id !== conn.pageId,
       );
-      const clientPsid = client?.id;
-      if (!clientPsid) continue;
+      if (!client) continue;
 
       const clientProfile = await this.safeFetchClientProfile(
-        clientPsid,
+        client.id,
         conn.decryptedToken,
       );
 
-      // Upsert conversation
       const existing = await this.prisma.conversation.findFirst({
         where: {
           businessProfileId,
-          OR: [{ externalId: clientPsid }, { clientPsid: clientPsid }],
+          OR: [{ externalId: client.id }, { clientPsid: client.id }],
         },
       });
 
@@ -88,12 +163,12 @@ export class InboxSyncService {
         ? await this.prisma.conversation.update({
             where: { id: existing.id },
             data: {
-              externalId: clientPsid,
-              clientPsid: clientPsid,
+              externalId: client.id,
+              clientPsid: client.id,
               clientName:
-                clientProfile?.name ?? client?.name ?? existing.clientName,
+                clientProfile?.name ?? client.name ?? existing.clientName,
               clientAvatarUrl:
-                this.normalizeAvatarUrl(clientProfile?.profile_pic) ??
+                normalizeUrl(clientProfile?.profile_pic) ??
                 existing.clientAvatarUrl,
               lastMessageAt: new Date(fbConv.updated_time),
             },
@@ -101,24 +176,23 @@ export class InboxSyncService {
         : await this.prisma.conversation.create({
             data: {
               businessProfileId,
-              externalId: clientPsid,
-              clientPsid: clientPsid,
-              clientName: clientProfile?.name ?? client?.name ?? null,
-              clientAvatarUrl: this.normalizeAvatarUrl(
-                clientProfile?.profile_pic,
-              ),
+              externalId: client.id,
+              clientPsid: client.id,
+              clientName: clientProfile?.name ?? client.name ?? null,
+              clientAvatarUrl: normalizeUrl(clientProfile?.profile_pic),
               lastMessageAt: new Date(fbConv.updated_time),
             },
           });
 
       if (!existing) newConversations++;
 
-      // ── 2. Sync messages for each conversation ────────────────────────
+      // Sync messages for this conversation.
       const fbMsgs = await this.graphClient.getConversationMessages(
         fbConv.id,
         conn.decryptedToken,
-        25,
+        messageLimit,
       );
+
       const ordered = [...fbMsgs].sort(
         (a, b) =>
           new Date(a.created_time).getTime() -
@@ -134,17 +208,18 @@ export class InboxSyncService {
         const imageUrl =
           attachment?.image_data?.url ??
           (attachment?.mime_type?.startsWith('image/')
-            ? attachment.file_url ?? null
+            ? (attachment.file_url ?? null)
             : null);
         const fileUrl =
           !imageUrl && attachment?.file_url ? attachment.file_url : null;
-        const content = fbMsg.message ? normalizeMessageText(fbMsg.message) : null;
+        const content = fbMsg.message ? normalizeText(fbMsg.message) : null;
+        const fbCreatedAt = new Date(fbMsg.created_time);
 
         if (sender === 'CLIENT') {
-          const exists = await this.prisma.message.findUnique({
+          const msgExists = await this.prisma.message.findUnique({
             where: { externalId: fbMsg.id },
           });
-          if (exists) continue;
+          if (msgExists) continue;
 
           const stored = await this.prisma.message.create({
             data: {
@@ -155,10 +230,11 @@ export class InboxSyncService {
               imageUrl,
               fileUrl,
               status: 'DELIVERED',
-              createdAt: new Date(fbMsg.created_time),
+              createdAt: fbCreatedAt,
             },
           });
 
+          // De-duplicate against webhook events already processed.
           const duplicate = await this.prisma.webhookEvent.findUnique({
             where: {
               externalId_eventType: {
@@ -195,7 +271,7 @@ export class InboxSyncService {
           });
 
           newMessages++;
-          lastPreview = this.messagePreview(stored);
+          lastPreview = messagePreview(stored);
           lastAt = stored.createdAt;
 
           this.emitter.newMessage(userId, {
@@ -214,6 +290,7 @@ export class InboxSyncService {
             },
           });
 
+          // Enqueue AI reply if the conversation is in AI mode.
           if (conv.handoverStatus === 'AI' && content?.trim()) {
             await this.prisma.conversation.update({
               where: { id: conv.id },
@@ -225,32 +302,34 @@ export class InboxSyncService {
               businessProfileId,
               userId,
               inboundText: content,
-              inboundCreatedAt: lastAt.toISOString(),
+              inboundCreatedAt: fbCreatedAt.toISOString(),
             });
           }
+
           continue;
         }
 
-        const exists = await this.prisma.message.findUnique({
+        // PAGE message
+        const msgExists = await this.prisma.message.findUnique({
           where: { externalId: fbMsg.id },
         });
-        if (exists) continue;
+        if (msgExists) continue;
 
         const stored = await this.prisma.message.create({
           data: {
             conversationId: conv.id,
             externalId: fbMsg.id,
-              sender,
-              content,
-              imageUrl,
-              fileUrl,
-              status: 'DELIVERED',
-              createdAt: new Date(fbMsg.created_time),
-            },
+            sender,
+            content,
+            imageUrl,
+            fileUrl,
+            status: 'DELIVERED',
+            createdAt: fbCreatedAt,
+          },
         });
 
         newMessages++;
-        lastPreview = this.messagePreview(stored);
+        lastPreview = messagePreview(stored);
         lastAt = stored.createdAt;
 
         this.emitter.newMessage(userId, {
@@ -293,7 +372,6 @@ export class InboxSyncService {
       }
     }
 
-    // Update connection lastSyncedAt
     await this.prisma.facebookConnection.update({
       where: { businessProfileId },
       data: { lastSyncedAt: new Date() },
@@ -305,111 +383,69 @@ export class InboxSyncService {
       newConversations,
     };
 
-    // Emit sync_complete event
-    const profile = await this.prisma.businessProfile.findUnique({
-      where: { id: businessProfileId },
-      select: { userId: true },
-    });
-    if (profile) {
-      this.emitter.syncComplete(profile.userId, result);
-    }
+    this.emitter.syncComplete(userId, result);
 
     this.logger.log(
-      `Sync done — profile=${businessProfileId} newMsgs=${newMessages} newConvs=${newConversations}`,
+      `Sync done — profile=${businessProfileId} +msgs=${newMessages} +convs=${newConversations}`,
     );
     return result;
   }
 
-  private messagePreview(msg: {
-    content: string | null;
-    imageUrl: string | null;
-    fileUrl: string | null;
-  }): string {
-    if (msg.content?.trim()) return msg.content;
-    if (msg.imageUrl) return '📷 Photo';
-    if (msg.fileUrl) return '📎 Fichier';
-    return '';
-  }
+  // ─── Cleanup ───────────────────────────────────────────────────────────────
 
-  private async safeFetchClientProfile(
-    psid: string,
-    pageAccessToken: string,
-  ): Promise<{ name: string | null; profile_pic: string | null } | null> {
-    try {
-      const profile = await this.graphClient.getMessengerUserProfile(
-        psid,
-        pageAccessToken,
-      );
-      const name =
-        profile.name ??
-        [profile.first_name, profile.last_name].filter(Boolean).join(' ');
-      return {
-        name: name.trim() || null,
-        profile_pic: this.normalizeAvatarUrl(profile.profile_pic),
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  private normalizeAvatarUrl(url?: string | null): string | null {
-    if (!url?.trim()) return null;
-    if (url.startsWith('http://'))
-      return `https://${url.slice('http://'.length)}`;
-    return url;
-  }
-
-  /**
-   * Sync all active profiles for all users.
-   * Called by the cron job every 60 seconds.
-   */
-  async syncAllProfiles(): Promise<void> {
-    const connections = await this.prisma.facebookConnection.findMany({
-      where: { isActive: true },
-      include: { businessProfile: true },
-    });
-
-    await Promise.allSettled(
-      connections.map((conn) =>
-        this.syncProfile(
-          conn.businessProfileId,
-          conn.businessProfile.userId,
-        ).catch((err) => {
-          this.logger.warn(
-            `Sync failed for profile ${conn.businessProfileId}: ${err.message}`,
-          );
-        }),
-      ),
-    );
-
-    // Clean up old webhook events periodically
-    await this.cleanupOldWebhookEvents().catch((err) =>
-      this.logger.warn(`Cleanup failed: ${err.message}`),
-    );
-  }
-
-  /**
-   * Clean up old processed webhook events to prevent database bloat.
-   * Deletes events older than 7 days that are in PROCESSED status.
-   */
   async cleanupOldWebhookEvents(): Promise<void> {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 7);
 
-    const deleted = await this.prisma.webhookEvent.deleteMany({
+    const { count } = await this.prisma.webhookEvent.deleteMany({
       where: {
         status: WebhookEventStatus.PROCESSED,
         processedAt: { lt: cutoff },
       },
     });
 
-    if (deleted.count > 0) {
-      this.logger.log(`Cleaned up ${deleted.count} old webhook events`);
+    if (count > 0) this.logger.log(`Cleaned ${count} old webhook events`);
+  }
+
+  // ─── Helpers ───────────────────────────────────────────────────────────────
+
+  private async safeFetchClientProfile(
+    psid: string,
+    token: string,
+  ): Promise<{ name: string | null; profile_pic: string | null } | null> {
+    try {
+      const p = await this.graphClient.getMessengerUserProfile(psid, token);
+      const name =
+        p.name ?? [p.first_name, p.last_name].filter(Boolean).join(' ');
+      return {
+        name: name.trim() || null,
+        profile_pic: normalizeUrl(p.profile_pic),
+      };
+    } catch {
+      return null;
     }
   }
 }
 
-function normalizeMessageText(input: string): string {
+// ─── Module-level helpers ──────────────────────────────────────────────────────
+
+function messagePreview(msg: {
+  content: string | null;
+  imageUrl: string | null;
+  fileUrl: string | null;
+}): string {
+  if (msg.content?.trim()) return msg.content;
+  if (msg.imageUrl) return '📷 Photo';
+  if (msg.fileUrl) return '📎 Fichier';
+  return '';
+}
+
+function normalizeUrl(url?: string | null): string | null {
+  if (!url?.trim()) return null;
+  return url.startsWith('http://') ? `https://${url.slice(7)}` : url;
+}
+
+function normalizeText(input: string): string {
   return input
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')

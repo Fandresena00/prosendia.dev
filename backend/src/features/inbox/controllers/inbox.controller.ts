@@ -4,16 +4,22 @@
  * REST endpoints for the inbox feature.
  *
  * Routes:
- *   GET  /inbox/conversations                  → list conversations (paginated)
- *   GET  /inbox/conversations/:id              → single conversation
- *   POST /inbox/conversations/:id/read         → mark all messages read
- *   POST /inbox/conversations/:id/handover     → set AI / HUMAN / RESOLVED
- *   GET  /inbox/conversations/:id/messages     → cursor-paginated messages
- *   POST /inbox/messages/text                  → send text message
- *   POST /inbox/messages/images                → send image(s) to Facebook
- *   POST /inbox/messages/file                  → send file to Facebook
- *   POST /inbox/uploads/reference              → upload reference images (stored)
- *   POST /inbox/sync/:businessProfileId        → manual sync trigger
+ *   GET  /inbox/conversations                       → paginated conversation list
+ *   GET  /inbox/conversations/:id                   → single conversation
+ *   POST /inbox/conversations/:id/read              → mark messages read
+ *   POST /inbox/conversations/:id/handover          → set AI / HUMAN / RESOLVED
+ *   GET  /inbox/conversations/:id/messages          → cursor-paginated messages
+ *   POST /inbox/messages/text                       → send text message
+ *   POST /inbox/messages/images                     → send image(s)
+ *   POST /inbox/messages/file                       → send file
+ *   POST /inbox/uploads/reference                   → store reference images
+ *   GET  /inbox/reference-presets                   → list reference presets
+ *   POST /inbox/reference-presets                   → create reference preset
+ *   DELETE /inbox/reference-presets/:id             → delete reference preset
+ *   POST /inbox/uploads/temp                        → temporary upload for sends
+ *   POST /inbox/sync/:businessProfileId             → manual sync (regular)
+ *   POST /inbox/initial-sync/:businessProfileId     → first-connection full sync
+ *                                                     (40 conversations, 50 messages each)
  */
 
 import {
@@ -23,33 +29,35 @@ import {
   Get,
   HttpCode,
   HttpStatus,
-  UploadedFile,
   Param,
   Post,
   Query,
   Req,
+  UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import type { Request } from 'express';
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard.js';
 import type { AuthenticatedUser } from '../../auth/types/authenticated-user.types.js';
+import type { PaginatedResponseDto } from '../../facebook/dto/shared/pagination.dto.js';
 import type {
   ConversationResponseDto,
-  ReferencePresetDto,
   MessageResponseDto,
   MessagesPageDto,
+  ReferencePresetDto,
   SyncCompleteEvent,
   UploadReferenceImagesResponseDto,
 } from '../dto/inbox.dto.js';
 import {
-  GetMessagesQueryDto,
   CreateReferencePresetDto,
-  ListReferencePresetsQueryDto,
+  GetMessagesQueryDto,
   ListConversationsQueryDto,
+  ListReferencePresetsQueryDto,
   SendFileMessageDto,
   SendImageMessageDto,
   SendTextMessageDto,
@@ -60,20 +68,18 @@ import { InboxSyncService } from '../services/inbox-sync.service.js';
 import { MessageService } from '../services/message.service.js';
 import type { MulterFile } from '../services/upload.service.js';
 import { UploadService } from '../services/upload.service.js';
-import type { PaginatedResponseDto } from '../../facebook/dto/shared/pagination.dto.js';
-import type { Request } from 'express';
 
 @UseGuards(JwtAuthGuard)
 @Controller('inbox')
 export class InboxController {
   constructor(
     private readonly conversations: ConversationService,
-    private readonly messages:      MessageService,
-    private readonly uploads:       UploadService,
-    private readonly sync:          InboxSyncService,
+    private readonly messages: MessageService,
+    private readonly uploads: UploadService,
+    private readonly sync: InboxSyncService,
   ) {}
 
-  // ── Conversations ─────────────────────────────────────────────────────────
+  // ─── Conversations ─────────────────────────────────────────────────────────
 
   @Get('conversations')
   listConversations(
@@ -109,7 +115,7 @@ export class InboxController {
     return this.conversations.setHandover(id, user.sub, dto.status);
   }
 
-  // ── Messages ──────────────────────────────────────────────────────────────
+  // ─── Messages ──────────────────────────────────────────────────────────────
 
   @Get('conversations/:id/messages')
   getMessages(
@@ -157,13 +163,8 @@ export class InboxController {
     );
   }
 
-  // ── Reference image upload ─────────────────────────────────────────────────
+  // ─── Reference images ──────────────────────────────────────────────────────
 
-  /**
-   * POST /inbox/uploads/reference
-   * Multipart form upload — field name: "images" — max 10 files, 5 MB each.
-   * Only reference/preset images are stored. Regular message photos are not stored.
-   */
   @Post('uploads/reference')
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
@@ -176,8 +177,10 @@ export class InboxController {
     @UploadedFiles() files: MulterFile[],
     @Req() req: Request,
   ): Promise<UploadReferenceImagesResponseDto> {
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    return this.uploads.saveReferenceImages(files, baseUrl);
+    return this.uploads.saveReferenceImages(
+      files,
+      `${req.protocol}://${req.get('host')}`,
+    );
   }
 
   @Get('reference-presets')
@@ -202,14 +205,13 @@ export class InboxController {
     @Req() req: Request,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ReferencePresetDto> {
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
     return this.uploads.createReferencePreset({
       businessProfileId: dto.businessProfileId,
       userId: user.sub,
       name: dto.name,
       description: dto.description,
       files,
-      baseUrl,
+      baseUrl: `${req.protocol}://${req.get('host')}`,
     });
   }
 
@@ -222,11 +224,8 @@ export class InboxController {
     return this.uploads.deleteReferencePreset(id, user.sub);
   }
 
-  /**
-   * POST /inbox/uploads/temp
-   * Multipart upload — field name: "file" — max 1 file, 5 MB.
-   * Stored temporarily so Facebook can fetch it by URL.
-   */
+  // ─── Temporary upload ──────────────────────────────────────────────────────
+
   @Post('uploads/temp')
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
@@ -239,12 +238,20 @@ export class InboxController {
     @UploadedFile() file: MulterFile,
     @Req() req: Request,
   ): Promise<{ url: string }> {
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    return this.uploads.saveTempUpload(file, baseUrl);
+    return this.uploads.saveTempUpload(
+      file,
+      `${req.protocol}://${req.get('host')}`,
+    );
   }
 
-  // ── Manual sync ───────────────────────────────────────────────────────────
+  // ─── Sync ──────────────────────────────────────────────────────────────────
 
+  /**
+   * POST /inbox/sync/:businessProfileId
+   *
+   * Regular on-demand sync. Fetches the 25 most recent conversations with
+   * 25 messages each. Use this after the inbox is already loaded.
+   */
   @Post('sync/:businessProfileId')
   @HttpCode(HttpStatus.OK)
   manualSync(
@@ -252,5 +259,25 @@ export class InboxController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<SyncCompleteEvent> {
     return this.sync.syncProfile(businessProfileId, user.sub);
+  }
+
+  /**
+   * POST /inbox/initial-sync/:businessProfileId
+   *
+   * Full first-connection sync. Fetches 40 conversations with 50 messages
+   * each and stores everything in the DB. The frontend calls this once on
+   * first open and waits for the sync_complete SSE event before hiding its
+   * loading state.
+   *
+   * Idempotent: calling it on an already-populated inbox is safe — messages
+   * already in the DB are skipped via their unique externalId constraint.
+   */
+  @Post('initial-sync/:businessProfileId')
+  @HttpCode(HttpStatus.OK)
+  initialSync(
+    @Param('businessProfileId') businessProfileId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<SyncCompleteEvent> {
+    return this.sync.initialSync(businessProfileId, user.sub);
   }
 }

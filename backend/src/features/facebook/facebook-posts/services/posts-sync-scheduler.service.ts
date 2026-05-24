@@ -1,29 +1,24 @@
 /**
  * @file features/facebook-posts/services/posts-sync-scheduler.service.ts
  *
- * FIX — processPendingComments must NOT emit comment:new for existing comments.
+ * Runs a pg-boss job every 5 minutes to keep managed posts and their
+ * comments in sync with Facebook and to trigger AI replies for comments
+ * that weren't handled in real time by the webhook.
  *
- * ROOT CAUSE of "Anonyme" author names
- * ─────────────────────────────────────
- * `processNewComment` emitted `comment:new` SSE for EVERY comment it processed
- * (including existing ones from the scheduler fallback). On the frontend,
- * `onCommentAdded` would receive these and — if the DB comment happened to
- * arrive before the frontend's `loadComments` API response — it prepended a
- * duplicate with whatever authorName was in the SSE payload.
+ * Per sync cycle:
+ *   1. For each managed post with an active connection:
+ *      a. Fetch all recent comments from the Graph API and upsert them.
+ *      b. Repair any missing or fallback author names.
+ *      c. Refresh the commentsCount on the post record.
+ *      d. If the post has autoReply=true, process every unreplied comment.
+ *   2. Emit SSE events so the frontend updates without a reload.
  *
- * When called from the scheduler, `processNewComment` is invoked for comments
- * that are ALREADY in the DB and already visible. Re-emitting `comment:new`
- * for them can cause duplicates or overwrites depending on render timing.
+ * Unlike the inbox scheduler, there is no 24-hour cutoff on comments:
+ * all unreplied non-spam comments receive AI replies regardless of age.
  *
- * THE FIX
- * ───────
- * `processPendingComments` now calls `processNewComment(id, { emitNew: false })`.
- * The AI reply will still emit `comment:replied` after a successful reply,
- * which is the only SSE event needed for pending comments (the comment is
- * already visible, only its reply status needs updating).
- *
- * `syncPostComments` still emits `comment:new` for TRULY NEW comments
- * (those not yet in the DB) — this is correct and desired.
+ * emitNew:false is passed to processNewComment for existing comments so the
+ * frontend does not receive duplicate comment:new events.
+ * comment:replied is still emitted after each successful AI reply.
  */
 
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
@@ -37,8 +32,23 @@ import { PostCommentAiService } from './post-comment-ai.service.js';
 
 const SCHEDULER_JOB = '__posts.sync.fallback__';
 const CRON_5MIN = '*/5 * * * *';
-const MAX_AI_PER_POST_CYCLE = 10;
-const FALLBACK_COMMENT_AUTHOR_NAME = 'Utilisateur Facebook';
+const MAX_AI_PER_POST = 20; // max AI replies per post per cycle
+const FALLBACK_AUTHOR = 'Utilisateur Facebook';
+
+interface SyncProfile {
+  id: string;
+  userId: string;
+  facebookConnection: {
+    pageId: string;
+    encryptedAccessToken: string;
+    tokenStatus: string;
+  } | null;
+  managedPosts: Array<{
+    id: string;
+    externalId: string;
+    autoReply: boolean;
+  }>;
+}
 
 @Injectable()
 export class PostsSyncSchedulerService implements OnModuleInit {
@@ -63,13 +73,15 @@ export class PostsSyncSchedulerService implements OnModuleInit {
     this.logger.log(`Posts fallback sync registered (cron: ${CRON_5MIN})`);
   }
 
-  // ─── Main loop ────────────────────────────────────────────────────────────
+  // ─── Main loop ──────────────────────────────────────────────────────────────
 
   private async runFallbackSync(): Promise<void> {
-    this.logger.debug('Running posts fallback sync cycle');
+    this.logger.debug('Posts fallback sync cycle starting');
     const profiles = await this.loadProfiles();
     await Promise.allSettled(profiles.map((p) => this.syncProfile(p)));
   }
+
+  // ─── Per-profile sync ───────────────────────────────────────────────────────
 
   private async syncProfile(profile: SyncProfile): Promise<void> {
     if (!profile.facebookConnection) return;
@@ -79,11 +91,9 @@ export class PostsSyncSchedulerService implements OnModuleInit {
       profile.facebookConnection.encryptedAccessToken,
     );
 
-    let totalNew = 0;
-
     for (const post of profile.managedPosts) {
       try {
-        // 1. Sync new comments from Facebook API
+        // 1. Sync comments from Facebook and update counts.
         const newCount = await this.syncPostComments(
           post.id,
           post.externalId,
@@ -91,46 +101,42 @@ export class PostsSyncSchedulerService implements OnModuleInit {
           profile.userId,
           token,
         );
-        totalNew += newCount;
 
         if (newCount > 0) {
-          // Update commentsCount in DB
           const updated = await this.prisma.facebookPost.update({
             where: { id: post.id },
             data: { commentsCount: { increment: newCount } },
             select: { commentsCount: true },
           });
-          // Emit post:updated so frontend cards refresh inline
           this.sseEmitter.postUpdated(profile.userId, post.id, {
             commentsCount: updated.commentsCount,
           });
         }
 
-        // 2. Fallback AI: process pending comments that weren't handled in real-time
-        //    Pass emitNew:false — these comments are already visible to the user
+        // 2. Also refresh the commentsCount from Graph API for accuracy.
+        await this.refreshCommentsCount(post.id, post.externalId, token);
+
+        // 3. Process ALL unreplied comments when autoReply is enabled.
         if (post.autoReply) {
           await this.processPendingComments(post.id);
         }
       } catch (err: unknown) {
         this.logger.warn(
-          `Sync failed for post=${post.id}: ` +
-            (err instanceof Error ? err.message : String(err)),
+          `Sync failed for post=${post.id}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
 
-    if (totalNew > 0) {
-      // Emit sync:completed so frontend reloads the active post's comments
-      this.sseEmitter.syncCompleted(profile.userId);
-      this.logger.log(
-        `Fallback sync: +${totalNew} new comments across ` +
-          `${profile.managedPosts.length} posts for profile=${profile.id}`,
-      );
-    }
+    this.sseEmitter.syncCompleted(profile.userId);
   }
 
-  // ─── Sync new comments from Facebook ────────────────────────────────────
+  // ─── Sync comments from Facebook ────────────────────────────────────────────
 
+  /**
+   * Fetches comments from the Graph API and upserts them.
+   * Resolves author names with best-effort Graph calls.
+   * Returns the count of genuinely NEW comments inserted.
+   */
   private async syncPostComments(
     postId: string,
     externalId: string,
@@ -143,60 +149,65 @@ export class PostsSyncSchedulerService implements OnModuleInit {
       fbComments = await this.graphClient.getPostComments(
         externalId,
         token,
-        25,
+        50,
       );
     } catch {
       return 0;
     }
 
-    let synced = 0;
+    let newCount = 0;
 
     for (const fc of fbComments) {
-      const exists = await this.prisma.postComment.findUnique({
-        where: { externalId: fc.id },
-        select: { id: true, authorId: true, authorName: true },
-      });
-
-      // Preserve author name; use a neutral fallback only when Facebook omits `from`.
-      let authorName = fc.from?.name?.trim() || null;
+      // Resolve author info with fallback chain.
       let authorId = fc.from?.id?.trim() || null;
+      let authorName = fc.from?.name?.trim() || null;
+
       if (!authorId || !authorName) {
         try {
           const full = await this.graphClient.getCommentById(fc.id, token);
           authorId = authorId ?? full.from?.id?.trim() ?? null;
           authorName = authorName ?? full.from?.name?.trim() ?? null;
         } catch {
-          // keep fallback flow below
+          /* keep null */
         }
       }
+
       if (!authorName && authorId) {
         try {
           authorName = await this.graphClient.getUserNameById(authorId, token);
         } catch {
-          // keep null fallback below
+          /* keep null */
         }
       }
 
-      const normalizedAuthorName =
-        (authorId && authorId === pageId ? await this.resolvePageName(postId) : null) ||
+      // Resolve page name for comments from the page itself.
+      const resolvedAuthorName =
+        (authorId && authorId === pageId
+          ? await this.resolvePageName(postId)
+          : null) ||
         authorName ||
-        (authorId ? `Compte ${authorId}` : FALLBACK_COMMENT_AUTHOR_NAME);
+        (authorId ? `Compte ${authorId}` : FALLBACK_AUTHOR);
+
       const pageReply = await this.findPageReply(fc.id, token, pageId);
 
-      if (exists) {
+      const existing = await this.prisma.postComment.findUnique({
+        where: { externalId: fc.id },
+        select: { id: true, authorId: true, authorName: true },
+      });
+
+      if (existing) {
+        // Update: repair fallback author names and sync reply status.
         await this.prisma.postComment.update({
-          where: { id: exists.id },
+          where: { id: existing.id },
           data: {
             message: fc.message,
             authorId:
-              exists.authorId === 'unknown' && authorId ? authorId : exists.authorId,
-            authorName:
-              (exists.authorName === 'Anonyme' || exists.authorName === 'Unknown') &&
-              normalizedAuthorName
-                ? normalizedAuthorName
-                : exists.authorName?.startsWith('Compte ')
-                  ? normalizedAuthorName
-                : exists.authorName,
+              existing.authorId === 'unknown' && authorId
+                ? authorId
+                : existing.authorId,
+            authorName: isFallbackName(existing.authorName)
+              ? resolvedAuthorName
+              : existing.authorName,
             ...(pageReply
               ? {
                   isReplied: true,
@@ -211,12 +222,13 @@ export class PostsSyncSchedulerService implements OnModuleInit {
         continue;
       }
 
+      // New comment not yet in DB.
       const created = await this.prisma.postComment.create({
         data: {
           postId,
           externalId: fc.id,
           authorId: authorId ?? 'unknown',
-          authorName: normalizedAuthorName,
+          authorName: resolvedAuthorName,
           authorAvatarUrl: null,
           message: fc.message,
           commentedAt: new Date(fc.created_time),
@@ -228,9 +240,9 @@ export class PostsSyncSchedulerService implements OnModuleInit {
         },
       });
 
-      synced++;
+      newCount++;
 
-      // Emit comment:new for TRULY new comments — correct and desired
+      // Emit comment:new for truly new comments.
       this.sseEmitter.commentAdded(userId, postId, {
         id: created.id,
         postId: created.postId,
@@ -247,41 +259,67 @@ export class PostsSyncSchedulerService implements OnModuleInit {
       });
     }
 
-    return synced;
+    return newCount;
   }
 
-  // ─── Fallback AI for pending comments ────────────────────────────────────
+  // ─── Refresh commentsCount from Graph API ────────────────────────────────────
 
   /**
-   * Process comments that weren't handled by the real-time webhook path.
-   *
-   * IMPORTANT: passes `emitNew: false` to processNewComment.
-   * These comments are already in the DB and already visible on the frontend.
-   * Re-emitting comment:new would cause duplicates or author name overwrites.
-   * Only the `comment:replied` event (emitted after AI replies) is needed here.
+   * Queries the Graph API for the accurate comment count and updates the DB.
+   * Prevents drift between the incremented local counter and the real count.
+   */
+  private async refreshCommentsCount(
+    postId: string,
+    externalId: string,
+    token: string,
+  ): Promise<void> {
+    try {
+      const result = await this.graphClient.get<{
+        comments?: { summary?: { total_count?: number } };
+      }>(`/${externalId}`, {
+        access_token: token,
+        fields: 'comments.summary(true)',
+      });
+
+      const count = result.comments?.summary?.total_count;
+      if (typeof count === 'number') {
+        await this.prisma.facebookPost.update({
+          where: { id: postId },
+          data: { commentsCount: count, lastSyncedAt: new Date() },
+        });
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  // ─── Process pending (unreplied) comments ────────────────────────────────────
+
+  /**
+   * Sends AI replies to ALL unreplied comments for the post.
+   * Uses emitNew:false because the comments are already in the DB and visible.
+   * The comment:replied event is emitted by processNewComment after each reply.
    */
   private async processPendingComments(postId: string): Promise<void> {
     const pending = await this.prisma.postComment.findMany({
       where: { postId, isReplied: false },
       orderBy: { commentedAt: 'asc' },
-      take: MAX_AI_PER_POST_CYCLE,
+      take: MAX_AI_PER_POST,
       select: { id: true },
     });
 
     for (const { id } of pending) {
-      // FIX: emitNew=false — comment is already visible, no need to re-announce it
       void this.commentAi
         .processNewComment(id, { emitNew: false })
-        .catch((err: unknown) => {
+        .catch((err: unknown) =>
           this.logger.warn(
-            `AI fallback failed for comment=${id}: ` +
-              (err instanceof Error ? err.message : String(err)),
-          );
-        });
+            `AI fallback failed for comment=${id}: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
     }
   }
 
-  // ─── Data loading ─────────────────────────────────────────────────────────
+  // ─── Data loading ────────────────────────────────────────────────────────────
 
   private async loadProfiles(): Promise<SyncProfile[]> {
     const rows = await this.prisma.businessProfile.findMany({
@@ -322,6 +360,8 @@ export class PostsSyncSchedulerService implements OnModuleInit {
     }));
   }
 
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+
   private async resolvePageName(postId: string): Promise<string | null> {
     const post = await this.prisma.facebookPost.findUnique({
       where: { id: postId },
@@ -356,19 +396,14 @@ export class PostsSyncSchedulerService implements OnModuleInit {
   }
 }
 
-// ─── Internal types ───────────────────────────────────────────────────────────
+// ─── Helper ─────────────────────────────────────────────────────────────────────
 
-interface SyncProfile {
-  id: string;
-  userId: string;
-  facebookConnection: {
-    pageId: string;
-    encryptedAccessToken: string;
-    tokenStatus: string;
-  } | null;
-  managedPosts: Array<{
-    id: string;
-    externalId: string;
-    autoReply: boolean;
-  }>;
+function isFallbackName(name: string | null | undefined): boolean {
+  if (!name) return true;
+  return (
+    name === 'Anonyme' ||
+    name === 'Unknown' ||
+    name === FALLBACK_AUTHOR ||
+    name.startsWith('Compte ')
+  );
 }

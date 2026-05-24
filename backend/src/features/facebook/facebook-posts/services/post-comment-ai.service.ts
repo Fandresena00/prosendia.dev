@@ -1,39 +1,19 @@
 /**
  * @file features/facebook-posts/services/post-comment-ai.service.ts
  *
- * FIX — `processNewComment` now accepts `{ emitNew: boolean }` options.
+ * Generates and sends AI replies to Facebook post comments.
  *
- * WHY THIS MATTERS
- * ────────────────
- * `processNewComment` is called from two paths:
+ * Entry point: processNewComment(commentId, options)
  *
- *   1. WEBHOOK path (via pg-boss queue worker)
- *      A comment just arrived via Facebook webhook — it's truly new.
- *      → `emitNew: true` (default) — emit `comment:new` SSE immediately
- *        so the frontend sees the comment before AI replies.
+ * Called from two paths:
+ *   - Webhook path (emitNew: true, default): comment just arrived via webhook.
+ *     Emits comment:new SSE before processing so the frontend sees it immediately.
+ *   - Scheduler fallback (emitNew: false): comment already in DB and visible.
+ *     Skips comment:new, only emits comment:replied after AI replies.
  *
- *   2. SCHEDULER fallback path (`PostsSyncSchedulerService.processPendingComments`)
- *      The comment already exists in DB and is already visible on the frontend.
- *      Re-emitting `comment:new` caused duplicates and "Anonyme" author names
- *      because the SSE payload might arrive between two render cycles.
- *      → `emitNew: false` — skip `comment:new`, only emit `comment:replied`
- *        after the AI successfully replies.
- *
- * REAL-TIME FLOW (no manual refresh needed)
- * ──────────────────────────────────────────
- *   Webhook arrives
- *     └─ WebhookService creates PostComment in DB
- *     └─ Queues processNewComment job
- *         └─ processNewComment({ emitNew: true })
- *             ├─ Emits comment:new  → frontend prepends comment immediately
- *             ├─ AI generates reply
- *             ├─ Sends reply via Facebook API
- *             └─ Emits comment:replied → frontend updates comment inline
- *
- *   Scheduler (5-min fallback)
- *     └─ syncPostComments: new FB comments → creates in DB + emits comment:new
- *     └─ processPendingComments: pending comments → processNewComment({ emitNew: false })
- *         └─ AI replies → emits comment:replied → frontend updates inline
+ * AI gate: the post-level PostAiConfig.autoReply flag is the ONLY gate.
+ *   The global AiConfig.autoReply has no effect on post comments —
+ *   each post's AI is independently controlled via the "Add post" UI.
  */
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -57,10 +37,9 @@ type ModelConfig = { replyModelId: string; replyTemperature: number } | null;
 
 export interface ProcessCommentOptions {
   /**
-   * Whether to emit `comment:new` SSE before processing.
-   * Set to `false` when the comment already exists in the frontend
-   * (e.g. scheduler fallback path) to avoid duplicate/anonymous entries.
-   * Default: true (webhook path — comment is genuinely new).
+   * Whether to emit comment:new SSE before processing.
+   * True for webhook path (comment is genuinely new).
+   * False for scheduler fallback (comment already visible in the UI).
    */
   emitNew?: boolean;
 }
@@ -77,7 +56,7 @@ export class PostCommentAiService {
     private readonly sseEmitter: PostsEventEmitter,
   ) {}
 
-  // ─── Main entry ──────────────────────────────────────────────────────────
+  // ─── Main entry ────────────────────────────────────────────────────────────
 
   async processNewComment(
     commentId: string,
@@ -116,11 +95,13 @@ export class PostCommentAiService {
     const bp = post.businessProfile;
     const aiConfig = bp.aiConfig;
 
-    // Guards
-    if (!aiConfig?.autoReply || config?.autoReply === false) return;
+    // Gate: AI only runs when the POST-LEVEL autoReply is explicitly enabled.
+    // The global AiConfig.autoReply does not control post comment AI.
+    if (config?.autoReply !== true) return;
+
     if (comment.isReplied) return;
 
-    // Spam filter
+    // Spam filter — skip low-value comments.
     const spam = this.commentPrompts.scoreComment(comment.message);
     if (!spam.shouldReply) {
       this.logger.debug(
@@ -129,7 +110,7 @@ export class PostCommentAiService {
       return;
     }
 
-    // ── Emit comment:new (only for truly new comments from webhook path) ──────
+    // Emit comment:new only for the webhook path (genuinely new comment).
     if (emitNew) {
       this.sseEmitter.commentAdded(bp.userId, post.id, {
         id: comment.id,
@@ -147,7 +128,7 @@ export class PostCommentAiService {
       });
     }
 
-    // ── Build context ─────────────────────────────────────────────────────────
+    // Build prompt context.
     const commentLang: DetectedLanguage =
       (config?.replyLanguage as DetectedLanguage | null) ??
       this.commentPrompts.detectLanguage(comment.message);
@@ -156,12 +137,13 @@ export class PostCommentAiService {
       businessName: bp.name,
       businessType: bp.businessType,
       description: bp.description,
-      tone: config?.tone ?? aiConfig.tone ?? 'FRIENDLY',
-      responseStyle: config?.responseStyle ?? aiConfig.responseStyle ?? 'SHORT',
-      replyLanguage: config?.replyLanguage ?? aiConfig.replyLanguage ?? null,
-      systemPrompt: aiConfig.systemPrompt ?? null,
-      blockedKeywords: (aiConfig.blockedKeywords as string[]) ?? [],
-      allowedTopics: (aiConfig.allowedTopics as string[]) ?? [],
+      tone: config?.tone ?? aiConfig?.tone ?? 'FRIENDLY',
+      responseStyle:
+        config?.responseStyle ?? aiConfig?.responseStyle ?? 'SHORT',
+      replyLanguage: config?.replyLanguage ?? aiConfig?.replyLanguage ?? null,
+      systemPrompt: aiConfig?.systemPrompt ?? null,
+      blockedKeywords: (aiConfig?.blockedKeywords as string[]) ?? [],
+      allowedTopics: (aiConfig?.allowedTopics as string[]) ?? [],
     };
 
     const images: CommentReferenceImage[] = bp.chatResources.flatMap((r) =>
@@ -169,13 +151,12 @@ export class PostCommentAiService {
     );
 
     const postCaption = post.message ?? '';
-
-    // ── Public comment reply ──────────────────────────────────────────────────
     const publicMaxTokens = Math.min(
-      config?.maxReplyTokens ?? aiConfig.maxReplyTokens ?? 120,
+      config?.maxReplyTokens ?? aiConfig?.maxReplyTokens ?? 120,
       120,
     );
 
+    // Generate and send the public comment reply.
     const publicPrompt = this.commentPrompts.buildPublicCommentReplyPrompt(
       ctx,
       postCaption,
@@ -203,12 +184,10 @@ export class PostCommentAiService {
       publicReply,
       true,
     );
-
     if (!publicResult.success) return;
 
-    // ── Emit comment:replied — always (both webhook and scheduler paths) ──────
-    // This is the key event for real-time updates: the frontend updates the
-    // comment inline without any manual refresh.
+    // Emit comment:replied so the frontend updates the comment inline
+    // without a page refresh — this fires on both webhook and scheduler paths.
     this.sseEmitter.commentReplied(bp.userId, post.id, commentId, {
       content: publicReply,
       repliedByAi: true,
@@ -216,18 +195,19 @@ export class PostCommentAiService {
 
     this.logger.log(`AI replied to comment=${commentId}`);
 
-    // ── Private DM (optional) ─────────────────────────────────────────────────
+    // Optional private DM reply.
     const privateEnabled =
       (config as { privateReplyEnabled?: boolean } | null)
         ?.privateReplyEnabled ?? false;
 
     if (!privateEnabled) return;
 
-    const fixedTemplate = (
-      config as { privateReplyMessage?: string } | null
-    )?.privateReplyMessage?.trim();
+    const fixedTemplate =
+      (
+        config as { privateReplyMessage?: string } | null
+      )?.privateReplyMessage?.trim() ?? null;
 
-    let dmText: string | null = fixedTemplate ?? null;
+    let dmText: string | null = fixedTemplate;
 
     if (!dmText) {
       const dmPrompt = this.commentPrompts.buildPrivateDmReplyPrompt(
@@ -238,7 +218,6 @@ export class PostCommentAiService {
         images,
         commentLang,
       );
-
       dmText = await this.callModel(
         [
           { role: 'system', content: dmPrompt },
@@ -255,7 +234,7 @@ export class PostCommentAiService {
     }
   }
 
-  // ─── Model call with fallback ─────────────────────────────────────────────
+  // ─── Model call with fallback chain ────────────────────────────────────────
 
   private async callModel(
     messages: ChatMessage[],
@@ -265,7 +244,6 @@ export class PostCommentAiService {
     const primary = modelConfig?.replyModelId ?? REPLY_AI_MODEL.MODEL_ID;
     const temperature =
       modelConfig?.replyTemperature ?? REPLY_AI_MODEL.TEMPERATURE;
-
     const models = [
       primary,
       ...REPLY_AI_FALLBACK_MODELS.filter((m) => m !== primary),

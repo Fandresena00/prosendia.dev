@@ -1,42 +1,17 @@
 /**
  * @file features/inbox/services/inbox-sync-scheduler.service.ts
  *
- * Scheduled background service that keeps the local DB a faithful mirror
- * of Facebook's data.
+ * Background scheduler that keeps the local DB in sync with Facebook.
+ * Runs every 5 minutes across all active connections.
  *
- * WHY THIS IS NEEDED
- * ──────────────────
- * Webhooks are the primary real-time feed, but they can be missed:
- *   - Server was down during delivery (Facebook does NOT retry indefinitely)
- *   - Network timeout between Facebook and the server
- *   - Facebook rate-limits webhook deliveries under load
- *   - Webhook processing threw an error after Facebook already got the 200
- *
- * This scheduler is the reliability safety net: it queries the Facebook
- * Graph API directly and upserts everything it finds into the DB,
- * closing any gaps left by missed webhook events.
- *
- * SYNC SCOPE (per connection, every 5 minutes)
- * ────────────────────────────────────────────
- *   1. Refresh participant info (name, avatar) for all conversations
- *      active in the last 24 hours.
- *   2. Fetch the latest messages for those conversations.
- *   3. Emit SSE events for any net-new messages so the inbox UI
- *      updates instantly without waiting for the frontend poll.
- *
- * WHAT THIS GUARANTEES
- * ────────────────────
- *   - Maximum message gap: 5 minutes (scheduler interval)
- *   - Avatar/name staleness: 5 minutes
- *   - Message content accuracy: byte-for-byte from the Graph API
- *   - Timestamps: Facebook's createdAt, not the backend's receive time
- *
- * RATE LIMIT AWARENESS
- * ────────────────────
- *   - Only connections with VALID tokens are synced.
- *   - Only conversations active in the last 24 hours are synced (not all history).
- *   - A 200ms pause between connections avoids bursting the Graph API.
- *   - Errors are caught per connection so one failure doesn't abort the full pass.
+ * Responsibilities:
+ *   - Fetch the 15 most-recently-active conversations per connection.
+ *   - Insert any messages missed by the webhook (gap-fill safety net).
+ *   - Enqueue AI replies when the last message is from a client and
+ *     the conversation is in AI mode (real-time guard).
+ *   - Detect client messages that have been unanswered for more than
+ *     UNANSWERED_THRESHOLD_MS and re-enqueue the AI reply job (24h guard).
+ *   - Emit SSE events so the inbox UI updates without a page refresh.
  */
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -47,16 +22,23 @@ import { TokenEncryptionService } from '../../facebook/security/token-encryption
 import { AiQueueProducer } from '../../queue/producers/ai-queue.producer.js';
 import { InboxEventEmitter } from '../gateways/inbox-sse.gateway.js';
 
-/** Only sync conversations that had activity in this window. */
-const ACTIVE_CONVERSATION_WINDOW_MS = 24 * 60 * 60 * 1_000; // 24 hours
+/** Only look at conversations that had activity within this window per pass. */
+const ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1_000; // 24 h
 
-/** Maximum recent conversations to sync per connection per pass. */
+/** Maximum conversations synced per connection per cron tick. */
 const MAX_CONVERSATIONS_PER_PASS = 15;
 
-/** Maximum messages to fetch per conversation per pass. */
-const MESSAGES_PER_CONVERSATION_SYNC = 25;
+/** Messages fetched per conversation per cron tick. */
+const MESSAGES_PER_SYNC = 25;
 
-/** Pause between connections to avoid bursting the Graph API. */
+/**
+ * If a CLIENT message has not received an AI or PAGE reply within this
+ * duration, the scheduler re-enqueues the AI reply job.
+ * Catches cases where the initial AI reply job was lost (crash, queue overflow).
+ */
+const UNANSWERED_THRESHOLD_MS = 24 * 60 * 60 * 1_000; // 24 h
+
+/** Delay between consecutive Graph API calls to avoid burst-rate issues. */
 const INTER_CONNECTION_PAUSE_MS = 200;
 
 @Injectable()
@@ -71,123 +53,87 @@ export class InboxSyncSchedulerService {
     private readonly aiQueue: AiQueueProducer,
   ) {}
 
-  // ─── Scheduled entry point ────────────────────────────────────────────────
+  // ─── Cron entry point ─────────────────────────────────────────────────────
 
   @Cron(CronExpression.EVERY_5_MINUTES)
   async syncAllActiveConnections(): Promise<void> {
-    const activeConnections = await this.prisma.facebookConnection.findMany({
-      where: {
-        isActive: true,
-        tokenStatus: 'VALID',
-      },
-      include: {
-        businessProfile: { select: { userId: true } },
-      },
+    const connections = await this.prisma.facebookConnection.findMany({
+      where: { isActive: true, tokenStatus: 'VALID' },
+      include: { businessProfile: { select: { userId: true } } },
     });
 
-    if (activeConnections.length === 0) return;
+    if (connections.length === 0) return;
 
-    this.logger.debug(
-      `Background sync starting — ${activeConnections.length} active connection(s)`,
-    );
+    this.logger.debug(`Background sync — ${connections.length} connection(s)`);
 
     let synced = 0;
     let skipped = 0;
 
-    for (const connection of activeConnections) {
+    for (const conn of connections) {
       try {
-        const decryptedToken = this.encryption.decrypt(
-          connection.encryptedAccessToken,
-        );
+        const token = this.encryption.decrypt(conn.encryptedAccessToken);
         await this.syncOneConnection(
-          connection.id,
-          connection.pageId,
-          connection.businessProfileId,
-          connection.businessProfile.userId,
-          decryptedToken,
+          conn.pageId,
+          conn.businessProfileId,
+          conn.businessProfile.userId,
+          token,
         );
         synced++;
       } catch (err: unknown) {
         skipped++;
         this.logger.warn(
-          `Background sync failed for page=${connection.pageId}: ` +
-            `${err instanceof Error ? err.message : String(err)}`,
+          `Sync failed for page=${conn.pageId}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
 
-      // Avoid burst-rate against the Graph API
-      if (
-        activeConnections.indexOf(connection) <
-        activeConnections.length - 1
-      ) {
-        await new Promise((r) => setTimeout(r, INTER_CONNECTION_PAUSE_MS));
+      if (connections.indexOf(conn) < connections.length - 1) {
+        await sleep(INTER_CONNECTION_PAUSE_MS);
       }
     }
 
-    if (synced > 0 || skipped > 0) {
-      this.logger.debug(
-        `Background sync complete — synced: ${synced}, skipped: ${skipped}`,
-      );
-    }
+    this.logger.debug(
+      `Background sync done — synced: ${synced}, skipped: ${skipped}`,
+    );
   }
 
-  // ─── Sync one Facebook connection ─────────────────────────────────────────
+  // ─── Per-connection sync ───────────────────────────────────────────────────
 
   private async syncOneConnection(
-    connectionId: string,
     pageId: string,
     businessProfileId: string,
     userId: string,
-    decryptedToken: string,
+    token: string,
   ): Promise<void> {
-    // ── 1. Fetch recent conversations from Facebook ────────────────────────
     const fbConversations = await this.graphClient.getConversations(
       pageId,
-      decryptedToken,
+      token,
       MAX_CONVERSATIONS_PER_PASS,
     );
 
-    const activeWindow = new Date(Date.now() - ACTIVE_CONVERSATION_WINDOW_MS);
+    const activeWindow = new Date(Date.now() - ACTIVE_WINDOW_MS);
 
     for (const fbConv of fbConversations) {
-      const fbUpdatedAt = new Date(fbConv.updated_time);
+      if (new Date(fbConv.updated_time) < activeWindow) continue;
 
-      // Skip stale conversations (no activity in the window)
-      if (fbUpdatedAt < activeWindow) continue;
-
-      // Find or create the conversation record
-      const localConversation = await this.upsertConversationFromFacebook(
+      const localConv = await this.upsertConversation(
         fbConv,
         pageId,
         businessProfileId,
-        decryptedToken,
+        token,
       );
+      if (!localConv) continue;
 
-      if (!localConversation) continue;
-
-      // ── 2. Sync messages for this conversation ───────────────────────────
-      await this.syncMessagesForConversation(
-        localConversation.id,
-        fbConv.id,
-        pageId,
-        userId,
-        decryptedToken,
-      );
-
-      // Reliability guard (every 5 min):
-      // if AI mode is active and the latest message is from the client,
-      // ensure an AI reply job is queued so no customer message is missed.
-      await this.ensureAiReplyIfClientLast(
-        localConversation.id,
-        businessProfileId,
-        userId,
-      );
+      await this.syncMessages(localConv.id, fbConv.id, pageId, userId, token);
+      await this.ensureAiReply(localConv.id, businessProfileId, userId);
     }
+
+    // Separately: scan conversations with old unanswered client messages.
+    await this.recoverUnansweredConversations(businessProfileId, userId);
   }
 
-  // ─── Upsert conversation from Facebook data ───────────────────────────────
+  // ─── Upsert conversation from Facebook ────────────────────────────────────
 
-  private async upsertConversationFromFacebook(
+  private async upsertConversation(
     fbConv: {
       id: string;
       updated_time: string;
@@ -195,28 +141,16 @@ export class InboxSyncSchedulerService {
     },
     pageId: string,
     businessProfileId: string,
-    decryptedToken: string,
+    token: string,
   ) {
-    // Identify the client participant (not the page itself)
-    const clientParticipant = fbConv.participants?.data.find(
-      (p) => p.id !== pageId,
-    );
-    if (!clientParticipant) return null;
+    const client = fbConv.participants?.data.find((p) => p.id !== pageId);
+    if (!client) return null;
 
-    // Fetch fresh client profile (name + avatar) from the Graph API
-    const freshClientProfile = await this.fetchClientProfile(
-      clientParticipant.id,
-      pageId,
-      decryptedToken,
-    );
+    // Best-effort profile refresh (name + avatar).
+    const profile = await this.fetchClientProfile(client.id, token);
+    const displayName = profile?.name ?? client.name ?? null;
+    const normalizedAvatar = normalizeUrl(profile?.profile_pic ?? null);
 
-    const normalizedAvatarUrl = this.normalizeUrl(
-      freshClientProfile?.profile_pic ?? null,
-    );
-    const displayName =
-      freshClientProfile?.name ?? clientParticipant.name ?? null;
-
-    // Upsert conversation — Facebook's data wins over anything stored locally
     return this.prisma.conversation.upsert({
       where: {
         businessProfileId_externalId: {
@@ -227,221 +161,129 @@ export class InboxSyncSchedulerService {
       create: {
         businessProfileId,
         externalId: fbConv.id,
-        clientPsid: clientParticipant.id,
+        clientPsid: client.id,
         clientName: displayName,
-        clientAvatarUrl: normalizedAvatarUrl,
+        clientAvatarUrl: normalizedAvatar,
         lastMessageAt: new Date(fbConv.updated_time),
       },
       update: {
-        // Always refresh participant info from Facebook — source of truth
-        clientPsid: clientParticipant.id,
+        clientPsid: client.id,
         clientName: displayName ?? undefined,
-        clientAvatarUrl: normalizedAvatarUrl ?? undefined,
+        clientAvatarUrl: normalizedAvatar ?? undefined,
         lastMessageAt: new Date(fbConv.updated_time),
       },
     });
   }
 
-  // ─── Sync messages for one conversation ──────────────────────────────────
+  // ─── Sync messages for one conversation ───────────────────────────────────
 
-  private async syncMessagesForConversation(
-    localConversationId: string,
-    fbConversationId: string,
+  private async syncMessages(
+    localConvId: string,
+    fbConvId: string,
     pageId: string,
     userId: string,
-    decryptedToken: string,
+    token: string,
   ): Promise<void> {
-    // Fetch the latest messages from Facebook's Graph API
     const fbMessages = await this.graphClient.getConversationMessages(
-      fbConversationId,
-      decryptedToken,
-      MESSAGES_PER_CONVERSATION_SYNC,
+      fbConvId,
+      token,
+      MESSAGES_PER_SYNC,
     );
 
-    let newMessagesFound = 0;
-
     for (const fbMsg of fbMessages) {
-      const senderRole = fbMsg.from?.id === pageId ? 'PAGE' : 'CLIENT';
-      const firstAttachment = fbMsg.attachments?.data?.[0];
-      const inferredImageUrl =
-        firstAttachment?.image_data?.url ??
-        (firstAttachment?.mime_type?.startsWith('image/')
-          ? firstAttachment.file_url ?? null
-          : null);
-      const inferredFileUrl =
-        !inferredImageUrl && firstAttachment?.file_url
-          ? firstAttachment.file_url
-          : null;
-
-      // Use Facebook's timestamp (not the backend receive time)
-      const fbCreatedAt = new Date(fbMsg.created_time ?? Date.now());
-
-      const existingMessage = await this.prisma.message.findUnique({
+      const existing = await this.prisma.message.findUnique({
         where: { externalId: fbMsg.id },
       });
 
-      if (!existingMessage) {
-        // New message missed by webhook → insert it
-        const savedMessage = await this.prisma.message.create({
+      const senderRole = fbMsg.from?.id === pageId ? 'PAGE' : 'CLIENT';
+      const fbCreatedAt = new Date(fbMsg.created_time ?? Date.now());
+      const firstAttachment = fbMsg.attachments?.data?.[0];
+      const imageUrl =
+        firstAttachment?.image_data?.url ??
+        (firstAttachment?.mime_type?.startsWith('image/')
+          ? (firstAttachment.file_url ?? null)
+          : null);
+      const fileUrl =
+        !imageUrl && firstAttachment?.file_url
+          ? firstAttachment.file_url
+          : null;
+
+      if (!existing) {
+        // New message missed by the webhook → insert and emit SSE.
+        const saved = await this.prisma.message.create({
           data: {
-            conversationId: localConversationId,
+            conversationId: localConvId,
             externalId: fbMsg.id,
             sender: senderRole,
-            content: fbMsg.message ? normalizeMessageText(fbMsg.message) : null,
-            imageUrl: inferredImageUrl,
-            fileUrl: inferredFileUrl,
+            content: fbMsg.message ? normalizeText(fbMsg.message) : null,
+            imageUrl,
+            fileUrl,
             status: 'DELIVERED',
-            // Use Facebook's createdAt — not now()
             createdAt: fbCreatedAt,
           },
         });
 
-        newMessagesFound++;
-
-        // Emit SSE so the frontend updates immediately without waiting for the poll
-        const conversation = await this.prisma.conversation.findUnique({
-          where: { id: localConversationId },
-          include: { businessProfile: { select: { userId: true } } },
+        this.sseEmitter.newMessage(userId, {
+          conversationId: localConvId,
+          message: {
+            id: saved.id,
+            conversationId: localConvId,
+            sender: senderRole,
+            content: saved.content,
+            imageUrl: saved.imageUrl,
+            fileUrl: saved.fileUrl,
+            referenceImageUrls: [],
+            status: saved.status,
+            externalId: fbMsg.id,
+            createdAt: fbCreatedAt,
+          },
         });
 
-        if (conversation) {
-          this.sseEmitter.newMessage(conversation.businessProfile.userId, {
-            conversationId: localConversationId,
-            message: {
-              id: savedMessage.id,
-              conversationId: localConversationId,
-              sender: senderRole,
-              content: savedMessage.content,
-              imageUrl: savedMessage.imageUrl,
-              fileUrl: savedMessage.fileUrl,
-              referenceImageUrls: [],
-              status: savedMessage.status,
-              externalId: fbMsg.id,
-              createdAt: fbCreatedAt,
-            },
-          });
+        const preview =
+          saved.content?.trim() ||
+          (imageUrl ? '📷 Photo' : fileUrl ? '📎 Fichier' : null);
 
-          // Update conversation lastMessage
-          await this.prisma.conversation.update({
-            where: { id: localConversationId },
-            data: {
-              lastMessage: fbMsg.message
-                ? normalizeMessageText(fbMsg.message)
-                : inferredImageUrl
-                  ? '📷 Photo'
-                  : inferredFileUrl
-                    ? '📎 Fichier'
-                    : null,
-              lastMessageAt: fbCreatedAt,
-            },
-          });
-
-          this.sseEmitter.conversationUpdated(
-            conversation.businessProfile.userId,
-            {
-              conversation: {
-                id: conversation.id,
-                businessProfileId: conversation.businessProfileId,
-                externalId: conversation.externalId,
-                clientPsid: conversation.clientPsid,
-                clientName: conversation.clientName,
-                clientAvatarUrl: conversation.clientAvatarUrl,
-                lastMessage: fbMsg.message
-                  ? normalizeMessageText(fbMsg.message)
-                  : inferredImageUrl
-                    ? '📷 Photo'
-                    : inferredFileUrl
-                      ? '📎 Fichier'
-                      : null,
-                lastMessageAt: fbCreatedAt,
-                handoverStatus: conversation.handoverStatus,
-                unreadCount: senderRole === 'CLIENT' ? 1 : 0,
-                updatedAt: new Date(),
-              },
-            },
-          );
-        }
-      } else if (existingMessage.content !== fbMsg.message && fbMsg.message) {
-        // Message content changed (edit) — update to match Facebook
+        await this.prisma.conversation.update({
+          where: { id: localConvId },
+          data: { lastMessage: preview, lastMessageAt: fbCreatedAt },
+        });
+      } else if (
+        fbMsg.message &&
+        existing.content !== normalizeText(fbMsg.message)
+      ) {
+        // Message was edited on Facebook — keep DB in sync.
         await this.prisma.message.update({
-          where: { id: existingMessage.id },
-          data: { content: normalizeMessageText(fbMsg.message) },
+          where: { id: existing.id },
+          data: { content: normalizeText(fbMsg.message) },
         });
       }
     }
-
-    if (newMessagesFound > 0) {
-      this.logger.log(
-        `Background sync found ${newMessagesFound} missed message(s) ` +
-          `for conversation=${localConversationId}`,
-      );
-    }
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
-
-  private async fetchClientProfile(
-    psid: string,
-    pageId: string,
-    decryptedToken: string,
-  ): Promise<{ name: string | null; profile_pic: string | null } | null> {
-    try {
-      const profile = await this.graphClient.getMessengerUserProfile(
-        psid,
-        decryptedToken,
-      );
-      const name =
-        (profile.name ??
-          [profile.first_name, profile.last_name]
-            .filter(Boolean)
-            .join(' ')
-            .trim()) ||
-        null;
-      return { name: name || null, profile_pic: profile.profile_pic ?? null };
-    } catch {
-      return null;
-    }
-  }
+  // ─── AI reply guard (real-time) ────────────────────────────────────────────
 
   /**
-   * Ensures avatar URLs are always HTTPS.
-   * Facebook occasionally returns http:// URLs for CDN assets.
+   * If the latest message in the conversation is from the CLIENT and the
+   * conversation is in AI mode, enqueue an AI reply.
+   * The producer deduplicates jobs via singletonKey — safe to call repeatedly.
    */
-  private normalizeUrl(rawUrl: string | null): string | null {
-    if (!rawUrl) return null;
-    if (rawUrl.startsWith('http://')) return `https://${rawUrl.slice(7)}`;
-    return rawUrl;
-  }
-
-  private async ensureAiReplyIfClientLast(
+  private async ensureAiReply(
     conversationId: string,
     businessProfileId: string,
     userId: string,
   ): Promise<void> {
-    const conversation = await this.prisma.conversation.findUnique({
+    const conv = await this.prisma.conversation.findUnique({
       where: { id: conversationId },
-      select: {
-        id: true,
-        handoverStatus: true,
-      },
+      select: { handoverStatus: true },
     });
-    if (!conversation) return;
+    if (!conv || conv.handoverStatus !== 'AI') return;
 
-    // Skip human handover / manual mode conversations.
-    if (conversation.handoverStatus !== 'AI') return;
-
-    const lastMessage = await this.prisma.message.findFirst({
+    const last = await this.prisma.message.findFirst({
       where: { conversationId },
       orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        sender: true,
-        content: true,
-        createdAt: true,
-      },
+      select: { id: true, sender: true, content: true, createdAt: true },
     });
-    if (!lastMessage) return;
-    if (lastMessage.sender !== 'CLIENT') return;
+    if (!last || last.sender !== 'CLIENT') return;
 
     await this.prisma.conversation.update({
       where: { id: conversationId },
@@ -450,20 +292,103 @@ export class InboxSyncSchedulerService {
 
     await this.aiQueue.enqueueAiReply({
       conversationId,
-      inboundMessageId: lastMessage.id,
+      inboundMessageId: last.id,
       businessProfileId,
       userId,
-      inboundText: lastMessage.content ?? undefined,
-      inboundCreatedAt: lastMessage.createdAt.toISOString(),
+      inboundText: last.content ?? undefined,
+      inboundCreatedAt: last.createdAt.toISOString(),
     });
+  }
+
+  // ─── 24-hour unanswered message recovery ──────────────────────────────────
+
+  /**
+   * Finds AI-mode conversations where the last CLIENT message is older than
+   * UNANSWERED_THRESHOLD_MS and has had no PAGE or AI reply since.
+   * Re-enqueues the AI reply so no customer message is permanently missed.
+   */
+  private async recoverUnansweredConversations(
+    businessProfileId: string,
+    userId: string,
+  ): Promise<void> {
+    const threshold = new Date(Date.now() - UNANSWERED_THRESHOLD_MS);
+
+    const conversations = await this.prisma.conversation.findMany({
+      where: {
+        businessProfileId,
+        handoverStatus: 'AI',
+        needsAiReply: true,
+      },
+      select: { id: true },
+    });
+
+    for (const { id } of conversations) {
+      const lastMsg = await this.prisma.message.findFirst({
+        where: { conversationId: id },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, sender: true, content: true, createdAt: true },
+      });
+
+      // Only act when the LAST message is from the CLIENT and is older than the threshold.
+      if (
+        !lastMsg ||
+        lastMsg.sender !== 'CLIENT' ||
+        lastMsg.createdAt > threshold
+      ) {
+        continue;
+      }
+
+      this.logger.warn(
+        `Unanswered client message detected in conv=${id} ` +
+          `(age: ${Math.round((Date.now() - lastMsg.createdAt.getTime()) / 3_600_000)}h) — re-enqueuing AI reply`,
+      );
+
+      await this.aiQueue.enqueueAiReply({
+        conversationId: id,
+        inboundMessageId: lastMsg.id,
+        businessProfileId,
+        userId,
+        inboundText: lastMsg.content ?? undefined,
+        inboundCreatedAt: lastMsg.createdAt.toISOString(),
+      });
+    }
+  }
+
+  // ─── Helpers ──────────────────────────────────────────────────────────────
+
+  private async fetchClientProfile(
+    psid: string,
+    token: string,
+  ): Promise<{ name: string | null; profile_pic: string | null } | null> {
+    try {
+      const p = await this.graphClient.getMessengerUserProfile(psid, token);
+      const name =
+        (p.name ??
+          [p.first_name, p.last_name].filter(Boolean).join(' ').trim()) ||
+        null;
+      return { name, profile_pic: p.profile_pic ?? null };
+    } catch {
+      return null;
+    }
   }
 }
 
-function normalizeMessageText(input: string): string {
+// ─── Module-level helpers ──────────────────────────────────────────────────────
+
+function normalizeText(input: string): string {
   return input
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .replace(/\s-\s+/g, '\n- ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function normalizeUrl(url: string | null): string | null {
+  if (!url) return null;
+  return url.startsWith('http://') ? `https://${url.slice(7)}` : url;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
