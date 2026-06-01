@@ -19,12 +19,8 @@ import {
   Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle,
 } from "@/components/ui/empty";
 
-interface InboxPageProps {
-  userId?: string;
-}
-
-export function InboxPage({ userId }: InboxPageProps) {
-  const inbox = useInbox(userId);
+export function InboxPage() {
+  const inbox = useInbox();
 
   // ── Empty state: no Facebook page connected ────────────────────────────────
   if (!inbox.loadingConvs && !inbox.isInitialSyncing && inbox.accounts.length === 0) {

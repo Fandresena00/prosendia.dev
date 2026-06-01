@@ -101,6 +101,43 @@ export function usePostsComments() {
   const selectedPostRef = useRef<ApiPost | null>(null);
   useEffect(() => { selectedPostRef.current = selectedPost; }, [selectedPost]);
 
+  // ─── Load comments ─────────────────────────────────────────────────────────
+
+  const loadComments = useCallback(async (
+    postId: string,
+    filter: CommentFilter = "all",
+    search = "",
+    page   = 1,
+  ) => {
+    setLoadingComments(true);
+    try {
+      const res = await getComments(postId, page, COMMENT_PAGE_SIZE, filter, search);
+      if (page === 1) {
+        setComments(res.data);
+      } else {
+        setComments((prev) => [...prev, ...res.data]);
+      }
+      setCommentTotal(res.pagination.total);
+      setCommentPage(page);
+    } catch {
+      toast.error("Impossible de charger les commentaires.");
+    } finally {
+      setLoadingComments(false);
+    }
+  }, []);
+
+  // ─── Select post ───────────────────────────────────────────────────────────
+
+  const selectPost = useCallback((post: ApiPost) => {
+    setSelectedPost(post);
+    setCommentFilter("all");
+    setCommentSearch("");
+    setCommentPage(1);
+    setActiveTab("comments");
+    setPostConfig(null);
+    loadComments(post.id, "all", "", 1);
+  }, [loadComments]);
+
   // ─── AI typing helpers ────────────────────────────────────────────────────
 
   const markAiTyping = useCallback((commentId: string) => {
@@ -203,43 +240,6 @@ export function usePostsComments() {
       .catch(() => toast.error("Impossible de charger les posts."))
       .finally(() => setLoadingPosts(false));
   }, [activeKey, selectPost]);
-
-  // ─── Load comments ─────────────────────────────────────────────────────────
-
-  const loadComments = useCallback(async (
-    postId: string,
-    filter: CommentFilter = "all",
-    search = "",
-    page   = 1,
-  ) => {
-    setLoadingComments(true);
-    try {
-      const res = await getComments(postId, page, COMMENT_PAGE_SIZE, filter, search);
-      if (page === 1) {
-        setComments(res.data);
-      } else {
-        setComments((prev) => [...prev, ...res.data]);
-      }
-      setCommentTotal(res.pagination.total);
-      setCommentPage(page);
-    } catch {
-      toast.error("Impossible de charger les commentaires.");
-    } finally {
-      setLoadingComments(false);
-    }
-  }, []);
-
-  // ─── Select post ───────────────────────────────────────────────────────────
-
-  const selectPost = useCallback((post: ApiPost) => {
-    setSelectedPost(post);
-    setCommentFilter("all");
-    setCommentSearch("");
-    setCommentPage(1);
-    setActiveTab("comments");
-    setPostConfig(null);
-    loadComments(post.id, "all", "", 1);
-  }, [loadComments]);
 
   // ─── Load config when tab switches to config ───────────────────────────────
 
