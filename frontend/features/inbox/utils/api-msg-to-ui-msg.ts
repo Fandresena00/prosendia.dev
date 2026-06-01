@@ -43,6 +43,35 @@ function getUrlExtension(url: string): string {
   }
 }
 
+export function messageApiToPreview(m: MessageApiResponse): string {
+  const content = m.content?.trim();
+  if (content) return content;
+
+  if (m.referenceImageUrls?.length > 0 || m.imageUrl) return 'Photo';
+
+  if (m.fileUrl) {
+    const ext = getUrlExtension(m.fileUrl);
+    if (IMAGE_EXTENSIONS.has(ext)) return 'Photo';
+    if (VIDEO_EXTENSIONS.has(ext)) return 'Video';
+    if (AUDIO_EXTENSIONS.has(ext)) return 'Audio';
+    return 'Fichier';
+  }
+
+  return '';
+}
+
+export function msgToPreview(m: Msg): string {
+  const content = m.content?.trim();
+  if (content) return content;
+
+  if (m.kind === 'photos') return 'Photo';
+  if (m.kind === 'video') return 'Video';
+  if (m.kind === 'audio') return 'Audio';
+  if (m.kind === 'file') return m.file?.name || 'Fichier';
+
+  return '';
+}
+
 export function formatMessageTime(isoDate: string): string {
   return new Date(isoDate).toLocaleTimeString('fr-FR', {
     hour:   '2-digit',

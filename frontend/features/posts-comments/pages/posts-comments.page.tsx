@@ -34,9 +34,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
+  IconBrandFacebook,
   IconPlus,
   IconRefresh,
   IconSearch,
+  IconSparkles,
+  IconTrash,
 } from "@tabler/icons-react";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -83,19 +86,47 @@ export function PostsCommentsPage() {
 
       {/* ── Delete confirmation dialog ── */}
       <AlertDialog open={!!pc.confirmDeleteId} onOpenChange={(o) => !o && pc.cancelDeletePost()}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Retirer ce post ?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Ce post sera retiré de la gestion VendeoAI. Sa configuration IA et ses
-              commentaires seront supprimés. Le post Facebook original n&apos;est pas affecté.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={pc.cancelDeletePost}>Annuler</AlertDialogCancel>
+        <AlertDialogContent className="max-w-md rounded-2xl border-border/60 p-0 overflow-hidden">
+          <div className="border-b border-border/40 px-6 py-5">
+            <AlertDialogHeader className="space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                  <IconTrash className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <AlertDialogTitle className="text-base font-bold tracking-tight">
+                    Retirer ce post de la gestion ?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription className="mt-1.5 text-xs leading-relaxed">
+                    VendeoAI n&apos;automatisera plus les réponses pour cette publication.
+                    La configuration IA et les commentaires synchronisés liés à ce post seront retirés de l&apos;interface.
+                  </AlertDialogDescription>
+                </div>
+              </div>
+            </AlertDialogHeader>
+          </div>
+
+          <div className="px-6 py-4">
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3.5 py-2.5">
+              <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                Le post original reste intact sur Facebook.
+              </p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                Cette action retire seulement le suivi et l&apos;automatisation dans votre espace.
+              </p>
+            </div>
+          </div>
+
+          <AlertDialogFooter className="border-t border-border/40 bg-secondary/20 px-6 py-4 sm:justify-end">
+            <AlertDialogCancel
+              onClick={pc.cancelDeletePost}
+              className="h-9 rounded-full px-4 text-xs"
+            >
+              Garder le post
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={pc.confirmDeletePost}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="h-9 rounded-full bg-destructive px-4 text-xs font-semibold text-destructive-foreground hover:bg-destructive/90"
             >
               Retirer
             </AlertDialogAction>
@@ -133,11 +164,11 @@ function PostsListPanel({ pc }: { pc: ReturnType<typeof usePostsComments> }) {
           <h2 className="text-sm font-bold tracking-tight">Posts gérés</h2>
           <Button
             size="sm"
-            className="h-7 gap-1 px-2.5 text-xs"
+            className="h-9 gap-1.5 rounded-full px-3 text-xs font-semibold bg-[#1877F2] hover:bg-[#166FE5]"
             onClick={pc.openAddDialog}
           >
-            <IconPlus className="h-3.5 w-3.5" />
-            Ajouter
+            <IconPlus className="h-4 w-4" />
+            Ajouter un post
           </Button>
         </div>
 
@@ -157,12 +188,12 @@ function PostsListPanel({ pc }: { pc: ReturnType<typeof usePostsComments> }) {
 
         {pc.posts.length > 0 && (
           <div className="relative">
-            <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <IconSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <Input
               placeholder="Rechercher un post…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 h-8 text-xs bg-secondary/40 border-0 rounded-full focus-visible:ring-1 focus-visible:ring-primary/50"
+              className="h-10 rounded-full border-0 bg-secondary/45 pl-10 text-sm focus-visible:ring-1 focus-visible:ring-primary/50"
             />
           </div>
         )}
@@ -170,16 +201,16 @@ function PostsListPanel({ pc }: { pc: ReturnType<typeof usePostsComments> }) {
 
       {/* List */}
       <ScrollArea className="flex-1 min-h-0">
-        <div className="p-2 space-y-1.5">
+        <div className="p-2.5 space-y-3">
           {pc.loadingPosts ? (
             Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-24 rounded-xl" />
+              <Skeleton key={i} className="h-56 rounded-lg" />
             ))
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-12 text-center px-4">
               <p className="text-xs text-muted-foreground">
                 {pc.posts.length === 0
-                  ? "Aucun post géré. Cliquez sur « Ajouter »."
+                  ? "Aucun post géré. Ajoutez une publication Facebook pour suivre ses commentaires."
                   : "Aucun résultat."}
               </p>
             </div>
@@ -280,7 +311,7 @@ function CommentsPanel({ pc }: { pc: ReturnType<typeof usePostsComments> }) {
 
       {/* Comments list */}
       <ScrollArea className="flex-1 min-h-0">
-        <div className="px-4 py-4 space-y-4 max-w-2xl mx-auto">
+        <div className="w-full max-w-3xl px-4 py-4 space-y-4 lg:px-6">
           {pc.loadingComments && pc.comments.length === 0 ? (
             Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="flex gap-2.5">
@@ -410,39 +441,64 @@ function AddPostDialog({
   onAdd:     (post: FbFeedPost) => Promise<void>;
 }) {
   const [adding, setAdding] = useState<string | null>(null);
+  const [selected, setSelected] = useState<FbFeedPost | null>(null);
 
-  const handleAdd = async (post: FbFeedPost) => {
-    setAdding(post.externalId);
-    await onAdd(post).finally(() => setAdding(null));
+  const handleClose = () => {
+    if (adding) return;
+    setSelected(null);
+    onClose();
+  };
+
+  const handleAdd = async () => {
+    if (!selected || selected.alreadyAdded) return;
+    setAdding(selected.externalId);
+    await onAdd(selected).finally(() => {
+      setAdding(null);
+      setSelected(null);
+    });
   };
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="w-full max-w-3xl bg-background rounded-2xl border border-border/60 shadow-2xl flex flex-col max-h-[85vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm sm:p-5">
+      <div className="flex h-[min(90vh,920px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border/60 bg-background shadow-2xl">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-border/40 shrink-0 flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-bold">Ajouter un post à gérer</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Sélectionnez un post de votre page pour activer la gestion des commentaires.
-            </p>
+        <div className="shrink-0 border-b border-border/40 px-4 py-4 sm:px-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1877F2]/10">
+                  <IconBrandFacebook className="h-5 w-5 text-[#1877F2]" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-base font-bold tracking-tight">Ajouter un post à gérer</h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Choisissez une publication Facebook dans votre feed.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={handleClose}
+              disabled={!!adding}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-50"
+              aria-label="Fermer"
+            >
+              ×
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:bg-secondary transition-colors"
-          >
-            ✕
-          </button>
+          <p className="mt-3 text-xs text-muted-foreground">
+              Sélectionnez un post de votre page pour activer la gestion des commentaires.
+          </p>
         </div>
 
-        {/* Feed grid */}
-        <ScrollArea className="flex-1 min-h-0 p-5">
+        {/* Feed list */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
           {loading ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <Skeleton key={i} className="h-44 rounded-xl" />
+            <div className="mx-auto max-w-2xl space-y-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-80 rounded-xl" />
               ))}
             </div>
           ) : feedPosts.length === 0 ? (
@@ -450,23 +506,45 @@ function AddPostDialog({
               Aucun post trouvé sur cette page.
             </p>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="mx-auto max-w-2xl space-y-4">
               {feedPosts.map((post) => (
                 <FeedPostCard
                   key={post.externalId}
                   post={post}
-                  adding={adding === post.externalId}
-                  onAdd={() => handleAdd(post)}
+                  selected={selected?.externalId === post.externalId}
+                  onSelect={() => {
+                    if (!post.alreadyAdded && !adding) setSelected(post);
+                  }}
                 />
               ))}
             </div>
           )}
-        </ScrollArea>
+        </div>
 
-        <div className="px-6 py-4 border-t border-border/40 shrink-0 flex justify-end">
-          <Button variant="outline" className="h-8 text-xs" onClick={onClose}>
+        <div className="shrink-0 border-t border-border/40 bg-background/95 px-4 py-3 sm:px-6">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">
+              {selected && !selected.alreadyAdded
+                ? "Post sélectionné. Vous pouvez maintenant l’ajouter à la gestion."
+                : "Sélectionnez une publication dans la liste."}
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="outline" className="h-9 px-4 text-xs" onClick={handleClose} disabled={!!adding}>
             Fermer
           </Button>
+              <Button
+                className="h-9 gap-2 rounded-full bg-[#1877F2] px-4 text-xs font-semibold hover:bg-[#166FE5]"
+                disabled={!selected || selected.alreadyAdded || !!adding}
+                onClick={handleAdd}
+              >
+                {adding ? (
+                  <><span className="h-3.5 w-3.5 rounded-full border-2 border-transparent border-t-current animate-spin" />Ajout…</>
+                ) : (
+                  <><IconSparkles className="h-3.5 w-3.5" />Ajouter le post</>
+                )}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -474,64 +552,88 @@ function AddPostDialog({
 }
 
 function FeedPostCard({
-  post, adding, onAdd,
+  post, selected, onSelect,
 }: {
   post:   FbFeedPost;
-  adding: boolean;
-  onAdd:  () => void;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   const [imgError, setImgError] = useState(false);
+  const timeAgo = formatDistanceToNow(new Date(post.publishedAt), {
+    addSuffix: true,
+    locale: fr,
+  });
 
   return (
-    <div className={`relative rounded-xl border overflow-hidden flex flex-col transition-all ${
+    <button
+      type="button"
+      disabled={post.alreadyAdded}
+      onClick={onSelect}
+      className={`relative w-full overflow-hidden rounded-xl border bg-card text-left transition-all ${
       post.alreadyAdded
-        ? "border-emerald-500/30 bg-emerald-500/5 opacity-70"
-        : "border-border/40 bg-card hover:border-primary/30 hover:shadow-sm cursor-pointer"
+        ? "cursor-not-allowed border-emerald-500/30 bg-emerald-500/5 opacity-75"
+        : selected
+          ? "border-[#1877F2] shadow-[0_0_0_2px_rgba(24,119,242,.16)]"
+          : "border-border/50 hover:border-primary/35 hover:shadow-md"
     }`}>
-      {/* Image */}
+      <div className="flex items-center gap-3 px-4 pt-4">
+        <div className="h-10 w-10 rounded-full bg-[#1877F2]/10 flex items-center justify-center shrink-0">
+          <IconBrandFacebook className="h-5 w-5 text-[#1877F2]" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold leading-tight">Publication Facebook</p>
+          <p className="text-[11px] text-muted-foreground">{timeAgo}</p>
+        </div>
+        {post.alreadyAdded && (
+          <Badge variant="secondary" className="h-6 bg-emerald-500/10 text-emerald-700 border-emerald-500/20">
+            Déjà ajouté
+          </Badge>
+        )}
+        {selected && !post.alreadyAdded && (
+          <Badge className="h-6 bg-[#1877F2] text-white hover:bg-[#1877F2]">
+            Sélectionné
+          </Badge>
+        )}
+      </div>
+
+      <div className="px-4 py-3">
+        <p className="text-[14px] leading-relaxed text-foreground">
+          {post.message ?? <span className="italic text-muted-foreground">Pas de légende</span>}
+        </p>
+      </div>
+
       {post.imageUrl && !imgError ? (
-        <div className="relative h-28 bg-secondary/40">
+        <div className="relative aspect-[1.7/1] w-full bg-secondary/40">
           <Image
-            src={post.imageUrl} alt="" fill sizes="200px"
+            src={post.imageUrl} alt="" fill sizes="672px"
             className="object-cover" unoptimized
             onError={() => setImgError(true)}
           />
         </div>
-      ) : (
-        <div className="h-20 bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center">
-          <span className="text-3xl">📄</span>
-        </div>
-      )}
+      ) : null}
 
-      {/* Content */}
-      <div className="p-3 flex flex-col gap-2 flex-1">
-        <p className="text-xs text-foreground line-clamp-2 flex-1 leading-snug">
-          {post.message ?? <span className="italic text-muted-foreground">Pas de légende</span>}
-        </p>
-
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-          <span>👍 {post.reactionsCount}</span>
-          <span>💬 {post.commentsCount}</span>
+      <div className="px-4 py-3">
+        <div className="flex items-center justify-between border-b border-border/40 pb-2 text-[12px] text-muted-foreground">
+          <span>{post.reactionsCount} réaction{post.reactionsCount > 1 ? "s" : ""}</span>
+          <span>{post.commentsCount} commentaire{post.commentsCount > 1 ? "s" : ""}</span>
         </div>
 
-        {post.alreadyAdded ? (
-          <Badge variant="secondary" className="text-[10px] h-5 bg-emerald-500/10 text-emerald-700 border-emerald-500/20 w-fit">
-            Déjà ajouté
-          </Badge>
-        ) : (
-          <Button
-            size="sm" className="h-7 text-xs w-full gap-1"
-            disabled={adding}
-            onClick={onAdd}
-          >
-            {adding ? (
-              <><span className="h-3 w-3 rounded-full border-2 border-transparent border-t-current animate-spin" />Ajout…</>
-            ) : (
-              <><IconPlus className="h-3 w-3" />Gérer ce post</>
-            )}
-          </Button>
-        )}
+        <div className="pt-3">
+          {post.alreadyAdded ? (
+            <div className="flex h-10 items-center justify-center rounded-lg bg-emerald-500/10 text-sm font-semibold text-emerald-700">
+              Ce post est déjà géré
+            </div>
+          ) : (
+            <div className={`flex h-10 items-center justify-center rounded-lg text-sm font-semibold transition-colors ${
+              selected
+                ? "bg-[#1877F2]/10 text-[#1877F2]"
+                : "bg-secondary/60 text-muted-foreground"
+            }`}>
+              {selected ? "Post sélectionné" : "Cliquer pour sélectionner"}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </button>
   );
 }

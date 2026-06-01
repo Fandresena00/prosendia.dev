@@ -102,7 +102,9 @@ export function InboxPage() {
         onOpenSettings={() => inbox.setSettingsOpen(true)}
         compactMode={inbox.uiPrefs.compactMode}
         className={
-          inbox.showList ? "w-full sm:w-[320px]" : "hidden sm:flex sm:w-[320px]"
+          inbox.showList
+            ? "mx-auto w-full max-w-[430px] sm:mx-0 sm:w-[340px] sm:max-w-[340px] sm:basis-[340px] xl:w-[360px] xl:max-w-[360px] xl:basis-[360px]"
+            : "hidden sm:flex sm:w-[340px] sm:max-w-[340px] sm:basis-[340px] xl:w-[360px] xl:max-w-[360px] xl:basis-[360px]"
         }
       />
 
@@ -144,8 +146,8 @@ export function InboxPage() {
           textareaRef={inbox.textareaRef}
           onPhotoFiles={inbox.handlePhotoFiles}
           onFileSelect={inbox.handleFileSelect}
-          infoPanel={<InboxInfoPanel sseStatus={inbox.sseStatus} />}
-          className={!inbox.showList ? "flex" : "hidden sm:flex"}
+        infoPanel={<InboxInfoPanel sseStatus={inbox.sseStatus} />}
+        className={!inbox.showList ? "flex" : "hidden sm:flex"}
         />
       ) : (
         /* No conversation selected — placeholder */

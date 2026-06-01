@@ -19,7 +19,7 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { IconAlertCircle, IconCheck, IconChecks } from "@tabler/icons-react";
-import { Bot, Download, FileText, User } from "lucide-react";
+import { Bot, Download, ExternalLink, User } from "lucide-react";
 import { useRef, useState } from "react";
 import type { Msg } from "../types/inbox.types";
 import { getBubbleRadius } from "../utils/inbox.utils";
@@ -52,6 +52,16 @@ function formatInboxText(text: string): string {
   return formatted;
 }
 
+function parseCommentReplyNotice(text: string): { url: string } | null {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized.startsWith("Vous répondez au commentaire")) return null;
+
+  const match = normalized.match(/Voir le commentaire\((https?:\/\/[^)]+)\)/);
+  if (!match?.[1]) return null;
+
+  return { url: match[1] };
+}
+
 export function MessageRow({
   msg,
   prevMsg,
@@ -63,6 +73,12 @@ export function MessageRow({
   const isAI     = msg.sender === "ai";
   const prevSame = prevMsg?.sender === msg.sender;
   const nextSame = nextMsg?.sender === msg.sender;
+  const commentReplyNotice =
+    msg.kind === "text" ? parseCommentReplyNotice(msg.content ?? "") : null;
+
+  if (commentReplyNotice) {
+    return <CommentReplyNotice url={commentReplyNotice.url} time={msg.time} />;
+  }
 
   // No bubble radius for media messages — they have their own shape
   const br =
@@ -172,6 +188,28 @@ export function MessageRow({
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function CommentReplyNotice({ url, time }: { url: string; time: string }) {
+  return (
+    <div className="my-4 flex w-full justify-center px-3">
+      <div className="flex max-w-[min(92vw,460px)] flex-col items-center gap-1 text-center">
+        <div className="rounded-full bg-[#F0F2F5] px-3.5 py-1.5 text-[12px] font-medium leading-snug text-[#65676B] dark:bg-[#3A3B3C] dark:text-[#B0B3B8]">
+          Vous avez répondu au commentaire d’un utilisateur sur une publication.
+        </div>
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-semibold text-[#1877F2] hover:bg-[#1877F2]/10"
+        >
+          Voir le commentaire
+          <ExternalLink className="h-3 w-3" />
+        </a>
+        <span className="text-[11px] text-muted-foreground">{time}</span>
       </div>
     </div>
   );

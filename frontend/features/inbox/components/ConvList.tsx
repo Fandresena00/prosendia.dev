@@ -54,10 +54,10 @@ export function ConvList({
 
   return (
     <div
-      className={`flex flex-col border-r border-border/40 bg-card/20 shrink-0 overflow-hidden ${className}`}
+      className={`flex min-w-0 max-w-full flex-col border-r border-border/40 bg-card/20 shrink-0 overflow-hidden ${className}`}
     >
       {/* ── Header ── */}
-      <div className="px-4 pt-4 pb-2.5 shrink-0 border-b border-border/40 space-y-3">
+      <div className="mx-auto w-full max-w-[430px] px-4 pt-4 pb-2.5 shrink-0 border-b border-border/40 space-y-3 sm:max-w-none">
         {/* Title row */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -134,7 +134,7 @@ export function ConvList({
       </div>
 
       {/* ── Search ── */}
-      <div className="px-3 py-2 shrink-0">
+      <div className="mx-auto w-full max-w-[430px] px-3 py-2 shrink-0 sm:max-w-none">
         <div className="relative">
           <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
           <Input
@@ -148,7 +148,7 @@ export function ConvList({
 
       {/* ── Conversation list ── */}
       <ScrollArea className="flex-1 min-h-0">
-        <div className="px-2 py-1 space-y-0.5">
+        <div className="mx-auto w-full max-w-[430px] px-2 py-1 space-y-0.5 sm:max-w-none">
           {loading ? (
             <ConvListSkeleton compact={compactMode} />
           ) : convs.length === 0 ? (
@@ -188,14 +188,14 @@ function ConvItem({
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left rounded-xl transition-all duration-150 group ${
+      className={`w-full min-w-0 overflow-hidden text-left rounded-xl transition-all duration-150 group ${
         compact ? "p-2" : "p-2.5"
       } ${isSelected
         ? "bg-primary/8 shadow-[inset_0_0_0_1px_rgba(var(--primary),.12)]"
         : "hover:bg-accent/60"
       }`}
     >
-      <div className="flex items-center gap-2.5">
+      <div className="flex min-w-0 items-center gap-2.5">
         {/* Avatar */}
         <div className="relative shrink-0">
           <Avatar className={compact ? "h-9 w-9" : "h-10 w-10"}>
@@ -216,9 +216,9 @@ function ConvItem({
         </div>
 
         {/* Content */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline justify-between gap-1 mb-0.5">
-            <p className={`text-xs truncate ${conv.unread > 0 ? "font-bold" : "font-medium"}`}>
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <div className="flex min-w-0 items-baseline justify-between gap-1 mb-0.5">
+            <p className={`min-w-0 max-w-[min(62vw,250px)] truncate text-xs sm:max-w-[210px] xl:max-w-[230px] ${conv.unread > 0 ? "font-bold" : "font-medium"}`}>
               {conv.client}
             </p>
             <span
@@ -230,14 +230,14 @@ function ConvItem({
             </span>
           </div>
 
-          <div className="flex items-center justify-between gap-1">
-            <p className={`text-[11px] truncate flex-1 ${
+          <div className="flex min-w-0 items-center justify-between gap-1">
+            <p className={`min-w-0 max-w-[min(58vw,230px)] flex-1 truncate whitespace-nowrap text-[11px] sm:max-w-[170px] xl:max-w-[190px] ${
               conv.unread > 0 ? "text-foreground font-medium" : "text-muted-foreground"
             }`}>
               {conv.lastMessage || <span className="italic opacity-50">Aucun message</span>}
             </p>
 
-            <div className="flex items-center gap-1 shrink-0 ml-1">
+            <div className="ml-1 flex shrink-0 items-center gap-1">
               {conv.unread > 0 && (
                 <span className="h-4 min-w-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center px-1">
                   {conv.unread > 99 ? "99+" : conv.unread}

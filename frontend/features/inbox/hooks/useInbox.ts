@@ -46,7 +46,7 @@ import type {
   PhotoAttachment,
   PhotoPreset,
 } from "../types/inbox.types";
-import { apiMsgToUiMsg } from "../utils/api-msg-to-ui-msg";
+import { apiMsgToUiMsg, formatMessageTime, messageApiToPreview, msgToPreview } from "../utils/api-msg-to-ui-msg";
 import { useInboxSse } from "./use-inbox-sse";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -124,6 +124,25 @@ export function useInbox() {
 
   useEffect(() => { selectedConvRef.current = selectedConv; }, [selectedConv]);
   useEffect(() => { activeAccRef.current    = activeAcc;    }, [activeAcc]);
+
+  const patchConversation = useCallback((
+    convId: string,
+    update: (conv: Conv) => Conv,
+    moveToTop = false,
+  ) => {
+    setConvs((prev) => {
+      let updatedConv: Conv | null = null;
+      const next = prev.map((conv) => {
+        if (conv.id !== convId) return conv;
+        updatedConv = update(conv);
+        return updatedConv;
+      });
+      if (!moveToTop || !updatedConv) return next;
+      return [updatedConv, ...next.filter((conv) => conv.id !== convId)];
+    });
+
+    setSelectedConv((prev) => (prev?.id === convId ? update(prev) : prev));
+  }, []);
 
   // ── Conversation mode ─────────────────────────────────────────────────────
   const [modeByConvId, setModeByConvId] = useState<Record<string, ConvMode>>({});
@@ -267,18 +286,27 @@ export function useInbox() {
     fetchMessages(convId, { limit: MESSAGES_PER_PAGE })
       .then((page) => {
         const msgs = [...page.messages].reverse().map(apiMsgToUiMsg);
+        const latest = page.messages[0];
         setMessagesByConvId((p) => ({ ...p, [convId]: msgs }));
         setCursorByConvId((p)   => ({ ...p, [convId]: page.nextCursor }));
         setHasMoreByConvId((p)  => ({ ...p, [convId]: page.hasMore }));
         markConversationRead(convId).catch(() => undefined);
-        setConvs((p) => p.map((c) => (c.id === convId ? { ...c, unread: 0 } : c)));
+        patchConversation(
+          convId,
+          (conv) => ({
+            ...conv,
+            lastMessage: latest ? messageApiToPreview(latest) : conv.lastMessage,
+            time: latest ? formatMessageTime(latest.createdAt) : conv.time,
+            unread: 0,
+          }),
+        );
       })
       .catch(() => {
         initialLoadDoneRef.current.delete(convId);
         toast.error("Impossible de charger les messages.");
       })
       .finally(() => setLoadingMessages(false));
-  }, [selectedConv?.id]);
+  }, [selectedConv?.id, patchConversation]);
 
   // ─── Sync-on-open ──────────────────────────────────────────────────────────
 
@@ -306,16 +334,25 @@ export function useInbox() {
       try {
         const page  = await fetchMessages(convId, { limit: MESSAGES_PER_PAGE });
         const fresh = [...page.messages].reverse().map(apiMsgToUiMsg);
+        const latest = page.messages[0];
         setMessagesByConvId((p) => ({ ...p, [convId]: mergeWithOptimistic(fresh, p[convId] ?? []) }));
         setCursorByConvId((p)   => ({ ...p, [convId]: page.nextCursor }));
         setHasMoreByConvId((p)  => ({ ...p, [convId]: page.hasMore }));
         markConversationRead(convId).catch(() => undefined);
-        setConvs((p) => p.map((c) => (c.id === convId ? { ...c, unread: 0 } : c)));
+        patchConversation(
+          convId,
+          (conv) => ({
+            ...conv,
+            lastMessage: latest ? messageApiToPreview(latest) : conv.lastMessage,
+            time: latest ? formatMessageTime(latest.createdAt) : conv.time,
+            unread: 0,
+          }),
+        );
       } catch { /* silent background refresh */ }
     }, MSG_POLL_MS);
 
     return () => clearInterval(id);
-  }, [selectedConv?.id]);
+  }, [selectedConv?.id, patchConversation]);
 
   // ─── Scroll to bottom ─────────────────────────────────────────────────────
 
@@ -381,20 +418,15 @@ export function useInbox() {
       }
 
       const isOpen = openId === conversationId;
-      setConvs((p) =>
-        p.map((c) =>
-          c.id === conversationId
-            ? {
-                ...c,
-                lastMessage: m.content ?? (m.imageUrl ? "📷 Photo" : m.fileUrl ? "📎 Fichier" : ""),
-                time: new Date(m.createdAt).toLocaleTimeString("fr-FR", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                }),
-                unread: isOpen ? 0 : c.unread + 1,
-              }
-            : c,
-        ),
+      patchConversation(
+        conversationId,
+        (conv) => ({
+          ...conv,
+          lastMessage: messageApiToPreview(m),
+          time: formatMessageTime(m.createdAt),
+          unread: isOpen ? 0 : conv.unread + 1,
+        }),
+        true,
       );
       skipNextConvPollRef.current = true;
     },
@@ -505,6 +537,19 @@ export function useInbox() {
     }
 
     setMessagesByConvId((p) => ({ ...p, [convId]: [...(p[convId] ?? []), ...optimistic] }));
+    const latestOptimistic = optimistic[optimistic.length - 1];
+    if (latestOptimistic) {
+      patchConversation(
+        convId,
+        (conv) => ({
+          ...conv,
+          lastMessage: msgToPreview(latestOptimistic),
+          time,
+          unread: 0,
+        }),
+        true,
+      );
+    }
 
     const text       = messageText.trim();
     const file       = pendingFile;
@@ -547,7 +592,7 @@ export function useInbox() {
       }));
       toast.error("Erreur lors de l'envoi. Vérifiez votre connexion.");
     }
-  }, [canSend, selectedConv, currentConvMode, messageText, pendingPhotos, pendingFile, pendingPreset]);
+  }, [canSend, selectedConv, currentConvMode, messageText, pendingPhotos, pendingFile, pendingPreset, patchConversation]);
 
   // ─── Presets ───────────────────────────────────────────────────────────────
 

@@ -78,14 +78,20 @@ export function PageSwitcher({ pages, activeKey, onSwitch }: PageSwitcherProps) 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button className="flex items-center gap-2.5 h-9 px-3 rounded-xl border border-border/50 bg-secondary/30 hover:bg-accent/60 transition-colors text-sm font-medium">
-          <PageAvatarImg page={active} size={20} />
-          <span className="max-w-[140px] truncate">{active.name}</span>
+        <button className="w-full flex items-center gap-2.5 rounded-xl border border-border/50 bg-secondary/30 px-3 py-2.5 hover:bg-accent/60 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30">
+          <PageAvatarImg page={active} size={32} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-semibold leading-tight">{active.name}</p>
+            <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
+              <IconBrandFacebook className="h-2.5 w-2.5 text-[#1877F2]" />
+              Page Facebook
+            </p>
+          </div>
           <IconChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
         </button>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="start" className="w-64">
+      <DropdownMenuContent align="start" className="w-[320px]">
         {/* FIX: explicit keys prevent React list-key warning */}
         <DropdownMenuLabel key="pages-label" className="text-xs text-muted-foreground">
           Pages connectées
@@ -96,9 +102,9 @@ export function PageSwitcher({ pages, activeKey, onSwitch }: PageSwitcherProps) 
           <DropdownMenuItem
             key={page.key}
             onClick={() => onSwitch(page.key)}
-            className="gap-3 cursor-pointer py-2.5"
+            className="gap-3 cursor-pointer py-3"
           >
-            <PageAvatarImg page={page} size={28} />
+            <PageAvatarImg page={page} size={36} />
 
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold truncate">{page.name}</p>

@@ -27,8 +27,6 @@ interface StatsSidebarProps {
 }
 
 export function StatsSidebar({ posts, commentStats }: StatsSidebarProps) {
-  const totalPosts     = posts.length;
-  const totalReactions = posts.reduce((s, p) => s + p.reactionsCount, 0);
   const totalShares    = posts.reduce((s, p) => s + p.sharesCount, 0);
 
   const replyRate = commentStats.total > 0
@@ -49,12 +47,6 @@ export function StatsSidebar({ posts, commentStats }: StatsSidebarProps) {
 
   // KPIs
   const kpis = [
-    {
-      label: "Posts gérés",
-      value: totalPosts,
-      color: "text-foreground",
-      bg:    "bg-secondary/40 border-border/40",
-    },
     {
       label: "Commentaires",
       value: commentStats.total,
@@ -92,12 +84,6 @@ export function StatsSidebar({ posts, commentStats }: StatsSidebarProps) {
       value: commentStats.withPrivateDm,
       color: "text-[#1877F2]",
       bg:    "bg-[#1877F2]/5 border-[#1877F2]/20",
-    },
-    {
-      label: "Réactions totales",
-      value: totalReactions,
-      color: "text-amber-600",
-      bg:    "bg-amber-500/5 border-amber-500/15",
     },
   ];
 
@@ -208,17 +194,12 @@ export function StatsSidebar({ posts, commentStats }: StatsSidebarProps) {
         </Card>
       )}
 
-      {/* Engagement summary */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-xl border border-border/40 bg-secondary/30 px-3 py-2.5">
-          <p className="text-lg font-bold tabular-nums text-amber-600">{totalReactions}</p>
-          <p className="text-[10px] text-muted-foreground">Réactions</p>
-        </div>
+      {totalShares > 0 && (
         <div className="rounded-xl border border-border/40 bg-secondary/30 px-3 py-2.5">
           <p className="text-lg font-bold tabular-nums text-foreground">{totalShares}</p>
           <p className="text-[10px] text-muted-foreground">Partages</p>
         </div>
-      </div>
+      )}
     </div>
   );
 }
