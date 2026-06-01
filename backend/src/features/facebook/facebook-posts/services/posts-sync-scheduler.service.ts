@@ -30,23 +30,23 @@ import { TokenEncryptionService } from '../../security/token-encryption.service.
 import { PostsEventEmitter } from '../posts-events/posts-event-emitter.js';
 import { PostCommentAiService } from './post-comment-ai.service.js';
 
-const SCHEDULER_JOB = '__posts.sync.fallback__';
-const CRON_5MIN = '*/5 * * * *';
+const SCHEDULER_JOB   = '__posts.sync.fallback__';
+const CRON_5MIN       = '*/5 * * * *';
 const MAX_AI_PER_POST = 20; // max AI replies per post per cycle
 const FALLBACK_AUTHOR = 'Utilisateur Facebook';
 
 interface SyncProfile {
-  id: string;
-  userId: string;
+  id:                string;
+  userId:            string;
   facebookConnection: {
-    pageId: string;
-    encryptedAccessToken: string;
-    tokenStatus: string;
+    pageId:                string;
+    encryptedAccessToken:  string;
+    tokenStatus:           string;
   } | null;
   managedPosts: Array<{
-    id: string;
+    id:         string;
     externalId: string;
-    autoReply: boolean;
+    autoReply:  boolean;
   }>;
 }
 
@@ -56,20 +56,18 @@ export class PostsSyncSchedulerService implements OnModuleInit {
 
   constructor(
     @Inject(PG_BOSS_TOKEN)
-    private readonly boss: PgBoss,
-    private readonly prisma: PrismaService,
+    private readonly boss:       PgBoss,
+    private readonly prisma:     PrismaService,
     private readonly graphClient: FacebookGraphClient,
     private readonly encryption: TokenEncryptionService,
     private readonly sseEmitter: PostsEventEmitter,
-    private readonly commentAi: PostCommentAiService,
+    private readonly commentAi:  PostCommentAiService,
   ) {}
 
   async onModuleInit(): Promise<void> {
     await this.boss.createQueue(SCHEDULER_JOB);
     await this.boss.schedule(SCHEDULER_JOB, CRON_5MIN, {});
-    await this.boss.work(SCHEDULER_JOB, async () => {
-      await this.runFallbackSync();
-    });
+    await this.boss.work(SCHEDULER_JOB, async () => { await this.runFallbackSync(); });
     this.logger.log(`Posts fallback sync registered (cron: ${CRON_5MIN})`);
   }
 
@@ -87,9 +85,7 @@ export class PostsSyncSchedulerService implements OnModuleInit {
     if (!profile.facebookConnection) return;
     if (profile.facebookConnection.tokenStatus === 'INVALID') return;
 
-    const token = this.encryption.decrypt(
-      profile.facebookConnection.encryptedAccessToken,
-    );
+    const token = this.encryption.decrypt(profile.facebookConnection.encryptedAccessToken);
 
     for (const post of profile.managedPosts) {
       try {
@@ -104,8 +100,8 @@ export class PostsSyncSchedulerService implements OnModuleInit {
 
         if (newCount > 0) {
           const updated = await this.prisma.facebookPost.update({
-            where: { id: post.id },
-            data: { commentsCount: { increment: newCount } },
+            where:  { id: post.id },
+            data:   { commentsCount: { increment: newCount } },
             select: { commentsCount: true },
           });
           this.sseEmitter.postUpdated(profile.userId, post.id, {
@@ -138,19 +134,15 @@ export class PostsSyncSchedulerService implements OnModuleInit {
    * Returns the count of genuinely NEW comments inserted.
    */
   private async syncPostComments(
-    postId: string,
+    postId:    string,
     externalId: string,
-    pageId: string,
-    userId: string,
-    token: string,
+    pageId:    string,
+    userId:    string,
+    token:     string,
   ): Promise<number> {
     let fbComments;
     try {
-      fbComments = await this.graphClient.getPostComments(
-        externalId,
-        token,
-        50,
-      );
+      fbComments = await this.graphClient.getPostComments(externalId, token, 50);
     } catch {
       return 0;
     }
@@ -159,39 +151,32 @@ export class PostsSyncSchedulerService implements OnModuleInit {
 
     for (const fc of fbComments) {
       // Resolve author info with fallback chain.
-      let authorId = fc.from?.id?.trim() || null;
+      let authorId   = fc.from?.id?.trim()   || null;
       let authorName = fc.from?.name?.trim() || null;
 
       if (!authorId || !authorName) {
         try {
           const full = await this.graphClient.getCommentById(fc.id, token);
-          authorId = authorId ?? full.from?.id?.trim() ?? null;
+          authorId   = authorId   ?? full.from?.id?.trim()   ?? null;
           authorName = authorName ?? full.from?.name?.trim() ?? null;
-        } catch {
-          /* keep null */
-        }
+        } catch { /* keep null */ }
       }
 
       if (!authorName && authorId) {
-        try {
-          authorName = await this.graphClient.getUserNameById(authorId, token);
-        } catch {
-          /* keep null */
-        }
+        try { authorName = await this.graphClient.getUserNameById(authorId, token); }
+        catch { /* keep null */ }
       }
 
       // Resolve page name for comments from the page itself.
       const resolvedAuthorName =
-        (authorId && authorId === pageId
-          ? await this.resolvePageName(postId)
-          : null) ||
+        (authorId && authorId === pageId ? await this.resolvePageName(postId) : null) ||
         authorName ||
         (authorId ? `Compte ${authorId}` : FALLBACK_AUTHOR);
 
       const pageReply = await this.findPageReply(fc.id, token, pageId);
 
       const existing = await this.prisma.postComment.findUnique({
-        where: { externalId: fc.id },
+        where:  { externalId: fc.id },
         select: { id: true, authorId: true, authorName: true },
       });
 
@@ -200,20 +185,15 @@ export class PostsSyncSchedulerService implements OnModuleInit {
         await this.prisma.postComment.update({
           where: { id: existing.id },
           data: {
-            message: fc.message,
-            authorId:
-              existing.authorId === 'unknown' && authorId
-                ? authorId
-                : existing.authorId,
-            authorName: isFallbackName(existing.authorName)
-              ? resolvedAuthorName
-              : existing.authorName,
+            message:    fc.message,
+            authorId:   existing.authorId === 'unknown' && authorId ? authorId : existing.authorId,
+            authorName: isFallbackName(existing.authorName) ? resolvedAuthorName : existing.authorName,
             ...(pageReply
               ? {
-                  isReplied: true,
+                  isReplied:    true,
                   replyContent: pageReply.message,
-                  repliedAt: new Date(pageReply.created_time),
-                  repliedByAi: false,
+                  repliedAt:    new Date(pageReply.created_time),
+                  repliedByAi:  false,
                 }
               : {}),
             lastSyncedAt: new Date(),
@@ -226,17 +206,17 @@ export class PostsSyncSchedulerService implements OnModuleInit {
       const created = await this.prisma.postComment.create({
         data: {
           postId,
-          externalId: fc.id,
-          authorId: authorId ?? 'unknown',
-          authorName: resolvedAuthorName,
+          externalId:      fc.id,
+          authorId:        authorId ?? 'unknown',
+          authorName:      resolvedAuthorName,
           authorAvatarUrl: null,
-          message: fc.message,
-          commentedAt: new Date(fc.created_time),
-          isReplied: !!pageReply,
-          replyContent: pageReply?.message ?? null,
-          repliedAt: pageReply ? new Date(pageReply.created_time) : null,
-          repliedByAi: pageReply ? false : null,
-          lastSyncedAt: new Date(),
+          message:         fc.message,
+          commentedAt:     new Date(fc.created_time),
+          isReplied:       !!pageReply,
+          replyContent:    pageReply?.message ?? null,
+          repliedAt:       pageReply ? new Date(pageReply.created_time) : null,
+          repliedByAi:     pageReply ? false : null,
+          lastSyncedAt:    new Date(),
         },
       });
 
@@ -244,18 +224,18 @@ export class PostsSyncSchedulerService implements OnModuleInit {
 
       // Emit comment:new for truly new comments.
       this.sseEmitter.commentAdded(userId, postId, {
-        id: created.id,
-        postId: created.postId,
-        externalId: created.externalId,
-        authorId: created.authorId,
-        authorName: created.authorName,
+        id:              created.id,
+        postId:          created.postId,
+        externalId:      created.externalId,
+        authorId:        created.authorId,
+        authorName:      created.authorName,
         authorAvatarUrl: null,
-        message: created.message,
-        commentedAt: created.commentedAt.toISOString(),
-        isReplied: created.isReplied,
-        replyContent: created.replyContent,
-        repliedAt: created.repliedAt?.toISOString() ?? null,
-        repliedByAi: created.repliedByAi,
+        message:         created.message,
+        commentedAt:     created.commentedAt.toISOString(),
+        isReplied:       created.isReplied,
+        replyContent:    created.replyContent,
+        repliedAt:       created.repliedAt?.toISOString() ?? null,
+        repliedByAi:     created.repliedByAi,
       });
     }
 
@@ -269,28 +249,26 @@ export class PostsSyncSchedulerService implements OnModuleInit {
    * Prevents drift between the incremented local counter and the real count.
    */
   private async refreshCommentsCount(
-    postId: string,
+    postId:     string,
     externalId: string,
-    token: string,
+    token:      string,
   ): Promise<void> {
     try {
       const result = await this.graphClient.get<{
         comments?: { summary?: { total_count?: number } };
       }>(`/${externalId}`, {
         access_token: token,
-        fields: 'comments.summary(true)',
+        fields:       'comments.summary(true)',
       });
 
       const count = result.comments?.summary?.total_count;
       if (typeof count === 'number') {
         await this.prisma.facebookPost.update({
           where: { id: postId },
-          data: { commentsCount: count, lastSyncedAt: new Date() },
+          data:  { commentsCount: count, lastSyncedAt: new Date() },
         });
       }
-    } catch {
-      /* non-fatal */
-    }
+    } catch { /* non-fatal */ }
   }
 
   // ─── Process pending (unreplied) comments ────────────────────────────────────
@@ -302,10 +280,10 @@ export class PostsSyncSchedulerService implements OnModuleInit {
    */
   private async processPendingComments(postId: string): Promise<void> {
     const pending = await this.prisma.postComment.findMany({
-      where: { postId, isReplied: false },
+      where:   { postId, isReplied: false },
       orderBy: { commentedAt: 'asc' },
-      take: MAX_AI_PER_POST,
-      select: { id: true },
+      take:    MAX_AI_PER_POST,
+      select:  { id: true },
     });
 
     for (const { id } of pending) {
@@ -325,22 +303,18 @@ export class PostsSyncSchedulerService implements OnModuleInit {
     const rows = await this.prisma.businessProfile.findMany({
       where: {
         facebookConnection: { isActive: true, NOT: { tokenStatus: 'INVALID' } },
-        facebookPosts: { some: { postAiConfig: { isNot: null } } },
+        facebookPosts:      { some: { postAiConfig: { isNot: null } } },
       },
       select: {
-        id: true,
+        id:     true,
         userId: true,
         facebookConnection: {
-          select: {
-            pageId: true,
-            encryptedAccessToken: true,
-            tokenStatus: true,
-          },
+          select: { pageId: true, encryptedAccessToken: true, tokenStatus: true },
         },
         facebookPosts: {
-          where: { postAiConfig: { isNot: null } },
+          where:  { postAiConfig: { isNot: null } },
           select: {
-            id: true,
+            id:         true,
             externalId: true,
             postAiConfig: { select: { autoReply: true } },
           },
@@ -349,13 +323,13 @@ export class PostsSyncSchedulerService implements OnModuleInit {
     });
 
     return rows.map((r) => ({
-      id: r.id,
-      userId: r.userId,
+      id:                r.id,
+      userId:            r.userId,
       facebookConnection: r.facebookConnection ?? null,
-      managedPosts: r.facebookPosts.map((p) => ({
-        id: p.id,
+      managedPosts:      r.facebookPosts.map((p) => ({
+        id:         p.id,
         externalId: p.externalId,
-        autoReply: p.postAiConfig?.autoReply ?? false,
+        autoReply:  p.postAiConfig?.autoReply ?? false,
       })),
     }));
   }
@@ -364,7 +338,7 @@ export class PostsSyncSchedulerService implements OnModuleInit {
 
   private async resolvePageName(postId: string): Promise<string | null> {
     const post = await this.prisma.facebookPost.findUnique({
-      where: { id: postId },
+      where:   { id: postId },
       include: { businessProfile: { include: { facebookConnection: true } } },
     });
     return post?.businessProfile.facebookConnection?.pageName ?? null;
@@ -372,24 +346,15 @@ export class PostsSyncSchedulerService implements OnModuleInit {
 
   private async findPageReply(
     commentExternalId: string,
-    token: string,
-    pageId: string,
+    token:             string,
+    pageId:            string,
   ) {
     try {
-      const replies = await this.graphClient.getCommentReplies(
-        commentExternalId,
-        token,
-        25,
-      );
-      return (
-        replies
-          .filter((r) => r.from?.id === pageId && r.message?.trim())
-          .sort(
-            (a, b) =>
-              new Date(a.created_time).getTime() -
-              new Date(b.created_time).getTime(),
-          )[0] ?? null
-      );
+      const replies = await this.graphClient.getCommentReplies(commentExternalId, token, 25);
+      return replies
+        .filter((r) => r.from?.id === pageId && r.message?.trim())
+        .sort((a, b) => new Date(a.created_time).getTime() - new Date(b.created_time).getTime())[0]
+        ?? null;
     } catch {
       return null;
     }

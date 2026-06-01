@@ -2,32 +2,33 @@
 /**
  * @file features/posts-comments/hooks/use-posts-comments.ts
  *
- * FIXES IN THIS VERSION
- * ─────────────────────
- * 1. BUG FIX — stale closure in onSyncCompleted
- *    `loadCommentsFn` was captured at hook creation time (empty deps []).
- *    When `selectedPostId` changed, the closure still called the OLD version.
- *    Fix: `loadCommentsRef` always points to the latest `loadCommentsFn`.
+ * Central state for the posts & comments page.
  *
- * 2. BUG FIX — comment author "Anonyme" duplicates
- *    `onCommentAdded` deduplication only checked `c.id`. If a comment arrived
- *    via SSE before the initial `loadComments` completed, it was prepended
- *    with whatever data the SSE had. On reload, the DB version appeared too.
- *    Fix: deduplicate by BOTH `id` AND `externalId`.
+ * AI typing tracking:
+ *   - aiTypingComments: Set<commentId> — comments where AI reply is in progress.
+ *   - Added when triggerAiReply() is called.
+ *   - Removed when SSE comment:replied fires for that comment.
+ *   - Auto-cleared after 30s timeout to avoid stuck indicators.
  *
- * 3. REAL-TIME — no manual page refresh needed
- *    All four SSE event types now update React state immediately:
- *    • comment:new      → prepend to list (dedup by id + externalId)
- *    • comment:replied  → update inline (no full reload needed)
- *    • post:updated     → update post card stats inline
- *    • sync:completed   → reload comments via fresh ref (not stale closure)
- *
- * 4. businessProfileId FIX — use `activePage?.key` (has pages[0] fallback)
- *    instead of raw `activePageKey` which starts as "".
+ * commentStats: aggregated from the current comment list for StatsSidebar.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import * as api from "../services/posts-comments.service";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import {
+  addManagedPost,
+  deleteManagedPost,
+  getComments,
+  getPageFeed,
+  getPagesList,
+  getPostAiConfig,
+  getPosts,
+  replyToCommentPublic,
+  sendPrivateReply,
+  syncComments,
+  triggerAiReply,
+  updatePostAiConfig,
+} from "../services/posts-comments.service";
 import type {
   ActiveTab,
   ApiComment,
@@ -39,560 +40,450 @@ import type {
   PostAiConfigForm,
 } from "../types/posts-comments.types";
 import { usePostsRealtime } from "./use-posts-realtime";
+import type { CommentStats } from "../components/stats-sidebar";
 
-const MAX_AUTO_REPLY = 10;
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const COMMENT_PAGE_SIZE  = 50;
+const AI_TYPING_TIMEOUT  = 30_000; // auto-clear after 30s
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function usePostsComments() {
   // ── Pages ──────────────────────────────────────────────────────────────────
-  const [pages, setPages] = useState<FacebookPage[]>([]);
-  const [pagesLoading, setPagesLoading] = useState(true);
-  const [pagesError, setPagesError] = useState<string | null>(null);
-  const [activePageKey, setActivePageKey] = useState<string>("");
-
-  // FIX: businessProfileId from activePage?.key has a fallback to pages[0].
-  // Raw activePageKey starts as "" which fails backend @IsNotEmpty() validation.
-  const activePage =
-    pages.find((p) => p.key === activePageKey) ?? pages[0] ?? null;
-  const businessProfileId = activePage?.key ?? null;
+  const [pages,     setPages]     = useState<FacebookPage[]>([]);
+  const [activeKey, setActiveKey] = useState<string>("");
 
   // ── Posts ──────────────────────────────────────────────────────────────────
-  const [posts, setPosts] = useState<ApiPost[]>([]);
-  const [postsLoading, setPostsLoading] = useState(false);
-  const [postsError, setPostsError] = useState<string | null>(null);
-  const [postSearch, setPostSearch] = useState("");
+  const [posts,         setPosts]         = useState<ApiPost[]>([]);
+  const [selectedPost,  setSelectedPost]  = useState<ApiPost | null>(null);
+  const [loadingPosts,  setLoadingPosts]  = useState(true);
+  const [deletingId,    setDeletingId]    = useState<string | null>(null);
 
-  const autoReplyCount = posts.filter((p) => p.postAiConfig?.autoReply).length;
-  const autoReplyLimitReached = autoReplyCount >= MAX_AUTO_REPLY;
-
-  // ── Selected post ──────────────────────────────────────────────────────────
-  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
-  const selectedPost = posts.find((p) => p.id === selectedPostId) ?? null;
-  const [activeTab, setActiveTab] = useState<ActiveTab>("comments");
+  // ── Delete confirmation ────────────────────────────────────────────────────
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // ── Comments ───────────────────────────────────────────────────────────────
-  const [comments, setComments] = useState<ApiComment[]>([]);
-  const [commentsLoading, setCommentsLoading] = useState(false);
-  const [commentFilter, setCommentFilter] = useState<CommentFilter>("all");
-  const [commentSearch, setCommentSearch] = useState("");
-  const [commentPage, setCommentPage] = useState(1);
-  const [commentTotal, setCommentTotal] = useState(0);
-  const [isSyncingComments, setIsSyncingComments] = useState(false);
+  const [comments,        setComments]        = useState<ApiComment[]>([]);
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [commentFilter,   setCommentFilter]   = useState<CommentFilter>("all");
+  const [commentSearch,   setCommentSearch]   = useState("");
+  const [commentPage,     setCommentPage]     = useState(1);
+  const [commentTotal,    setCommentTotal]    = useState(0);
+  const [syncingComments, setSyncingComments] = useState(false);
 
-  // ── Config ─────────────────────────────────────────────────────────────────
-  const [postAiConfig, setPostAiConfig] = useState<ApiPostAiConfig | null>(
-    null,
-  );
-  const [configLoading, setConfigLoading] = useState(false);
-  const [configSaving, setConfigSaving] = useState(false);
-  const [configError, setConfigError] = useState<string | null>(null);
+  // ── AI typing tracking ─────────────────────────────────────────────────────
+  const [aiTypingComments, setAiTypingComments] = useState<Set<string>>(new Set());
+  const aiTypingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  // ── Reply ──────────────────────────────────────────────────────────────────
-  const [replyingTo, setReplyingTo] = useState<string | null>(null);
-  const [replyText, setReplyText] = useState("");
-  const [replySending, setReplySending] = useState(false);
-  const [replyMode, setReplyMode] = useState<"public" | "private">("public");
+  // ── Active tab ─────────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<ActiveTab>("comments");
 
-  // ── Add / delete post ──────────────────────────────────────────────────────
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [feedPosts, setFeedPosts] = useState<FbFeedPost[]>([]);
-  const [feedLoading, setFeedLoading] = useState(false);
-  const [addingPost, setAddingPost] = useState(false);
-  const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
-
-  const didInit = useRef(false);
-
-  // ── Refs for stable SSE callbacks ──────────────────────────────────────────
-  // These refs always point to the latest values, preventing stale closures
-  // in usePostsRealtime handlers (which are created once with [] deps).
-  const selectedPostIdRef = useRef<string | null>(null);
-  const activePageRef = useRef<FacebookPage | null>(null);
-  const loadCommentsRef = useRef<(page?: number) => Promise<void>>(
-    async () => {},
-  );
-
-  selectedPostIdRef.current = selectedPostId;
-  activePageRef.current = activePage;
-
-  // ── Load pages on mount ────────────────────────────────────────────────────
-  useEffect(() => {
-    if (didInit.current) return;
-    didInit.current = true;
-    void loadPages();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const loadPages = useCallback(async () => {
-    setPagesLoading(true);
-    setPagesError(null);
-    try {
-      const list = await api.getPagesList();
-      setPages(list);
-      if (list.length > 0) setActivePageKey(list[0].key);
-    } catch {
-      setPagesError("Impossible de charger les pages Facebook.");
-    } finally {
-      setPagesLoading(false);
-    }
-  }, []);
-
-  // ── Load posts when active page changes ───────────────────────────────────
-  useEffect(() => {
-    if (!activePageKey) return;
-    setSelectedPostId(null);
-    setComments([]);
-    setCommentSearch("");
-    setCommentFilter("all");
-    void loadPosts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePageKey]);
-
-  const loadPosts = useCallback(async () => {
-    if (!businessProfileId) return;
-    setPostsLoading(true);
-    setPostsError(null);
-    try {
-      const result = await api.getPosts(
-        businessProfileId,
-        1,
-        50,
-        postSearch || undefined,
-      );
-      setPosts(result.data);
-      if (result.data.length > 0 && !selectedPostId) {
-        setSelectedPostId(result.data[0].id);
-      }
-    } catch {
-      setPostsError("Impossible de charger les posts.");
-    } finally {
-      setPostsLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [businessProfileId, postSearch]);
-
-  // ── Load comments + config when post selected ─────────────────────────────
-  useEffect(() => {
-    if (!selectedPostId) return;
-    setComments([]);
-    void loadComments(1);
-    void loadPostAiConfig();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPostId, commentFilter, commentSearch]);
-
-  const loadComments = useCallback(
-    async (page = 1) => {
-      if (!selectedPostId) return;
-      setCommentsLoading(true);
-      try {
-        const result = await api.getComments(
-          selectedPostId,
-          page,
-          50,
-          commentFilter === "all" ? undefined : commentFilter,
-          commentSearch || undefined,
-        );
-        setComments(
-          page === 1 ? result.data : (prev) => [...prev, ...result.data],
-        );
-        setCommentPage(page);
-        setCommentTotal(result.pagination.total);
-      } catch {
-        // silent
-      } finally {
-        setCommentsLoading(false);
-      }
-    },
-    [selectedPostId, commentFilter, commentSearch],
-  );
-
-  // FIX: keep ref in sync so SSE handlers always call the latest version.
-  // This prevents the stale closure bug in onSyncCompleted.
-  useEffect(() => {
-    loadCommentsRef.current = loadComments;
-  }, [loadComments]);
-
-  const loadPostAiConfig = useCallback(async () => {
-    if (!selectedPostId) return;
-    setConfigLoading(true);
-    setPostAiConfig(null);
-    try {
-      setPostAiConfig(await api.getPostAiConfig(selectedPostId));
-    } catch {
-      // created on first save
-    } finally {
-      setConfigLoading(false);
-    }
-  }, [selectedPostId]);
-
-  // ── Real-time SSE integration ──────────────────────────────────────────────
-
-  const { connected: realtimeConnected } = usePostsRealtime(businessProfileId, {
-    /**
-     * comment:new — prepend the new comment to the active post's list.
-     *
-     * FIX: deduplicate by BOTH `id` AND `externalId`.
-     * The same comment can arrive via:
-     *   a) SSE from processNewComment (has DB id)
-     *   b) SSE from scheduler sync (has DB id after create)
-     *   c) Frontend full reload after sync:completed
-     * Without externalId dedup, two records for the same FB comment could
-     * appear — one with the correct author name (from DB), one with 'Anonyme'.
-     */
-    onCommentAdded: useCallback((comment: ApiComment) => {
-      if (comment.postId !== selectedPostIdRef.current) return;
-
-      setComments((prev) => {
-        const duplicate = prev.some(
-          (c) => c.id === comment.id || c.externalId === comment.externalId,
-        );
-        if (duplicate) return prev;
-        return [comment, ...prev];
-      });
-
-      setCommentTotal((n) => n + 1);
-
-      // Update commentsCount on the post card immediately
-      setPosts((prev) =>
-        prev.map((p) =>
-          p.id === comment.postId
-            ? {
-                ...p,
-                commentsCount: p.commentsCount + 1,
-                _count: p._count
-                  ? { ...p._count, comments: p._count.comments + 1 }
-                  : undefined,
-              }
-            : p,
-        ),
-      );
-    }, []),
-
-    /**
-     * comment:replied — update the comment inline without a full reload.
-     * This is the key event for "no manual refresh" — as soon as the AI
-     * or the human replies, the comment shows the reply immediately.
-     */
-    onCommentReplied: useCallback(
-      (
-        _postId: string,
-        commentId: string,
-        reply: { content: string; repliedByAi: boolean },
-      ) => {
-        setComments((prev) =>
-          prev.map((c) =>
-            c.id === commentId
-              ? {
-                  ...c,
-                  isReplied: true,
-                  replyContent: reply.content,
-                  repliedAt: new Date().toISOString(),
-                  repliedByAi: reply.repliedByAi,
-                  replies: c.replies?.some((r) => r.message === reply.content)
-                    ? c.replies
-                    : [
-                        ...(c.replies ?? []),
-                        {
-                          id: `local-${commentId}-${Date.now()}`,
-                          externalId: `local-${commentId}-${Date.now()}`,
-                          authorId: activePageRef.current?.pageId ?? "page",
-                          authorName:
-                            activePageRef.current?.name ?? "Votre page",
-                          authorAvatarUrl: null,
-                          message: reply.content,
-                          commentedAt: new Date().toISOString(),
-                          isPageReply: true,
-                          repliedByAi: reply.repliedByAi,
-                        },
-                      ],
-                }
-              : c,
-          ),
-        );
-      },
-      [],
-    ),
-
-    /**
-     * post:updated — update post card metadata (commentsCount, etc.) inline.
-     * Scheduler emits this after syncing new comments for a post.
-     */
-    onPostUpdated: useCallback(
-      (postId: string, updates: Record<string, unknown>) => {
-        setPosts((prev) =>
-          prev.map((p) => (p.id === postId ? { ...p, ...updates } : p)),
-        );
-      },
-      [],
-    ),
-
-    /**
-     * sync:completed — scheduler finished a full sync cycle.
-     * FIX: use `loadCommentsRef.current` (always latest) instead of
-     * capturing `loadComments` in a closure at creation time (stale).
-     *
-     * This triggers a fresh load of comments for the selected post,
-     * ensuring the user sees any updates the scheduler found.
-     */
-    onSyncCompleted: useCallback(() => {
-      if (selectedPostIdRef.current) {
-        void loadCommentsRef.current?.(1);
-      }
-    }, []), // stable — refs never go stale
-  });
-
-  // ── Sync comments manually ─────────────────────────────────────────────────
-  const syncComments = useCallback(async () => {
-    if (!selectedPostId) return;
-    setIsSyncingComments(true);
-    try {
-      await api.syncComments(selectedPostId);
-      await loadComments(1);
-    } finally {
-      setIsSyncingComments(false);
-    }
-  }, [selectedPostId, loadComments]);
+  // ── Post config ────────────────────────────────────────────────────────────
+  const [postConfig,     setPostConfig]     = useState<ApiPostAiConfig | null>(null);
+  const [loadingConfig,  setLoadingConfig]  = useState(false);
+  const [savingConfig,   setSavingConfig]   = useState(false);
+  const [configError,    setConfigError]    = useState<string | null>(null);
 
   // ── Add post dialog ────────────────────────────────────────────────────────
-  const openAddDialog = useCallback(async () => {
-    if (!businessProfileId) return;
-    setAddDialogOpen(true);
-    setFeedLoading(true);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [feedPosts,     setFeedPosts]     = useState<FbFeedPost[]>([]);
+  const [loadingFeed,   setLoadingFeed]   = useState(false);
+
+  // ── Reply state ────────────────────────────────────────────────────────────
+  const [replyingToId, setReplyingToId] = useState<string | null>(null);
+  const [replyText,    setReplyText]    = useState("");
+  const [replyMode,    setReplyMode]    = useState<"public" | "private">("public");
+  const [replySending, setReplySending] = useState(false);
+
+  // ── Real-time ──────────────────────────────────────────────────────────────
+  const activePageId = pages.find((p) => p.key === activeKey)?.key;
+  const selectedPostRef = useRef<ApiPost | null>(null);
+  useEffect(() => { selectedPostRef.current = selectedPost; }, [selectedPost]);
+
+  // ─── AI typing helpers ────────────────────────────────────────────────────
+
+  const markAiTyping = useCallback((commentId: string) => {
+    setAiTypingComments((prev) => new Set(prev).add(commentId));
+    // Auto-clear after timeout to avoid stuck indicators
+    const existing = aiTypingTimers.current.get(commentId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      setAiTypingComments((prev) => { const next = new Set(prev); next.delete(commentId); return next; });
+      aiTypingTimers.current.delete(commentId);
+    }, AI_TYPING_TIMEOUT);
+    aiTypingTimers.current.set(commentId, timer);
+  }, []);
+
+  const clearAiTyping = useCallback((commentId: string) => {
+    setAiTypingComments((prev) => { const next = new Set(prev); next.delete(commentId); return next; });
+    const existing = aiTypingTimers.current.get(commentId);
+    if (existing) { clearTimeout(existing); aiTypingTimers.current.delete(commentId); }
+  }, []);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => { aiTypingTimers.current.forEach((t) => clearTimeout(t)); };
+  }, []);
+
+  // ─── SSE real-time handlers ────────────────────────────────────────────────
+
+  usePostsRealtime(activePageId ?? null, {
+    onCommentAdded: (comment) => {
+      const cur = selectedPostRef.current;
+      if (!cur || comment.postId !== cur.id) return;
+      setComments((prev) => {
+        if (prev.some((c) => c.id === comment.id || c.externalId === comment.externalId)) return prev;
+        return [comment, ...prev];
+      });
+      setCommentTotal((t) => t + 1);
+      setPosts((prev) => prev.map((p) =>
+        p.id === comment.postId
+          ? { ...p, commentsCount: p.commentsCount + 1, _count: { comments: (p._count?.comments ?? p.commentsCount) + 1 } }
+          : p,
+      ));
+    },
+
+    onCommentReplied: (_postId, commentId, reply) => {
+      clearAiTyping(commentId);
+      setComments((prev) => prev.map((c) =>
+        c.id === commentId
+          ? {
+              ...c,
+              isReplied:    true,
+              replyContent: reply.content,
+              repliedAt:    new Date().toISOString(),
+              repliedByAi:  reply.repliedByAi,
+            }
+          : c,
+      ));
+    },
+
+    onPostUpdated: (postId, updates) => {
+      setPosts((prev) => prev.map((p) =>
+        p.id === postId ? { ...p, ...updates } : p,
+      ));
+      setSelectedPost((prev) =>
+        prev?.id === postId ? { ...prev, ...updates } as ApiPost : prev,
+      );
+    },
+
+    onSyncCompleted: () => {
+      // Scheduler finished — reload comments for the active post
+      if (selectedPostRef.current) {
+        void loadComments(selectedPostRef.current.id, commentFilter, commentSearch, 1);
+      }
+    },
+  });
+
+  // ─── Load pages ────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    getPagesList()
+      .then((list) => {
+        setPages(list);
+        if (list.length > 0) setActiveKey(list[0].key);
+      })
+      .catch(() => toast.error("Impossible de charger les pages Facebook."));
+  }, []);
+
+  // ─── Load posts when page changes ─────────────────────────────────────────
+
+  useEffect(() => {
+    if (!activeKey) return;
+    setLoadingPosts(true);
+    setSelectedPost(null);
+    setComments([]);
+
+    getPosts(activeKey)
+      .then((res) => {
+        setPosts(res.data);
+        if (res.data.length > 0) selectPost(res.data[0]);
+      })
+      .catch(() => toast.error("Impossible de charger les posts."))
+      .finally(() => setLoadingPosts(false));
+  }, [activeKey, selectPost]);
+
+  // ─── Load comments ─────────────────────────────────────────────────────────
+
+  const loadComments = useCallback(async (
+    postId: string,
+    filter: CommentFilter = "all",
+    search = "",
+    page   = 1,
+  ) => {
+    setLoadingComments(true);
     try {
-      setFeedPosts(await api.getPageFeed(businessProfileId, 30));
+      const res = await getComments(postId, page, COMMENT_PAGE_SIZE, filter, search);
+      if (page === 1) {
+        setComments(res.data);
+      } else {
+        setComments((prev) => [...prev, ...res.data]);
+      }
+      setCommentTotal(res.pagination.total);
+      setCommentPage(page);
     } catch {
-      setFeedPosts([]);
+      toast.error("Impossible de charger les commentaires.");
     } finally {
-      setFeedLoading(false);
+      setLoadingComments(false);
     }
-  }, [businessProfileId]);
+  }, []);
 
-  const addPost = useCallback(
-    async (post: FbFeedPost) => {
-      if (!businessProfileId) return;
-      setAddingPost(true);
-      try {
-        const created = await api.addManagedPost({
-          businessProfileId,
-          externalId: post.externalId,
-          message: post.message,
-          imageUrl: post.imageUrl,
-          permalinkUrl: post.permalinkUrl,
-          reactionsCount: post.reactionsCount,
-          commentsCount: post.commentsCount,
-          sharesCount: post.sharesCount,
-          publishedAt: post.publishedAt,
-        });
-        try {
-          await api.syncComments(created.id);
-        } catch {
-          // The selected post will still be shown; users can retry sync manually.
-        }
-        setPosts((prev) => [created, ...prev]);
-        setSelectedPostId(created.id);
-        setAddDialogOpen(false);
-        setFeedPosts((prev) =>
-          prev.map((p) =>
-            p.externalId === post.externalId ? { ...p, alreadyAdded: true } : p,
-          ),
-        );
-      } finally {
-        setAddingPost(false);
-      }
-    },
-    [businessProfileId],
-  );
+  // ─── Select post ───────────────────────────────────────────────────────────
 
-  // ── Delete post ────────────────────────────────────────────────────────────
-  const deletePost = useCallback(
-    async (postId: string) => {
-      if (!businessProfileId) return;
-      setDeletingPostId(postId);
-      try {
-        await api.deleteManagedPost(postId, businessProfileId);
-        setPosts((prev) => {
-          const remaining = prev.filter((p) => p.id !== postId);
-          // Auto-select the next post if the deleted one was selected
-          if (selectedPostId === postId) {
-            setSelectedPostId(remaining[0]?.id ?? null);
-          }
-          return remaining;
-        });
-      } finally {
-        setDeletingPostId(null);
-      }
-    },
-    [businessProfileId, selectedPostId],
-  );
+  const selectPost = useCallback((post: ApiPost) => {
+    setSelectedPost(post);
+    setCommentFilter("all");
+    setCommentSearch("");
+    setCommentPage(1);
+    setActiveTab("comments");
+    setPostConfig(null);
+    loadComments(post.id, "all", "", 1);
+  }, [loadComments]);
 
-  // ── Reply ──────────────────────────────────────────────────────────────────
+  // ─── Load config when tab switches to config ───────────────────────────────
+
+  useEffect(() => {
+    if (activeTab !== "config" || !selectedPost || postConfig) return;
+    setLoadingConfig(true);
+    getPostAiConfig(selectedPost.id)
+      .then(setPostConfig)
+      .catch(() => setConfigError("Impossible de charger la configuration."))
+      .finally(() => setLoadingConfig(false));
+  }, [activeTab, selectedPost?.id, postConfig]);
+
+  // ─── Sync comments ─────────────────────────────────────────────────────────
+
+  const handleSyncComments = useCallback(async () => {
+    if (!selectedPost) return;
+    setSyncingComments(true);
+    try {
+      const { synced } = await syncComments(selectedPost.id);
+      await loadComments(selectedPost.id, commentFilter, commentSearch, 1);
+      if (synced > 0) toast.success(`${synced} nouveau${synced > 1 ? "x" : ""} commentaire${synced > 1 ? "s" : ""} synchronisé${synced > 1 ? "s" : ""}.`);
+    } catch {
+      toast.error("Erreur lors de la synchronisation.");
+    } finally {
+      setSyncingComments(false);
+    }
+  }, [selectedPost, commentFilter, commentSearch, loadComments]);
+
+  // ─── Filter / search ───────────────────────────────────────────────────────
+
+  const handleFilterChange = useCallback((f: CommentFilter) => {
+    setCommentFilter(f);
+    if (selectedPost) loadComments(selectedPost.id, f, commentSearch, 1);
+  }, [selectedPost, commentSearch, loadComments]);
+
+  const handleSearchChange = useCallback((s: string) => {
+    setCommentSearch(s);
+    if (selectedPost) loadComments(selectedPost.id, commentFilter, s, 1);
+  }, [selectedPost, commentFilter, loadComments]);
+
+  const loadNextPage = useCallback(() => {
+    if (!selectedPost) return;
+    loadComments(selectedPost.id, commentFilter, commentSearch, commentPage + 1);
+  }, [selectedPost, commentFilter, commentSearch, commentPage, loadComments]);
+
+  // ─── Replies ───────────────────────────────────────────────────────────────
+
+  const startReply = useCallback((commentId: string) => {
+    setReplyingToId(commentId);
+    setReplyText("");
+    setReplyMode("public");
+  }, []);
+
+  const cancelReply = useCallback(() => {
+    setReplyingToId(null);
+    setReplyText("");
+  }, []);
+
   const submitReply = useCallback(async () => {
-    if (!replyingTo || !replyText.trim()) return;
+    if (!replyingToId || !replyText.trim()) return;
     setReplySending(true);
     try {
       if (replyMode === "private") {
-        await api.sendPrivateReply(replyingTo, replyText.trim());
+        await sendPrivateReply(replyingToId, replyText.trim());
       } else {
-        await api.replyToCommentPublic(replyingTo, replyText.trim());
+        await replyToCommentPublic(replyingToId, replyText.trim());
       }
-      // Optimistic update — real-time SSE will confirm if needed
-      const submittedAt = new Date().toISOString();
-      setComments((prev) =>
-        prev.map((c) =>
-          c.id === replyingTo
-            ? {
-                ...c,
-                isReplied: true,
-                replyContent:
-                  replyMode === "public" ? replyText.trim() : c.replyContent,
-                repliedAt: submittedAt,
-                repliedByAi: false,
-                replies:
-                  replyMode === "public"
-                    ? [
-                        ...(c.replies ?? []),
-                        {
-                          id: `local-${replyingTo}-${submittedAt}`,
-                          externalId: `local-${replyingTo}-${submittedAt}`,
-                          authorId: activePage?.pageId ?? "page",
-                          authorName: activePage?.name ?? "Votre page",
-                          authorAvatarUrl: null,
-                          message: replyText.trim(),
-                          commentedAt: submittedAt,
-                          isPageReply: true,
-                          repliedByAi: false,
-                        },
-                      ]
-                    : c.replies,
-              }
-            : c,
-        ),
-      );
-      setReplyingTo(null);
-      setReplyText("");
+      setComments((prev) => prev.map((c) =>
+        c.id === replyingToId
+          ? {
+              ...c,
+              isReplied:    true,
+              replyContent: replyText.trim(),
+              repliedAt:    new Date().toISOString(),
+              repliedByAi:  false,
+            }
+          : c,
+      ));
+      cancelReply();
+      toast.success(replyMode === "private" ? "Message privé envoyé." : "Réponse publiée.");
+    } catch {
+      toast.error("Erreur lors de l'envoi.");
     } finally {
       setReplySending(false);
     }
-  }, [replyingTo, replyText, replyMode, activePage]);
+  }, [replyingToId, replyText, replyMode, cancelReply]);
 
-  const triggerAiReply = useCallback(async (commentId: string) => {
-    await api.triggerAiReply(commentId);
-    // Mark as processing — SSE comment:replied will update with actual reply
-    setComments((prev) =>
-      prev.map((c) =>
-        c.id === commentId ? { ...c, isReplied: true, repliedByAi: true } : c,
-      ),
-    );
+  const handleAiReply = useCallback(async (commentId: string) => {
+    markAiTyping(commentId);
+    try {
+      await triggerAiReply(commentId);
+      // The SSE onCommentReplied will update the UI and clear the typing indicator
+    } catch {
+      clearAiTyping(commentId);
+      toast.error("Impossible de déclencher la réponse IA.");
+    }
+  }, [markAiTyping, clearAiTyping]);
+
+  // ─── Post config save ──────────────────────────────────────────────────────
+
+  const saveConfig = useCallback(async (form: Partial<PostAiConfigForm>) => {
+    if (!selectedPost) return;
+    setSavingConfig(true);
+    setConfigError(null);
+    try {
+      const updated = await updatePostAiConfig(selectedPost.id, form);
+      setPostConfig(updated);
+      // Reflect autoReply change in posts list
+      setPosts((prev) => prev.map((p) =>
+        p.id === selectedPost.id
+          ? { ...p, postAiConfig: updated }
+          : p,
+      ));
+      setSelectedPost((prev) =>
+        prev?.id === selectedPost.id ? { ...prev, postAiConfig: updated } : prev,
+      );
+      toast.success("Configuration enregistrée.");
+    } catch {
+      setConfigError("Impossible d'enregistrer la configuration.");
+    } finally {
+      setSavingConfig(false);
+    }
+  }, [selectedPost]);
+
+  // ─── Add post ──────────────────────────────────────────────────────────────
+
+  const openAddDialog = useCallback(async () => {
+    setAddDialogOpen(true);
+    if (!activeKey) return;
+    setLoadingFeed(true);
+    try {
+      const feed = await getPageFeed(activeKey, 25);
+      setFeedPosts(feed);
+    } catch {
+      toast.error("Impossible de charger le fil de la page.");
+    } finally {
+      setLoadingFeed(false);
+    }
+  }, [activeKey]);
+
+  const handleAddPost = useCallback(async (feedPost: FbFeedPost) => {
+    if (!activeKey) return;
+    try {
+      const created = await addManagedPost({
+        businessProfileId: activeKey,
+        externalId:        feedPost.externalId,
+        message:           feedPost.message,
+        imageUrl:          feedPost.imageUrl,
+        permalinkUrl:      feedPost.permalinkUrl,
+        reactionsCount:    feedPost.reactionsCount,
+        commentsCount:     feedPost.commentsCount,
+        sharesCount:       feedPost.sharesCount,
+        publishedAt:       feedPost.publishedAt,
+      });
+      setPosts((prev) => [created, ...prev]);
+      setFeedPosts((prev) =>
+        prev.map((p) => p.externalId === feedPost.externalId ? { ...p, alreadyAdded: true } : p),
+      );
+      selectPost(created);
+      toast.success("Post ajouté à la gestion.");
+    } catch {
+      toast.error("Impossible d'ajouter ce post.");
+    }
+  }, [activeKey, selectPost]);
+
+  // ─── Delete post ───────────────────────────────────────────────────────────
+
+  const requestDeletePost = useCallback((postId: string) => {
+    setConfirmDeleteId(postId);
   }, []);
 
-  // ── Config save ────────────────────────────────────────────────────────────
-  const saveConfig = useCallback(
-    async (form: Partial<PostAiConfigForm>) => {
-      if (!selectedPostId) return;
-      setConfigSaving(true);
-      setConfigError(null);
-      try {
-        const updated = await api.updatePostAiConfig(selectedPostId, form);
-        setPostAiConfig(updated);
-        // Update post card immediately
-        setPosts((prev) =>
-          prev.map((p) =>
-            p.id === selectedPostId ? { ...p, postAiConfig: updated } : p,
-          ),
-        );
-      } catch (err: unknown) {
-        setConfigError(
-          err instanceof Error ? err.message : "Erreur lors de la sauvegarde.",
-        );
-        throw err;
-      } finally {
-        setConfigSaving(false);
+  const cancelDeletePost = useCallback(() => {
+    setConfirmDeleteId(null);
+  }, []);
+
+  const confirmDeletePost = useCallback(async () => {
+    const postId = confirmDeleteId;
+    if (!postId || !activeKey) return;
+    setConfirmDeleteId(null);
+    setDeletingId(postId);
+    try {
+      await deleteManagedPost(postId, activeKey);
+      setPosts((prev) => prev.filter((p) => p.id !== postId));
+      if (selectedPost?.id === postId) {
+        const nextPost = posts.find((p) => p.id !== postId) ?? null;
+        setSelectedPost(nextPost);
+        if (nextPost) {
+          loadComments(nextPost.id, "all", "", 1);
+        } else {
+          setComments([]);
+        }
       }
-    },
-    [selectedPostId],
-  );
+      toast.success("Post retiré de la gestion.");
+    } catch {
+      toast.error("Impossible de supprimer ce post.");
+    } finally {
+      setDeletingId(null);
+    }
+  }, [confirmDeleteId, activeKey, selectedPost?.id, posts, loadComments]);
 
-  // ── Page switch ────────────────────────────────────────────────────────────
-  const switchPage = useCallback((key: string) => {
-    setActivePageKey(key);
-    setSelectedPostId(null);
-    setPostSearch("");
-    setCommentSearch("");
-    setCommentFilter("all");
-    setPosts([]);
-    setComments([]);
-    setPostAiConfig(null);
-  }, []);
+  // ─── Comment stats ─────────────────────────────────────────────────────────
+
+  const commentStats: CommentStats = useMemo(() => {
+    const total          = commentTotal;
+    const repliedByAi    = comments.filter((c) => c.isReplied && c.repliedByAi === true).length;
+    const repliedByHuman = comments.filter((c) => c.isReplied && c.repliedByAi === false).length;
+    const unanswered     = comments.filter((c) => !c.isReplied).length;
+    // Estimate DM count from posts with privateReplyEnabled
+    const withPrivateDm  = posts.filter((p) => p.postAiConfig?.privateReplyEnabled).reduce(
+      (sum, p) => sum + (p._count?.comments ?? p.commentsCount), 0,
+    );
+    return { total, repliedByAi, repliedByHuman, unanswered, withPrivateDm };
+  }, [comments, commentTotal, posts]);
+
+  // ─── Active page ───────────────────────────────────────────────────────────
+
+  const activePage = pages.find((p) => p.key === activeKey) ?? null;
+  const autoReplyCount = posts.filter((p) => p.postAiConfig?.autoReply).length;
 
   return {
     // Pages
-    pages,
-    pagesLoading,
-    pagesError,
-    activePage,
-    activePageKey,
-    switchPage,
-
-    // Real-time status
-    realtimeConnected,
-
+    pages, activeKey, setActiveKey, activePage,
     // Posts
-    posts,
-    postsLoading,
-    postsError,
-    postSearch,
-    setPostSearch,
-    loadPosts,
-
-    // Auto-reply limit
-    autoReplyCount,
-    autoReplyLimitReached,
-
-    // Selected post
-    selectedPost,
-    selectedPostId,
-    setSelectedPostId,
-    activeTab,
-    setActiveTab,
-
+    posts, selectedPost, loadingPosts,
+    deletingId, confirmDeleteId,
+    requestDeletePost, cancelDeletePost, confirmDeletePost,
+    selectPost,
+    // Add post
+    addDialogOpen, setAddDialogOpen, feedPosts, loadingFeed, openAddDialog, handleAddPost,
     // Comments
-    comments,
-    commentsLoading,
-    commentFilter,
-    setCommentFilter,
-    commentSearch,
-    setCommentSearch,
-    commentPage,
-    commentTotal,
-    loadComments,
-    syncComments,
-    isSyncingComments,
-
+    comments, loadingComments, commentFilter, commentSearch,
+    commentPage, commentTotal, syncingComments,
+    handleFilterChange, handleSearchChange, handleSyncComments, loadNextPage,
+    // AI typing
+    aiTypingComments,
     // Reply
-    replyingTo,
-    setReplyingTo,
-    replyText,
-    setReplyText,
-    replySending,
-    replyMode,
-    setReplyMode,
-    submitReply,
-    triggerAiReply,
-
+    replyingToId, replyText, replyMode, replySending,
+    startReply, cancelReply, setReplyText, setReplyMode, submitReply, handleAiReply,
     // Config
-    postAiConfig,
-    configLoading,
-    configSaving,
-    configError,
+    activeTab, setActiveTab, postConfig, loadingConfig, savingConfig, configError,
     saveConfig,
-
-    // Add / delete
-    addDialogOpen,
-    setAddDialogOpen,
-    feedPosts,
-    feedLoading,
-    addingPost,
-    deletingPostId,
-    openAddDialog,
-    addPost,
-    deletePost,
+    autoReplyCount,
+    autoReplyLimitReached: autoReplyCount >= 10,
+    // Stats
+    commentStats,
   };
 }

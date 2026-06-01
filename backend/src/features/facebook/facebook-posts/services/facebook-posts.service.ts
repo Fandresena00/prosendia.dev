@@ -604,8 +604,19 @@ export class FacebookPostsService {
           replies: this.getStoredReplyForDisplay(comment),
         }));
 
+    // Compute the public Facebook profile URL for each comment author.
+    // post comments use the user's real Facebook ID (not page-scoped),
+    // so profile.php?id= is the reliable universal link format.
+    const dataWithProfileUrls = commentsWithReplies.map((c) => ({
+      ...c,
+      authorProfileUrl:
+        c.authorId && c.authorId !== 'unknown'
+          ? `https://www.facebook.com/profile.php?id=${c.authorId}`
+          : null,
+    }));
+
     return {
-      data: commentsWithReplies,
+      data: dataWithProfileUrls,
       pagination: {
         page,
         pageSize,

@@ -14,7 +14,7 @@
  *   - Emit SSE events so the inbox UI updates without a page refresh.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { FacebookGraphClient } from '../../facebook/clients/facebook-graph.client.js';
@@ -42,18 +42,20 @@ const UNANSWERED_THRESHOLD_MS = 24 * 60 * 60 * 1_000; // 24 h
 const INTER_CONNECTION_PAUSE_MS = 200;
 
 @Injectable()
-export class InboxSyncSchedulerService {
+export class InboxSyncSchedulerService implements OnModuleInit {
   private readonly logger = new Logger(InboxSyncSchedulerService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly graphClient: FacebookGraphClient,
-    private readonly encryption: TokenEncryptionService,
-    private readonly sseEmitter: InboxEventEmitter,
-    private readonly aiQueue: AiQueueProducer,
+    private readonly prisma:       PrismaService,
+    private readonly graphClient:  FacebookGraphClient,
+    private readonly encryption:   TokenEncryptionService,
+    private readonly sseEmitter:   InboxEventEmitter,
+    private readonly aiQueue:      AiQueueProducer,
   ) {}
 
-  // ─── Cron entry point ─────────────────────────────────────────────────────
+  async onModuleInit(): Promise<void> {
+    this.logger.log('Inbox background sync registered — every 5 min (cron)');
+  }
 
   @Cron(CronExpression.EVERY_5_MINUTES)
   async syncAllActiveConnections(): Promise<void> {
@@ -91,18 +93,16 @@ export class InboxSyncSchedulerService {
       }
     }
 
-    this.logger.debug(
-      `Background sync done — synced: ${synced}, skipped: ${skipped}`,
-    );
+    this.logger.debug(`Background sync done — synced: ${synced}, skipped: ${skipped}`);
   }
 
   // ─── Per-connection sync ───────────────────────────────────────────────────
 
   private async syncOneConnection(
-    pageId: string,
+    pageId:            string,
     businessProfileId: string,
-    userId: string,
-    token: string,
+    userId:            string,
+    token:             string,
   ): Promise<void> {
     const fbConversations = await this.graphClient.getConversations(
       pageId,
@@ -116,10 +116,7 @@ export class InboxSyncSchedulerService {
       if (new Date(fbConv.updated_time) < activeWindow) continue;
 
       const localConv = await this.upsertConversation(
-        fbConv,
-        pageId,
-        businessProfileId,
-        token,
+        fbConv, pageId, businessProfileId, token,
       );
       if (!localConv) continue;
 
@@ -134,43 +131,34 @@ export class InboxSyncSchedulerService {
   // ─── Upsert conversation from Facebook ────────────────────────────────────
 
   private async upsertConversation(
-    fbConv: {
-      id: string;
-      updated_time: string;
-      participants?: { data: ReadonlyArray<{ id: string; name: string }> };
-    },
-    pageId: string,
+    fbConv:            { id: string; updated_time: string; participants?: { data: ReadonlyArray<{ id: string; name: string }> } },
+    pageId:            string,
     businessProfileId: string,
-    token: string,
+    token:             string,
   ) {
     const client = fbConv.participants?.data.find((p) => p.id !== pageId);
     if (!client) return null;
 
     // Best-effort profile refresh (name + avatar).
     const profile = await this.fetchClientProfile(client.id, token);
-    const displayName = profile?.name ?? client.name ?? null;
+    const displayName     = profile?.name ?? client.name ?? null;
     const normalizedAvatar = normalizeUrl(profile?.profile_pic ?? null);
 
     return this.prisma.conversation.upsert({
-      where: {
-        businessProfileId_externalId: {
-          businessProfileId,
-          externalId: fbConv.id,
-        },
-      },
+      where: { businessProfileId_externalId: { businessProfileId, externalId: fbConv.id } },
       create: {
         businessProfileId,
-        externalId: fbConv.id,
-        clientPsid: client.id,
-        clientName: displayName,
+        externalId:      fbConv.id,
+        clientPsid:      client.id,
+        clientName:      displayName,
         clientAvatarUrl: normalizedAvatar,
-        lastMessageAt: new Date(fbConv.updated_time),
+        lastMessageAt:   new Date(fbConv.updated_time),
       },
       update: {
-        clientPsid: client.id,
-        clientName: displayName ?? undefined,
+        clientPsid:      client.id,
+        clientName:      displayName ?? undefined,
         clientAvatarUrl: normalizedAvatar ?? undefined,
-        lastMessageAt: new Date(fbConv.updated_time),
+        lastMessageAt:   new Date(fbConv.updated_time),
       },
     });
   }
@@ -179,15 +167,13 @@ export class InboxSyncSchedulerService {
 
   private async syncMessages(
     localConvId: string,
-    fbConvId: string,
-    pageId: string,
-    userId: string,
-    token: string,
+    fbConvId:    string,
+    pageId:      string,
+    userId:      string,
+    token:       string,
   ): Promise<void> {
     const fbMessages = await this.graphClient.getConversationMessages(
-      fbConvId,
-      token,
-      MESSAGES_PER_SYNC,
+      fbConvId, token, MESSAGES_PER_SYNC,
     );
 
     for (const fbMsg of fbMessages) {
@@ -195,47 +181,43 @@ export class InboxSyncSchedulerService {
         where: { externalId: fbMsg.id },
       });
 
-      const senderRole = fbMsg.from?.id === pageId ? 'PAGE' : 'CLIENT';
-      const fbCreatedAt = new Date(fbMsg.created_time ?? Date.now());
+      const senderRole      = fbMsg.from?.id === pageId ? 'PAGE' : 'CLIENT';
+      const fbCreatedAt     = new Date(fbMsg.created_time ?? Date.now());
       const firstAttachment = fbMsg.attachments?.data?.[0];
-      const imageUrl =
+      const imageUrl        =
         firstAttachment?.image_data?.url ??
-        (firstAttachment?.mime_type?.startsWith('image/')
-          ? (firstAttachment.file_url ?? null)
-          : null);
+        (firstAttachment?.mime_type?.startsWith('image/') ? firstAttachment.file_url ?? null : null);
       const fileUrl =
-        !imageUrl && firstAttachment?.file_url
-          ? firstAttachment.file_url
-          : null;
+        !imageUrl && firstAttachment?.file_url ? firstAttachment.file_url : null;
 
       if (!existing) {
         // New message missed by the webhook → insert and emit SSE.
         const saved = await this.prisma.message.create({
           data: {
             conversationId: localConvId,
-            externalId: fbMsg.id,
-            sender: senderRole,
-            content: fbMsg.message ? normalizeText(fbMsg.message) : null,
+            externalId:     fbMsg.id,
+            sender:         senderRole,
+            content:        fbMsg.message ? normalizeText(fbMsg.message) : null,
             imageUrl,
             fileUrl,
-            status: 'DELIVERED',
-            createdAt: fbCreatedAt,
+            status:         'DELIVERED',
+            createdAt:      fbCreatedAt,
           },
         });
 
         this.sseEmitter.newMessage(userId, {
           conversationId: localConvId,
           message: {
-            id: saved.id,
-            conversationId: localConvId,
-            sender: senderRole,
-            content: saved.content,
-            imageUrl: saved.imageUrl,
-            fileUrl: saved.fileUrl,
+            id:                  saved.id,
+            conversationId:      localConvId,
+            sender:              senderRole,
+            content:             saved.content,
+            imageUrl:            saved.imageUrl,
+            fileUrl:             saved.fileUrl,
             referenceImageUrls: [],
-            status: saved.status,
-            externalId: fbMsg.id,
-            createdAt: fbCreatedAt,
+            status:              saved.status,
+            externalId:          fbMsg.id,
+            createdAt:           fbCreatedAt,
           },
         });
 
@@ -245,16 +227,14 @@ export class InboxSyncSchedulerService {
 
         await this.prisma.conversation.update({
           where: { id: localConvId },
-          data: { lastMessage: preview, lastMessageAt: fbCreatedAt },
+          data:  { lastMessage: preview, lastMessageAt: fbCreatedAt },
         });
-      } else if (
-        fbMsg.message &&
-        existing.content !== normalizeText(fbMsg.message)
-      ) {
+
+      } else if (fbMsg.message && existing.content !== normalizeText(fbMsg.message)) {
         // Message was edited on Facebook — keep DB in sync.
         await this.prisma.message.update({
           where: { id: existing.id },
-          data: { content: normalizeText(fbMsg.message) },
+          data:  { content: normalizeText(fbMsg.message) },
         });
       }
     }
@@ -268,35 +248,35 @@ export class InboxSyncSchedulerService {
    * The producer deduplicates jobs via singletonKey — safe to call repeatedly.
    */
   private async ensureAiReply(
-    conversationId: string,
+    conversationId:    string,
     businessProfileId: string,
-    userId: string,
+    userId:            string,
   ): Promise<void> {
     const conv = await this.prisma.conversation.findUnique({
-      where: { id: conversationId },
+      where:  { id: conversationId },
       select: { handoverStatus: true },
     });
     if (!conv || conv.handoverStatus !== 'AI') return;
 
     const last = await this.prisma.message.findFirst({
-      where: { conversationId },
+      where:   { conversationId },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, sender: true, content: true, createdAt: true },
+      select:  { id: true, sender: true, content: true, createdAt: true },
     });
     if (!last || last.sender !== 'CLIENT') return;
 
     await this.prisma.conversation.update({
       where: { id: conversationId },
-      data: { needsAiReply: true },
+      data:  { needsAiReply: true },
     });
 
     await this.aiQueue.enqueueAiReply({
       conversationId,
-      inboundMessageId: last.id,
+      inboundMessageId:  last.id,
       businessProfileId,
       userId,
-      inboundText: last.content ?? undefined,
-      inboundCreatedAt: last.createdAt.toISOString(),
+      inboundText:       last.content ?? undefined,
+      inboundCreatedAt:  last.createdAt.toISOString(),
     });
   }
 
@@ -309,7 +289,7 @@ export class InboxSyncSchedulerService {
    */
   private async recoverUnansweredConversations(
     businessProfileId: string,
-    userId: string,
+    userId:            string,
   ): Promise<void> {
     const threshold = new Date(Date.now() - UNANSWERED_THRESHOLD_MS);
 
@@ -317,39 +297,35 @@ export class InboxSyncSchedulerService {
       where: {
         businessProfileId,
         handoverStatus: 'AI',
-        needsAiReply: true,
+        needsAiReply:   true,
       },
       select: { id: true },
     });
 
     for (const { id } of conversations) {
       const lastMsg = await this.prisma.message.findFirst({
-        where: { conversationId: id },
+        where:   { conversationId: id },
         orderBy: { createdAt: 'desc' },
-        select: { id: true, sender: true, content: true, createdAt: true },
+        select:  { id: true, sender: true, content: true, createdAt: true },
       });
 
       // Only act when the LAST message is from the CLIENT and is older than the threshold.
-      if (
-        !lastMsg ||
-        lastMsg.sender !== 'CLIENT' ||
-        lastMsg.createdAt > threshold
-      ) {
+      if (!lastMsg || lastMsg.sender !== 'CLIENT' || lastMsg.createdAt > threshold) {
         continue;
       }
 
       this.logger.warn(
         `Unanswered client message detected in conv=${id} ` +
-          `(age: ${Math.round((Date.now() - lastMsg.createdAt.getTime()) / 3_600_000)}h) — re-enqueuing AI reply`,
+        `(age: ${Math.round((Date.now() - lastMsg.createdAt.getTime()) / 3_600_000)}h) — re-enqueuing AI reply`,
       );
 
       await this.aiQueue.enqueueAiReply({
-        conversationId: id,
-        inboundMessageId: lastMsg.id,
+        conversationId:    id,
+        inboundMessageId:  lastMsg.id,
         businessProfileId,
         userId,
-        inboundText: lastMsg.content ?? undefined,
-        inboundCreatedAt: lastMsg.createdAt.toISOString(),
+        inboundText:       lastMsg.content ?? undefined,
+        inboundCreatedAt:  lastMsg.createdAt.toISOString(),
       });
     }
   }
@@ -357,15 +333,12 @@ export class InboxSyncSchedulerService {
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   private async fetchClientProfile(
-    psid: string,
+    psid:  string,
     token: string,
   ): Promise<{ name: string | null; profile_pic: string | null } | null> {
     try {
-      const p = await this.graphClient.getMessengerUserProfile(psid, token);
-      const name =
-        (p.name ??
-          [p.first_name, p.last_name].filter(Boolean).join(' ').trim()) ||
-        null;
+      const p    = await this.graphClient.getMessengerUserProfile(psid, token);
+      const name = (p.name ?? [p.first_name, p.last_name].filter(Boolean).join(' ').trim()) || null;
       return { name, profile_pic: p.profile_pic ?? null };
     } catch {
       return null;

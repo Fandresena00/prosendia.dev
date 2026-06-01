@@ -1,22 +1,13 @@
 /**
  * @file features/posts-comments/types/posts-comments.types.ts
- *
- * Types aligned with the backend API responses.
- * No local-only fields — everything comes from the backend.
  */
 
-// ─── Backend API response types ───────────────────────────────────────────────
-
 export interface FacebookPage {
-  /** businessProfileId — used as the page key */
   key:       string;
   pageId:    string;
   name:      string;
-  /** 2-letter initials fallback */
   avatar:    string;
-  /** Tailwind color class for fallback avatar */
   color:     string;
-  /** Facebook CDN avatar URL */
   avatarUrl: string;
 }
 
@@ -50,20 +41,22 @@ export interface ApiPostAiConfig {
 }
 
 export interface ApiComment {
-  id:              string;
-  postId:          string;
-  externalId:      string;
-  authorId:        string;
-  authorName:      string;
-  authorAvatarUrl: string | null;
-  message:         string;
-  commentedAt:     string;
-  isReplied:       boolean;
-  replyContent:    string | null;
-  repliedAt:       string | null;
-  repliedByAi:     boolean | null;
-  replies?:        ApiCommentReply[];
-  spamScore?:      number;
+  id:               string;
+  postId:           string;
+  externalId:       string;
+  authorId:         string;
+  authorName:       string;
+  authorAvatarUrl:  string | null;
+  /** Computed by backend: https://www.facebook.com/profile.php?id={authorId} */
+  authorProfileUrl?: string | null;
+  message:          string;
+  commentedAt:      string;
+  isReplied:        boolean;
+  replyContent:     string | null;
+  repliedAt:        string | null;
+  repliedByAi:      boolean | null;
+  replies?:         ApiCommentReply[];
+  spamScore?:       number;
 }
 
 export interface ApiCommentReply {
@@ -78,7 +71,6 @@ export interface ApiCommentReply {
   repliedByAi:     boolean | null;
 }
 
-/** Live feed post from Facebook (for add-post dialog). */
 export interface FbFeedPost {
   externalId:     string;
   message:        string | null;
@@ -91,8 +83,6 @@ export interface FbFeedPost {
   alreadyAdded:   boolean;
 }
 
-// ─── UI types ─────────────────────────────────────────────────────────────────
-
 export type CommentFilter = 'all' | 'pending' | 'replied';
 export type ActiveTab     = 'comments' | 'config';
 
@@ -104,8 +94,6 @@ export interface PostAiConfigForm {
   replyLanguage:       string;
   maxReplyTokens:      number;
 }
-
-// ─── Pagination ───────────────────────────────────────────────────────────────
 
 export interface Paginated<T> {
   data: T[];

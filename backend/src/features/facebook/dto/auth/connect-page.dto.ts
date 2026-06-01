@@ -1,44 +1,50 @@
+/**
+ * @file features/facebook/dto/auth/connect-page.dto.ts
+ *
+ * DTO for POST /facebook/connect.
+ *
+ * businessProfileId is intentionally NOT validated as UUID because:
+ *   - The OAuth state parameter may be 'default', 'null', or any string
+ *     set by the frontend before the user has a profile.
+ *   - Validation of whether it is a real profile happens in the service.
+ *   - The service handles non-UUID values by finding or creating a profile.
+ */
+
 import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUUID,
-  Matches,
+  MaxLength,
 } from 'class-validator';
 
 export class ConnectPageDto {
   /**
-   * Optional — when omitted, a default BusinessProfile is auto-created.
-   * When provided, must be a valid UUID of a profile owned by the caller.
+   * Optional business profile ID.
+   * May be a valid UUID v4 OR a non-UUID placeholder (e.g. 'default').
+   * The service resolves the correct profile regardless of this value.
    */
   @IsOptional()
-  @IsUUID(4, { message: 'businessProfileId must be a valid UUID v4' })
+  @IsString()
   businessProfileId?: string;
 
-  /** Facebook Page ID (numeric string, e.g. "123456789"). */
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\d+$/, { message: 'pageId must be a numeric string' })
   pageId!: string;
 
-  /** Short-lived or long-lived page access token. */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  pageName!: string;
+
   @IsString()
   @IsNotEmpty()
   pageAccessToken!: string;
 
-  @IsString()
-  @IsNotEmpty()
-  pageName!: string;
-
-  /** Optional Instagram Business Account ID linked to this page. */
   @IsOptional()
   @IsString()
   instagramAccountId?: string;
 
-  /**
-   * Comma-separated list of granted OAuth scopes returned by Facebook.
-   * Example: "pages_show_list,pages_messaging"
-   */
+  /** Comma-separated granted scope names, e.g. "pages_messaging,pages_show_list" */
   @IsOptional()
   @IsString()
   grantedScopes?: string;

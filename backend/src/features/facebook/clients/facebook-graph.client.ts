@@ -467,8 +467,11 @@ export class FacebookGraphClient {
       {
         access_token: accessToken,
         limit,
-        fields: 'id,message,from,created_time',
+        // from{id,name} — explicit subfields guarantee both are returned.
+        // Plain `from` sometimes omits name on certain Graph API versions.
+        fields: 'id,message,from{id,name},created_time',
         filter: 'toplevel',
+        summary: 'true',
       },
     );
     return result.data;
@@ -480,7 +483,7 @@ export class FacebookGraphClient {
   ): Promise<FbComment> {
     return this.get<FbComment>(`/${commentId}`, {
       access_token: accessToken,
-      fields: 'id,message,from,created_time',
+      fields: 'id,message,from{id,name},created_time',
     });
   }
 
@@ -494,7 +497,7 @@ export class FacebookGraphClient {
       {
         access_token: accessToken,
         limit,
-        fields: 'id,message,from,created_time',
+        fields: 'id,message,from{id,name},created_time',
         filter: 'stream',
       },
     );

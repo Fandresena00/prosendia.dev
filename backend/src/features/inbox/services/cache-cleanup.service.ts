@@ -24,7 +24,7 @@ import { PrismaService } from '../../../database/prisma.service.js';
 
 const MAX_CONVERSATIONS_PER_PROFILE = 40;
 const MAX_MESSAGES_PER_CONVERSATION = 50;
-const INACTIVE_THRESHOLD_DAYS = 30;
+const INACTIVE_THRESHOLD_DAYS       = 30;
 
 @Injectable()
 export class CacheCleanupService {
@@ -75,9 +75,7 @@ export class CacheCleanupService {
   private async trimOldMessages(): Promise<number> {
     let total = 0;
 
-    const overLimit = await this.prisma.$queryRaw<
-      Array<{ id: string; cnt: bigint }>
-    >`
+    const overLimit = await this.prisma.$queryRaw<Array<{ id: string; cnt: bigint }>>`
       SELECT c.id, COUNT(m.id) AS cnt
       FROM "Conversation" c
       JOIN "Message" m ON m."conversationId" = c.id
@@ -88,18 +86,15 @@ export class CacheCleanupService {
     for (const row of overLimit) {
       try {
         const cutoff = await this.prisma.message.findFirst({
-          where: { conversationId: row.id },
+          where:   { conversationId: row.id },
           orderBy: { createdAt: 'desc' },
-          skip: MAX_MESSAGES_PER_CONVERSATION,
-          select: { createdAt: true },
+          skip:    MAX_MESSAGES_PER_CONVERSATION,
+          select:  { createdAt: true },
         });
         if (!cutoff) continue;
 
         const { count } = await this.prisma.message.deleteMany({
-          where: {
-            conversationId: row.id,
-            createdAt: { lte: cutoff.createdAt },
-          },
+          where: { conversationId: row.id, createdAt: { lte: cutoff.createdAt } },
         });
         total += count;
       } catch (err: unknown) {
@@ -116,22 +111,18 @@ export class CacheCleanupService {
 
   private async trimInactiveConversations(): Promise<number> {
     let total = 0;
-    const profiles = await this.prisma.businessProfile.findMany({
-      select: { id: true },
-    });
+    const profiles = await this.prisma.businessProfile.findMany({ select: { id: true } });
 
     for (const { id } of profiles) {
       try {
-        const count = await this.prisma.conversation.count({
-          where: { businessProfileId: id },
-        });
+        const count = await this.prisma.conversation.count({ where: { businessProfileId: id } });
         if (count <= MAX_CONVERSATIONS_PER_PROFILE) continue;
 
         const cutoffConv = await this.prisma.conversation.findFirst({
-          where: { businessProfileId: id },
+          where:   { businessProfileId: id },
           orderBy: { lastMessageAt: 'desc' },
-          skip: MAX_CONVERSATIONS_PER_PROFILE,
-          select: { lastMessageAt: true },
+          skip:    MAX_CONVERSATIONS_PER_PROFILE,
+          select:  { lastMessageAt: true },
         });
         if (!cutoffConv?.lastMessageAt) continue;
 
@@ -145,19 +136,14 @@ export class CacheCleanupService {
         const toDelete = await this.prisma.conversation.findMany({
           where: {
             businessProfileId: id,
-            lastMessageAt: {
-              lte: cutoffConv.lastMessageAt,
-              lt: inactiveThreshold,
-            },
+            lastMessageAt: { lte: cutoffConv.lastMessageAt, lt: inactiveThreshold },
           },
           select: { id: true },
         });
         if (toDelete.length === 0) continue;
 
         const ids = toDelete.map((c) => c.id);
-        await this.prisma.message.deleteMany({
-          where: { conversationId: { in: ids } },
-        });
+        await this.prisma.message.deleteMany({ where: { conversationId: { in: ids } } });
         const { count: deleted } = await this.prisma.conversation.deleteMany({
           where: { id: { in: ids } },
         });
@@ -176,17 +162,15 @@ export class CacheCleanupService {
 
   private async hardTrimMessages(): Promise<number> {
     let total = 0;
-    const conversations = await this.prisma.conversation.findMany({
-      select: { id: true },
-    });
+    const conversations = await this.prisma.conversation.findMany({ select: { id: true } });
 
     for (const { id } of conversations) {
       try {
         const cutoff = await this.prisma.message.findFirst({
-          where: { conversationId: id },
+          where:   { conversationId: id },
           orderBy: { createdAt: 'desc' },
-          skip: MAX_MESSAGES_PER_CONVERSATION,
-          select: { createdAt: true },
+          skip:    MAX_MESSAGES_PER_CONVERSATION,
+          select:  { createdAt: true },
         });
         if (!cutoff) continue;
 
@@ -208,44 +192,38 @@ export class CacheCleanupService {
 
   private async hardTrimConversations(): Promise<number> {
     let total = 0;
-    const profiles = await this.prisma.businessProfile.findMany({
-      select: { id: true },
-    });
+    const profiles = await this.prisma.businessProfile.findMany({ select: { id: true } });
 
     for (const { id } of profiles) {
       try {
         const cutoff = await this.prisma.conversation.findFirst({
-          where: { businessProfileId: id },
+          where:   { businessProfileId: id },
           orderBy: { lastMessageAt: 'desc' },
-          skip: MAX_CONVERSATIONS_PER_PROFILE,
-          select: { id: true },
+          skip:    MAX_CONVERSATIONS_PER_PROFILE,
+          select:  { id: true },
         });
         if (!cutoff) continue;
 
         const toDelete = await this.prisma.conversation.findMany({
-          where: { businessProfileId: id },
+          where:   { businessProfileId: id },
           orderBy: { lastMessageAt: 'asc' },
-          take: 9999,
-          select: { id: true },
+          take:    9999,
+          select:  { id: true },
         });
 
         // Exclude the top-MAX conversations (already ranked desc above).
         const topIds = await this.prisma.conversation.findMany({
-          where: { businessProfileId: id },
+          where:   { businessProfileId: id },
           orderBy: { lastMessageAt: 'desc' },
-          take: MAX_CONVERSATIONS_PER_PROFILE,
-          select: { id: true },
+          take:    MAX_CONVERSATIONS_PER_PROFILE,
+          select:  { id: true },
         });
         const keepSet = new Set(topIds.map((c) => c.id));
-        const removeIds = toDelete
-          .filter((c) => !keepSet.has(c.id))
-          .map((c) => c.id);
+        const removeIds = toDelete.filter((c) => !keepSet.has(c.id)).map((c) => c.id);
 
         if (removeIds.length === 0) continue;
 
-        await this.prisma.message.deleteMany({
-          where: { conversationId: { in: removeIds } },
-        });
+        await this.prisma.message.deleteMany({ where: { conversationId: { in: removeIds } } });
         const { count } = await this.prisma.conversation.deleteMany({
           where: { id: { in: removeIds } },
         });
@@ -262,10 +240,7 @@ export class CacheCleanupService {
 
   // ─── Manual trigger ────────────────────────────────────────────────────────
 
-  async runNow(): Promise<{
-    messagesDeleted: number;
-    conversationsDeleted: number;
-  }> {
+  async runNow(): Promise<{ messagesDeleted: number; conversationsDeleted: number }> {
     const [messagesDeleted, conversationsDeleted] = await Promise.all([
       this.trimOldMessages(),
       this.trimInactiveConversations(),

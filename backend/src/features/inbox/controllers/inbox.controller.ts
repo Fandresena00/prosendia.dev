@@ -39,16 +39,14 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
-import type { Request } from 'express';
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard.js';
 import type { AuthenticatedUser } from '../../auth/types/authenticated-user.types.js';
-import type { PaginatedResponseDto } from '../../facebook/dto/shared/pagination.dto.js';
 import type {
   ConversationResponseDto,
-  MessageResponseDto,
   MessagesPageDto,
+  MessageResponseDto,
   ReferencePresetDto,
   SyncCompleteEvent,
   UploadReferenceImagesResponseDto,
@@ -68,15 +66,17 @@ import { InboxSyncService } from '../services/inbox-sync.service.js';
 import { MessageService } from '../services/message.service.js';
 import type { MulterFile } from '../services/upload.service.js';
 import { UploadService } from '../services/upload.service.js';
+import type { PaginatedResponseDto } from '../../facebook/dto/shared/pagination.dto.js';
+import type { Request } from 'express';
 
 @UseGuards(JwtAuthGuard)
 @Controller('inbox')
 export class InboxController {
   constructor(
     private readonly conversations: ConversationService,
-    private readonly messages: MessageService,
-    private readonly uploads: UploadService,
-    private readonly sync: InboxSyncService,
+    private readonly messages:      MessageService,
+    private readonly uploads:       UploadService,
+    private readonly sync:          InboxSyncService,
   ) {}
 
   // ─── Conversations ─────────────────────────────────────────────────────────
@@ -170,17 +170,14 @@ export class InboxController {
   @UseInterceptors(
     FilesInterceptor('images', 10, {
       storage: memoryStorage(),
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits:  { fileSize: 5 * 1024 * 1024 },
     }),
   )
   uploadReferenceImages(
     @UploadedFiles() files: MulterFile[],
     @Req() req: Request,
   ): Promise<UploadReferenceImagesResponseDto> {
-    return this.uploads.saveReferenceImages(
-      files,
-      `${req.protocol}://${req.get('host')}`,
-    );
+    return this.uploads.saveReferenceImages(files, `${req.protocol}://${req.get('host')}`);
   }
 
   @Get('reference-presets')
@@ -196,7 +193,7 @@ export class InboxController {
   @UseInterceptors(
     FilesInterceptor('images', 10, {
       storage: memoryStorage(),
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits:  { fileSize: 5 * 1024 * 1024 },
     }),
   )
   createReferencePreset(
@@ -207,11 +204,11 @@ export class InboxController {
   ): Promise<ReferencePresetDto> {
     return this.uploads.createReferencePreset({
       businessProfileId: dto.businessProfileId,
-      userId: user.sub,
-      name: dto.name,
-      description: dto.description,
+      userId:            user.sub,
+      name:              dto.name,
+      description:       dto.description,
       files,
-      baseUrl: `${req.protocol}://${req.get('host')}`,
+      baseUrl:           `${req.protocol}://${req.get('host')}`,
     });
   }
 
@@ -231,17 +228,14 @@ export class InboxController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits:  { fileSize: 5 * 1024 * 1024 },
     }),
   )
   uploadTemp(
     @UploadedFile() file: MulterFile,
     @Req() req: Request,
   ): Promise<{ url: string }> {
-    return this.uploads.saveTempUpload(
-      file,
-      `${req.protocol}://${req.get('host')}`,
-    );
+    return this.uploads.saveTempUpload(file, `${req.protocol}://${req.get('host')}`);
   }
 
   // ─── Sync ──────────────────────────────────────────────────────────────────

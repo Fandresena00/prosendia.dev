@@ -1,11 +1,26 @@
 /**
- * FacebookAuthService — full OAuth flow, page connect and disconnect.
+ * @file features/facebook/services/facebook-auth.service.ts
  *
- * Flow:
- *  1. buildOAuthUrl()   — frontend redirects the user to Facebook
- *  2. handleCallback()  — exchanges code for page tokens, returns page choices
- *  3. connectPage()     — user picks a page; we store the token and subscribe
- *  4. disconnectPage()  — unsubscribes webhook and removes the connection
+ * Full OAuth flow: build URL → exchange code → connect page → disconnect.
+ *
+ * KEY FIXES
+ * ─────────
+ * 1. connectPage: businessProfileId may be a non-UUID string (e.g. 'default'
+ *    from the OAuth state parameter when the user has no profile yet).
+ *    The service now validates the UUID itself before doing a DB lookup,
+ *    instead of relying on the DTO validator which was throwing 400.
+ *
+ * 2. connectPage: after a disconnect, the BusinessProfile remains in DB
+ *    (orphaned — no FacebookConnection). When the user reconnects, the old
+ *    code created a NEW profile, leaving duplicates and losing AI config.
+ *    Fix: if no profile is found by ID, look for an orphaned profile for
+ *    this user (one that has no FacebookConnection), and reuse it.
+ *    Only create a new profile if no orphan exists.
+ *
+ * 3. disconnectPage: does NOT delete the BusinessProfile. The profile holds
+ *    AI config, conversation history, and reference presets. Deleting it
+ *    would destroy user data silently. The orphan-reuse logic in connectPage
+ *    handles reconnection cleanly.
  */
 
 import {
@@ -27,13 +42,20 @@ import {
 } from '../facebook.constants.js';
 import { TokenEncryptionService } from '../security/token-encryption.service.js';
 
-/** Returned by handleCallback — what the frontend uses to render the page picker. */
+/** Regex for UUID v4 validation (mirrors class-validator's @IsUUID('4')). */
+const UUID_V4_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuidV4(value: string | undefined | null): value is string {
+  return !!value && UUID_V4_RE.test(value);
+}
+
 export interface OAuthPageOption {
-  readonly id: string;
-  readonly name: string;
-  readonly category: string;
-  readonly accessToken: string;
-  readonly instagramAccountId: string | null;
+  readonly id:                  string;
+  readonly name:                string;
+  readonly category:            string;
+  readonly accessToken:         string;
+  readonly instagramAccountId:  string | null;
 }
 
 @Injectable()
@@ -41,23 +63,23 @@ export class FacebookAuthService {
   private readonly logger = new Logger(FacebookAuthService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly graphClient: FacebookGraphClient,
-    private readonly encryption: TokenEncryptionService,
+    private readonly prisma:        PrismaService,
+    private readonly graphClient:   FacebookGraphClient,
+    private readonly encryption:    TokenEncryptionService,
     private readonly configService: ConfigService,
   ) {}
 
-  // ─── Step 1 — OAuth URL ───────────────────────────────────────────────────
+  // ─── Step 1 — Build OAuth URL ─────────────────────────────────────────────
 
   buildOAuthUrl(businessProfileId: string): string {
-    const appId = this.configService.getOrThrow<string>('facebookAppId');
+    const appId       = this.configService.getOrThrow<string>('facebookAppId');
     const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
 
     const params = new URLSearchParams({
-      client_id: appId,
-      redirect_uri: `${frontendUrl}/facebook/callback`, // Must match the redirect URI set in Facebook App settings
-      scope: FACEBOOK_SCOPES.join(','),
-      state: businessProfileId, // Passed back as-is on the callback
+      client_id:     appId,
+      redirect_uri:  `${frontendUrl}/facebook/callback`,
+      scope:         FACEBOOK_SCOPES.join(','),
+      state:         businessProfileId,
       response_type: 'code',
     });
 
@@ -66,14 +88,6 @@ export class FacebookAuthService {
 
   // ─── Step 2 — OAuth callback ──────────────────────────────────────────────
 
-  /**
-   * Exchanges the authorization code for a long-lived token, then fetches the
-   * pages the user manages. The frontend uses the returned list to show a
-   * page-picker UI before calling connectPage().
-   *
-   * Note: businessProfileId is available here (via state param) but not used
-   * because this step only returns options — connectPage() binds the choice.
-   */
   async handleCallback(code: string): Promise<OAuthPageOption[]> {
     const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
 
@@ -82,44 +96,78 @@ export class FacebookAuthService {
       `${frontendUrl}/facebook/callback`,
     );
     const longToken = await this.graphClient.extendToken(shortToken);
-    const pages = await this.graphClient.getUserPages(longToken);
+    const pages     = await this.graphClient.getUserPages(longToken);
 
     return pages.map((p) => ({
-      id: p.id,
-      name: p.name,
-      category: p.category,
-      accessToken: p.access_token,
-      instagramAccountId: p.instagram_business_account?.id ?? null,
+      id:                   p.id,
+      name:                 p.name,
+      category:             p.category,
+      accessToken:          p.access_token,
+      instagramAccountId:   p.instagram_business_account?.id ?? null,
     }));
   }
 
   // ─── Step 3 — Connect page ────────────────────────────────────────────────
 
   async connectPage(
-    dto: ConnectPageDto,
+    dto:    ConnectPageDto,
     userId: string,
   ): Promise<FacebookConnectionResponseDto> {
-    // 1. Resolve or auto-create the BusinessProfile
-    let profile = dto.businessProfileId
-      ? await this.prisma.businessProfile.findFirst({
-          where: { id: dto.businessProfileId, userId },
-        })
-      : null;
+
+    // ── Resolve BusinessProfile ───────────────────────────────────────────
+    //
+    // Priority:
+    //   1. dto.businessProfileId is a valid UUID → look up that profile for user
+    //   2. Not found / not UUID → look for an orphaned profile (no connection)
+    //   3. No orphan → create a new profile
+    //
+    // An "orphaned" profile is one that was left behind after a disconnect.
+    // Reusing it preserves AI config, conversations, and reference presets.
+
+    let profile: { id: string } | null = null;
+
+    if (isUuidV4(dto.businessProfileId)) {
+      profile = await this.prisma.businessProfile.findFirst({
+        where:  { id: dto.businessProfileId, userId },
+        select: { id: true },
+      });
+    }
 
     if (!profile) {
+      // Look for a profile that has no FacebookConnection (disconnected / never connected).
+      profile = await this.prisma.businessProfile.findFirst({
+        where: {
+          userId,
+          facebookConnection: null, // Prisma null check on optional one-to-one
+        },
+        select:  { id: true },
+        orderBy: { updatedAt: 'desc' }, // Pick the most recently used one
+      });
+
+      if (profile) {
+        this.logger.log(
+          `Reusing orphaned BusinessProfile ${profile.id} for user ${userId} (page: ${dto.pageName})`,
+        );
+      }
+    }
+
+    if (!profile) {
+      // No existing profile — create a fresh one.
       profile = await this.prisma.businessProfile.create({
         data: {
-          name: dto.pageName,
+          name:         dto.pageName,
           businessType: 'OTHER',
-          user: { connect: { id: userId } },
+          user:         { connect: { id: userId } },
         },
+        select: { id: true },
       });
       this.logger.log(
-        `Auto-created BusinessProfile ${profile.id} for user ${userId} (page: ${dto.pageName})`,
+        `Created BusinessProfile ${profile.id} for user ${userId} (page: ${dto.pageName})`,
       );
     }
 
-    // 2. Validate the page token before storing it
+    // ── Validate the page token ────────────────────────────────────────────
+
     const isValid = await this.graphClient.isTokenValid(dto.pageAccessToken);
     if (!isValid) {
       throw new BadRequestException(
@@ -127,7 +175,9 @@ export class FacebookAuthService {
       );
     }
 
-    // 3. Conflict — same page already connected to a *different* profile
+    // ── Conflict check ─────────────────────────────────────────────────────
+    // Prevent the same Facebook page from being connected to a DIFFERENT profile.
+
     const existing = await this.prisma.facebookConnection.findUnique({
       where: { pageId: dto.pageId },
     });
@@ -137,45 +187,51 @@ export class FacebookAuthService {
       );
     }
 
-    // 4. Encrypt and upsert the connection
+    // ── Encrypt token and resolve scopes ──────────────────────────────────
+
     const encryptedAccessToken = this.encryption.encrypt(dto.pageAccessToken);
-    const appId = this.configService.getOrThrow<string>('facebookAppId');
-    const debug = await this.graphClient.debugToken(dto.pageAccessToken);
+    const appId                = this.configService.getOrThrow<string>('facebookAppId');
+    const debug                = await this.graphClient.debugToken(dto.pageAccessToken);
+
     const grantedScopes =
       debug?.scopes?.map((s) => s.trim()).filter(Boolean) ??
       dto.grantedScopes?.split(',').map((s) => s.trim()).filter(Boolean) ??
       [];
 
+    // ── Upsert FacebookConnection ─────────────────────────────────────────
+
     const connection = await this.prisma.facebookConnection.upsert({
-      where: { pageId: dto.pageId },
+      where:  { pageId: dto.pageId },
       create: {
         businessProfileId: profile.id,
-        pageId: dto.pageId,
-        pageName: dto.pageName,
+        pageId:            dto.pageId,
+        pageName:          dto.pageName,
         encryptedAccessToken,
         appId,
         grantedScopes,
         instagramAccountId: dto.instagramAccountId ?? null,
-        tokenStatus: 'VALID',
-        tokenValidatedAt: new Date(),
-        isActive: true,
+        tokenStatus:        'VALID',
+        tokenValidatedAt:   new Date(),
+        isActive:           true,
       },
       update: {
-        pageName: dto.pageName,
+        pageName:            dto.pageName,
         encryptedAccessToken,
         grantedScopes,
-        instagramAccountId: dto.instagramAccountId ?? null,
-        tokenStatus: 'VALID',
-        tokenValidatedAt: new Date(),
-        isActive: true,
+        instagramAccountId:  dto.instagramAccountId ?? null,
+        tokenStatus:         'VALID',
+        tokenValidatedAt:    new Date(),
+        isActive:            true,
       },
     });
 
     this.logger.log(
-      `Connected page ${dto.pageId} with scopes: ${grantedScopes.join(', ') || '(none)'}`,
+      `Connected page ${dto.pageId} → profile ${profile.id} ` +
+      `(scopes: ${grantedScopes.join(', ') || '(none)'})`,
     );
 
-    // 5. Subscribe to webhook (best-effort — failure should not block the connect)
+    // ── Subscribe to webhook (best-effort) ────────────────────────────────
+
     await this.trySubscribeWebhook(
       connection.id,
       dto.pageId,
@@ -187,16 +243,22 @@ export class FacebookAuthService {
 
   // ─── Step 4 — Disconnect ──────────────────────────────────────────────────
 
+  /**
+   * Removes the FacebookConnection but intentionally keeps the BusinessProfile.
+   *
+   * The BusinessProfile may contain AI config, conversations, and reference
+   * presets that the user would lose if we deleted it. When the user reconnects
+   * a page, connectPage() will find this "orphaned" profile and reuse it.
+   */
   async disconnectPage(
     businessProfileId: string,
-    userId: string,
+    userId:            string,
   ): Promise<void> {
     const conn = await this.prisma.facebookConnection.findFirst({
       where: { businessProfileId, businessProfile: { userId } },
     });
     if (!conn) throw new NotFoundException('Facebook connection not found.');
 
-    // Best-effort webhook unsubscription — failure is logged but non-fatal
     try {
       const token = this.encryption.decrypt(conn.encryptedAccessToken);
       await this.graphClient.unsubscribePageFromWebhook(conn.pageId, token);
@@ -207,16 +269,18 @@ export class FacebookAuthService {
     }
 
     await this.prisma.facebookConnection.delete({ where: { id: conn.id } });
+
     this.logger.log(
-      `Disconnected Facebook page ${conn.pageId} for user ${userId}`,
+      `Disconnected page ${conn.pageId} for user ${userId} ` +
+      `(BusinessProfile ${businessProfileId} preserved for reconnect)`,
     );
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   private async trySubscribeWebhook(
-    connectionId: string,
-    pageId: string,
+    connectionId:    string,
+    pageId:          string,
     pageAccessToken: string,
   ): Promise<void> {
     try {
@@ -227,7 +291,7 @@ export class FacebookAuthService {
       );
       await this.prisma.facebookConnection.update({
         where: { id: connectionId },
-        data: { webhookSubscribed: true },
+        data:  { webhookSubscribed: true },
       });
       this.logger.log(`Webhook subscribed for page ${pageId}`);
     } catch (error) {
@@ -241,19 +305,19 @@ export class FacebookAuthService {
     conn: Awaited<ReturnType<typeof this.prisma.facebookConnection.upsert>>,
   ): FacebookConnectionResponseDto {
     return {
-      id: conn.id,
-      businessProfileId: conn.businessProfileId,
-      pageId: conn.pageId,
-      pageName: conn.pageName,
-      tokenStatus: conn.tokenStatus,
-      tokenValidatedAt: conn.tokenValidatedAt,
-      tokenExpiresAt: conn.tokenExpiresAt,
-      webhookSubscribed: conn.webhookSubscribed,
-      isActive: conn.isActive,
-      grantedScopes: conn.grantedScopes as string[],
+      id:                 conn.id,
+      businessProfileId:  conn.businessProfileId,
+      pageId:             conn.pageId,
+      pageName:           conn.pageName,
+      tokenStatus:        conn.tokenStatus,
+      tokenValidatedAt:   conn.tokenValidatedAt,
+      tokenExpiresAt:     conn.tokenExpiresAt,
+      webhookSubscribed:  conn.webhookSubscribed,
+      isActive:           conn.isActive,
+      grantedScopes:      conn.grantedScopes as string[],
       instagramAccountId: conn.instagramAccountId,
-      lastSyncedAt: conn.lastSyncedAt,
-      createdAt: conn.createdAt,
+      lastSyncedAt:       conn.lastSyncedAt,
+      createdAt:          conn.createdAt,
     };
   }
 }
