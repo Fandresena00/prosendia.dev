@@ -5,6 +5,16 @@
  * Root layout for the inbox.
  */
 
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Loader2, MessageSquareDashed, RefreshCw } from "lucide-react";
+import Link from "next/link";
 import { AddPresetDialog } from "../components/AddPresetDialog";
 import { ChatView } from "../components/ChatView";
 import { ConvList } from "../components/ConvList";
@@ -12,25 +22,24 @@ import { InboxInfoPanel } from "../components/InboxInfoPanel";
 import { InboxSettingsDrawer } from "../components/InboxSettingsDrawer";
 import { useInbox } from "../hooks/useInbox";
 import type { PhotoPreset } from "../types/inbox.types";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Loader2, MessageSquareDashed, RefreshCw } from "lucide-react";
-import {
-  Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle,
-} from "@/components/ui/empty";
 
 export function InboxPage() {
   const inbox = useInbox();
 
   // ── Empty state: no Facebook page connected ────────────────────────────────
-  if (!inbox.loadingConvs && !inbox.isInitialSyncing && inbox.accounts.length === 0) {
+  if (
+    !inbox.loadingConvs &&
+    !inbox.isInitialSyncing &&
+    inbox.accounts.length === 0
+  ) {
     return (
       <div className="flex h-[calc(100vh-20px)] items-center justify-center bg-background p-6">
         <Empty className="max-w-xl border">
           <EmptyHeader>
             <EmptyTitle>Aucune page Facebook connectée</EmptyTitle>
             <EmptyDescription>
-              Connectez d&apos;abord une page Facebook pour charger vos conversations.
+              Connectez d&apos;abord une page Facebook pour charger vos
+              conversations.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
@@ -103,8 +112,8 @@ export function InboxPage() {
         compactMode={inbox.uiPrefs.compactMode}
         className={
           inbox.showList
-            ? "mx-auto w-full max-w-[430px] sm:mx-0 sm:w-[340px] sm:max-w-[340px] sm:basis-[340px] xl:w-[360px] xl:max-w-[360px] xl:basis-[360px]"
-            : "hidden sm:flex sm:w-[340px] sm:max-w-[340px] sm:basis-[340px] xl:w-[360px] xl:max-w-[360px] xl:basis-[360px]"
+            ? "mx-auto w-full max-w-107.5 sm:mx-0 sm:w-85 sm:max-w-85 sm:basis-85 xl:w-90 xl:max-w-90 xl:basis-90"
+            : "hidden sm:flex sm:w-85 sm:max-w-85 sm:basis-85 xl:w-90 xl:max-w-90 xl:basis-90"
         }
       />
 
@@ -125,7 +134,9 @@ export function InboxPage() {
           pendingPhotos={inbox.pendingPhotos}
           pendingFile={inbox.pendingFile}
           pendingPreset={inbox.pendingPreset}
-          onRemovePhoto={(i) => inbox.setPendingPhotos((p) => p.filter((_, j) => j !== i))}
+          onRemovePhoto={(i) =>
+            inbox.setPendingPhotos((p) => p.filter((_, j) => j !== i))
+          }
           onRemoveFile={() => inbox.setPendingFile(null)}
           onRemovePendingPreset={() => inbox.setPendingPreset(null)}
           presets={inbox.presets}
@@ -146,44 +157,47 @@ export function InboxPage() {
           textareaRef={inbox.textareaRef}
           onPhotoFiles={inbox.handlePhotoFiles}
           onFileSelect={inbox.handleFileSelect}
-        infoPanel={<InboxInfoPanel sseStatus={inbox.sseStatus} />}
-        className={!inbox.showList ? "flex" : "hidden sm:flex"}
+          infoPanel={<InboxInfoPanel sseStatus={inbox.sseStatus} />}
+          className={!inbox.showList ? "flex" : "hidden sm:flex"}
         />
-      ) : (
-        /* No conversation selected — placeholder */
-        !inbox.loadingConvs && inbox.initialSyncDone && inbox.convs.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3 text-center px-8">
-              <div className="h-12 w-12 rounded-2xl bg-secondary flex items-center justify-center">
-                <MessageSquareDashed className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold">Aucune conversation</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Les conversations arriveront ici lorsque des clients vous écriront.
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 text-xs mt-1"
-                onClick={() => {
-                  if (inbox.activeAcc) inbox.setActiveAcc(inbox.activeAcc);
-                }}
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                Actualiser
-              </Button>
+      ) : /* No conversation selected — placeholder */
+      !inbox.loadingConvs &&
+        inbox.initialSyncDone &&
+        inbox.convs.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 text-center px-8">
+            <div className="h-12 w-12 rounded-2xl bg-secondary flex items-center justify-center">
+              <MessageSquareDashed className="h-6 w-6 text-muted-foreground" />
             </div>
+            <div>
+              <p className="text-sm font-semibold">Aucune conversation</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Les conversations arriveront ici lorsque des clients vous
+                écriront.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 text-xs mt-1"
+              onClick={() => {
+                if (inbox.activeAcc) inbox.setActiveAcc(inbox.activeAcc);
+              }}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Actualiser
+            </Button>
           </div>
-        ) : null
-      )}
+        </div>
+      ) : null}
 
       {/* ── Dialogs ── */}
       <AddPresetDialog
         open={inbox.addPresetOpen}
         onClose={() => inbox.setAddPresetOpen(false)}
-        onAdd={(p) => inbox.addPreset(p as Omit<PhotoPreset, "id"> & { files: File[] })}
+        onAdd={(p) =>
+          inbox.addPreset(p as Omit<PhotoPreset, "id"> & { files: File[] })
+        }
       />
 
       <InboxSettingsDrawer

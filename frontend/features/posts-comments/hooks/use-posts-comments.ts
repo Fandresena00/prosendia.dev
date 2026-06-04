@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import type { CommentStats } from "../components/stats-sidebar";
 import {
   addManagedPost,
   deleteManagedPost,
@@ -40,103 +41,120 @@ import type {
   PostAiConfigForm,
 } from "../types/posts-comments.types";
 import { usePostsRealtime } from "./use-posts-realtime";
-import type { CommentStats } from "../components/stats-sidebar";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const COMMENT_PAGE_SIZE  = 50;
-const AI_TYPING_TIMEOUT  = 30_000; // auto-clear after 30s
+const COMMENT_PAGE_SIZE = 50;
+const AI_TYPING_TIMEOUT = 30_000; // auto-clear after 30s
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function usePostsComments() {
   // ── Pages ──────────────────────────────────────────────────────────────────
-  const [pages,     setPages]     = useState<FacebookPage[]>([]);
+  const [pages, setPages] = useState<FacebookPage[]>([]);
   const [activeKey, setActiveKey] = useState<string>("");
 
   // ── Posts ──────────────────────────────────────────────────────────────────
-  const [posts,         setPosts]         = useState<ApiPost[]>([]);
-  const [selectedPost,  setSelectedPost]  = useState<ApiPost | null>(null);
-  const [loadingPosts,  setLoadingPosts]  = useState(true);
-  const [deletingId,    setDeletingId]    = useState<string | null>(null);
+  const [posts, setPosts] = useState<ApiPost[]>([]);
+  const [selectedPost, setSelectedPost] = useState<ApiPost | null>(null);
+  const [loadingPosts, setLoadingPosts] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // ── Delete confirmation ────────────────────────────────────────────────────
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // ── Comments ───────────────────────────────────────────────────────────────
-  const [comments,        setComments]        = useState<ApiComment[]>([]);
+  const [comments, setComments] = useState<ApiComment[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
-  const [commentFilter,   setCommentFilter]   = useState<CommentFilter>("all");
-  const [commentSearch,   setCommentSearch]   = useState("");
-  const [commentPage,     setCommentPage]     = useState(1);
-  const [commentTotal,    setCommentTotal]    = useState(0);
+  const [commentFilter, setCommentFilter] = useState<CommentFilter>("all");
+  const [commentSearch, setCommentSearch] = useState("");
+  const [commentPage, setCommentPage] = useState(1);
+  const [commentTotal, setCommentTotal] = useState(0);
   const [syncingComments, setSyncingComments] = useState(false);
 
   // ── AI typing tracking ─────────────────────────────────────────────────────
-  const [aiTypingComments, setAiTypingComments] = useState<Set<string>>(new Set());
-  const aiTypingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const [aiTypingComments, setAiTypingComments] = useState<Set<string>>(
+    new Set(),
+  );
+  const aiTypingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
 
   // ── Active tab ─────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<ActiveTab>("comments");
 
   // ── Post config ────────────────────────────────────────────────────────────
-  const [postConfig,     setPostConfig]     = useState<ApiPostAiConfig | null>(null);
-  const [loadingConfig,  setLoadingConfig]  = useState(false);
-  const [savingConfig,   setSavingConfig]   = useState(false);
-  const [configError,    setConfigError]    = useState<string | null>(null);
+  const [postConfig, setPostConfig] = useState<ApiPostAiConfig | null>(null);
+  const [loadingConfig, setLoadingConfig] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
 
   // ── Add post dialog ────────────────────────────────────────────────────────
   const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [feedPosts,     setFeedPosts]     = useState<FbFeedPost[]>([]);
-  const [loadingFeed,   setLoadingFeed]   = useState(false);
+  const [feedPosts, setFeedPosts] = useState<FbFeedPost[]>([]);
+  const [loadingFeed, setLoadingFeed] = useState(false);
 
   // ── Reply state ────────────────────────────────────────────────────────────
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
-  const [replyText,    setReplyText]    = useState("");
-  const [replyMode,    setReplyMode]    = useState<"public" | "private">("public");
+  const [replyText, setReplyText] = useState("");
+  const [replyMode, setReplyMode] = useState<"public" | "private">("public");
   const [replySending, setReplySending] = useState(false);
 
   // ── Real-time ──────────────────────────────────────────────────────────────
   const activePageId = pages.find((p) => p.key === activeKey)?.key;
   const selectedPostRef = useRef<ApiPost | null>(null);
-  useEffect(() => { selectedPostRef.current = selectedPost; }, [selectedPost]);
+  useEffect(() => {
+    selectedPostRef.current = selectedPost;
+  }, [selectedPost]);
 
   // ─── Load comments ─────────────────────────────────────────────────────────
 
-  const loadComments = useCallback(async (
-    postId: string,
-    filter: CommentFilter = "all",
-    search = "",
-    page   = 1,
-  ) => {
-    setLoadingComments(true);
-    try {
-      const res = await getComments(postId, page, COMMENT_PAGE_SIZE, filter, search);
-      if (page === 1) {
-        setComments(res.data);
-      } else {
-        setComments((prev) => [...prev, ...res.data]);
+  const loadComments = useCallback(
+    async (
+      postId: string,
+      filter: CommentFilter = "all",
+      search = "",
+      page = 1,
+    ) => {
+      setLoadingComments(true);
+      try {
+        const res = await getComments(
+          postId,
+          page,
+          COMMENT_PAGE_SIZE,
+          filter,
+          search,
+        );
+        if (page === 1) {
+          setComments(res.data);
+        } else {
+          setComments((prev) => [...prev, ...res.data]);
+        }
+        setCommentTotal(res.pagination.total);
+        setCommentPage(page);
+      } catch {
+        toast.error("Impossible de charger les commentaires.");
+      } finally {
+        setLoadingComments(false);
       }
-      setCommentTotal(res.pagination.total);
-      setCommentPage(page);
-    } catch {
-      toast.error("Impossible de charger les commentaires.");
-    } finally {
-      setLoadingComments(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   // ─── Select post ───────────────────────────────────────────────────────────
 
-  const selectPost = useCallback((post: ApiPost) => {
-    setSelectedPost(post);
-    setCommentFilter("all");
-    setCommentSearch("");
-    setCommentPage(1);
-    setActiveTab("comments");
-    setPostConfig(null);
-    loadComments(post.id, "all", "", 1);
-  }, [loadComments]);
+  const selectPost = useCallback(
+    (post: ApiPost) => {
+      setSelectedPost(post);
+      setCommentFilter("all");
+      setCommentSearch("");
+      setCommentPage(1);
+      setActiveTab("comments");
+      setPostConfig(null);
+      loadComments(post.id, "all", "", 1);
+    },
+    [loadComments],
+  );
 
   // ─── AI typing helpers ────────────────────────────────────────────────────
 
@@ -146,21 +164,35 @@ export function usePostsComments() {
     const existing = aiTypingTimers.current.get(commentId);
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
-      setAiTypingComments((prev) => { const next = new Set(prev); next.delete(commentId); return next; });
+      setAiTypingComments((prev) => {
+        const next = new Set(prev);
+        next.delete(commentId);
+        return next;
+      });
       aiTypingTimers.current.delete(commentId);
     }, AI_TYPING_TIMEOUT);
     aiTypingTimers.current.set(commentId, timer);
   }, []);
 
   const clearAiTyping = useCallback((commentId: string) => {
-    setAiTypingComments((prev) => { const next = new Set(prev); next.delete(commentId); return next; });
+    setAiTypingComments((prev) => {
+      const next = new Set(prev);
+      next.delete(commentId);
+      return next;
+    });
     const existing = aiTypingTimers.current.get(commentId);
-    if (existing) { clearTimeout(existing); aiTypingTimers.current.delete(commentId); }
+    if (existing) {
+      clearTimeout(existing);
+      aiTypingTimers.current.delete(commentId);
+    }
   }, []);
 
   // Cleanup timers on unmount
   useEffect(() => {
-    return () => { aiTypingTimers.current.forEach((t) => clearTimeout(t)); };
+    return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      aiTypingTimers.current.forEach((t) => clearTimeout(t));
+    };
   }, []);
 
   // ─── SSE real-time handlers ────────────────────────────────────────────────
@@ -170,45 +202,65 @@ export function usePostsComments() {
       const cur = selectedPostRef.current;
       if (!cur || comment.postId !== cur.id) return;
       setComments((prev) => {
-        if (prev.some((c) => c.id === comment.id || c.externalId === comment.externalId)) return prev;
+        if (
+          prev.some(
+            (c) => c.id === comment.id || c.externalId === comment.externalId,
+          )
+        )
+          return prev;
         return [comment, ...prev];
       });
       setCommentTotal((t) => t + 1);
-      setPosts((prev) => prev.map((p) =>
-        p.id === comment.postId
-          ? { ...p, commentsCount: p.commentsCount + 1, _count: { comments: (p._count?.comments ?? p.commentsCount) + 1 } }
-          : p,
-      ));
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === comment.postId
+            ? {
+                ...p,
+                commentsCount: p.commentsCount + 1,
+                _count: {
+                  comments: (p._count?.comments ?? p.commentsCount) + 1,
+                },
+              }
+            : p,
+        ),
+      );
     },
 
     onCommentReplied: (_postId, commentId, reply) => {
       clearAiTyping(commentId);
-      setComments((prev) => prev.map((c) =>
-        c.id === commentId
-          ? {
-              ...c,
-              isReplied:    true,
-              replyContent: reply.content,
-              repliedAt:    new Date().toISOString(),
-              repliedByAi:  reply.repliedByAi,
-            }
-          : c,
-      ));
+      setComments((prev) =>
+        prev.map((c) =>
+          c.id === commentId
+            ? {
+                ...c,
+                isReplied: true,
+                replyContent: reply.content,
+                repliedAt: new Date().toISOString(),
+                repliedByAi: reply.repliedByAi,
+              }
+            : c,
+        ),
+      );
     },
 
     onPostUpdated: (postId, updates) => {
-      setPosts((prev) => prev.map((p) =>
-        p.id === postId ? { ...p, ...updates } : p,
-      ));
+      setPosts((prev) =>
+        prev.map((p) => (p.id === postId ? { ...p, ...updates } : p)),
+      );
       setSelectedPost((prev) =>
-        prev?.id === postId ? { ...prev, ...updates } as ApiPost : prev,
+        prev?.id === postId ? ({ ...prev, ...updates } as ApiPost) : prev,
       );
     },
 
     onSyncCompleted: () => {
       // Scheduler finished — reload comments for the active post
       if (selectedPostRef.current) {
-        void loadComments(selectedPostRef.current.id, commentFilter, commentSearch, 1);
+        void loadComments(
+          selectedPostRef.current.id,
+          commentFilter,
+          commentSearch,
+          1,
+        );
       }
     },
   });
@@ -244,13 +296,13 @@ export function usePostsComments() {
   // ─── Load config when tab switches to config ───────────────────────────────
 
   useEffect(() => {
-    if (activeTab !== "config" || !selectedPost || postConfig) return;
+    if (activeTab !== "config" || !selectedPost?.id || postConfig) return;
     setLoadingConfig(true);
     getPostAiConfig(selectedPost.id)
       .then(setPostConfig)
       .catch(() => setConfigError("Impossible de charger la configuration."))
       .finally(() => setLoadingConfig(false));
-  }, [activeTab, selectedPost?.id, postConfig]);
+  }, [activeTab, selectedPost?.id, postConfig, selectedPost]);
 
   // ─── Sync comments ─────────────────────────────────────────────────────────
 
@@ -260,7 +312,10 @@ export function usePostsComments() {
     try {
       const { synced } = await syncComments(selectedPost.id);
       await loadComments(selectedPost.id, commentFilter, commentSearch, 1);
-      if (synced > 0) toast.success(`${synced} nouveau${synced > 1 ? "x" : ""} commentaire${synced > 1 ? "s" : ""} synchronisé${synced > 1 ? "s" : ""}.`);
+      if (synced > 0)
+        toast.success(
+          `${synced} nouveau${synced > 1 ? "x" : ""} commentaire${synced > 1 ? "s" : ""} synchronisé${synced > 1 ? "s" : ""}.`,
+        );
     } catch {
       toast.error("Erreur lors de la synchronisation.");
     } finally {
@@ -270,19 +325,30 @@ export function usePostsComments() {
 
   // ─── Filter / search ───────────────────────────────────────────────────────
 
-  const handleFilterChange = useCallback((f: CommentFilter) => {
-    setCommentFilter(f);
-    if (selectedPost) loadComments(selectedPost.id, f, commentSearch, 1);
-  }, [selectedPost, commentSearch, loadComments]);
+  const handleFilterChange = useCallback(
+    (f: CommentFilter) => {
+      setCommentFilter(f);
+      if (selectedPost) loadComments(selectedPost.id, f, commentSearch, 1);
+    },
+    [selectedPost, commentSearch, loadComments],
+  );
 
-  const handleSearchChange = useCallback((s: string) => {
-    setCommentSearch(s);
-    if (selectedPost) loadComments(selectedPost.id, commentFilter, s, 1);
-  }, [selectedPost, commentFilter, loadComments]);
+  const handleSearchChange = useCallback(
+    (s: string) => {
+      setCommentSearch(s);
+      if (selectedPost) loadComments(selectedPost.id, commentFilter, s, 1);
+    },
+    [selectedPost, commentFilter, loadComments],
+  );
 
   const loadNextPage = useCallback(() => {
     if (!selectedPost) return;
-    loadComments(selectedPost.id, commentFilter, commentSearch, commentPage + 1);
+    loadComments(
+      selectedPost.id,
+      commentFilter,
+      commentSearch,
+      commentPage + 1,
+    );
   }, [selectedPost, commentFilter, commentSearch, commentPage, loadComments]);
 
   // ─── Replies ───────────────────────────────────────────────────────────────
@@ -307,19 +373,23 @@ export function usePostsComments() {
       } else {
         await replyToCommentPublic(replyingToId, replyText.trim());
       }
-      setComments((prev) => prev.map((c) =>
-        c.id === replyingToId
-          ? {
-              ...c,
-              isReplied:    true,
-              replyContent: replyText.trim(),
-              repliedAt:    new Date().toISOString(),
-              repliedByAi:  false,
-            }
-          : c,
-      ));
+      setComments((prev) =>
+        prev.map((c) =>
+          c.id === replyingToId
+            ? {
+                ...c,
+                isReplied: true,
+                replyContent: replyText.trim(),
+                repliedAt: new Date().toISOString(),
+                repliedByAi: false,
+              }
+            : c,
+        ),
+      );
       cancelReply();
-      toast.success(replyMode === "private" ? "Message privé envoyé." : "Réponse publiée.");
+      toast.success(
+        replyMode === "private" ? "Message privé envoyé." : "Réponse publiée.",
+      );
     } catch {
       toast.error("Erreur lors de l'envoi.");
     } finally {
@@ -327,42 +397,50 @@ export function usePostsComments() {
     }
   }, [replyingToId, replyText, replyMode, cancelReply]);
 
-  const handleAiReply = useCallback(async (commentId: string) => {
-    markAiTyping(commentId);
-    try {
-      await triggerAiReply(commentId);
-      // The SSE onCommentReplied will update the UI and clear the typing indicator
-    } catch {
-      clearAiTyping(commentId);
-      toast.error("Impossible de déclencher la réponse IA.");
-    }
-  }, [markAiTyping, clearAiTyping]);
+  const handleAiReply = useCallback(
+    async (commentId: string) => {
+      markAiTyping(commentId);
+      try {
+        await triggerAiReply(commentId);
+        // The SSE onCommentReplied will update the UI and clear the typing indicator
+      } catch {
+        clearAiTyping(commentId);
+        toast.error("Impossible de déclencher la réponse IA.");
+      }
+    },
+    [markAiTyping, clearAiTyping],
+  );
 
   // ─── Post config save ──────────────────────────────────────────────────────
 
-  const saveConfig = useCallback(async (form: Partial<PostAiConfigForm>) => {
-    if (!selectedPost) return;
-    setSavingConfig(true);
-    setConfigError(null);
-    try {
-      const updated = await updatePostAiConfig(selectedPost.id, form);
-      setPostConfig(updated);
-      // Reflect autoReply change in posts list
-      setPosts((prev) => prev.map((p) =>
-        p.id === selectedPost.id
-          ? { ...p, postAiConfig: updated }
-          : p,
-      ));
-      setSelectedPost((prev) =>
-        prev?.id === selectedPost.id ? { ...prev, postAiConfig: updated } : prev,
-      );
-      toast.success("Configuration enregistrée.");
-    } catch {
-      setConfigError("Impossible d'enregistrer la configuration.");
-    } finally {
-      setSavingConfig(false);
-    }
-  }, [selectedPost]);
+  const saveConfig = useCallback(
+    async (form: Partial<PostAiConfigForm>) => {
+      if (!selectedPost) return;
+      setSavingConfig(true);
+      setConfigError(null);
+      try {
+        const updated = await updatePostAiConfig(selectedPost.id, form);
+        setPostConfig(updated);
+        // Reflect autoReply change in posts list
+        setPosts((prev) =>
+          prev.map((p) =>
+            p.id === selectedPost.id ? { ...p, postAiConfig: updated } : p,
+          ),
+        );
+        setSelectedPost((prev) =>
+          prev?.id === selectedPost.id
+            ? { ...prev, postAiConfig: updated }
+            : prev,
+        );
+        toast.success("Configuration enregistrée.");
+      } catch {
+        setConfigError("Impossible d'enregistrer la configuration.");
+      } finally {
+        setSavingConfig(false);
+      }
+    },
+    [selectedPost],
+  );
 
   // ─── Add post ──────────────────────────────────────────────────────────────
 
@@ -380,30 +458,37 @@ export function usePostsComments() {
     }
   }, [activeKey]);
 
-  const handleAddPost = useCallback(async (feedPost: FbFeedPost) => {
-    if (!activeKey) return;
-    try {
-      const created = await addManagedPost({
-        businessProfileId: activeKey,
-        externalId:        feedPost.externalId,
-        message:           feedPost.message,
-        imageUrl:          feedPost.imageUrl,
-        permalinkUrl:      feedPost.permalinkUrl,
-        reactionsCount:    feedPost.reactionsCount,
-        commentsCount:     feedPost.commentsCount,
-        sharesCount:       feedPost.sharesCount,
-        publishedAt:       feedPost.publishedAt,
-      });
-      setPosts((prev) => [created, ...prev]);
-      setFeedPosts((prev) =>
-        prev.map((p) => p.externalId === feedPost.externalId ? { ...p, alreadyAdded: true } : p),
-      );
-      selectPost(created);
-      toast.success("Post ajouté à la gestion.");
-    } catch {
-      toast.error("Impossible d'ajouter ce post.");
-    }
-  }, [activeKey, selectPost]);
+  const handleAddPost = useCallback(
+    async (feedPost: FbFeedPost) => {
+      if (!activeKey) return;
+      try {
+        const created = await addManagedPost({
+          businessProfileId: activeKey,
+          externalId: feedPost.externalId,
+          message: feedPost.message,
+          imageUrl: feedPost.imageUrl,
+          permalinkUrl: feedPost.permalinkUrl,
+          reactionsCount: feedPost.reactionsCount,
+          commentsCount: feedPost.commentsCount,
+          sharesCount: feedPost.sharesCount,
+          publishedAt: feedPost.publishedAt,
+        });
+        setPosts((prev) => [created, ...prev]);
+        setFeedPosts((prev) =>
+          prev.map((p) =>
+            p.externalId === feedPost.externalId
+              ? { ...p, alreadyAdded: true }
+              : p,
+          ),
+        );
+        selectPost(created);
+        toast.success("Post ajouté à la gestion.");
+      } catch {
+        toast.error("Impossible d'ajouter ce post.");
+      }
+    },
+    [activeKey, selectPost],
+  );
 
   // ─── Delete post ───────────────────────────────────────────────────────────
 
@@ -443,14 +528,18 @@ export function usePostsComments() {
   // ─── Comment stats ─────────────────────────────────────────────────────────
 
   const commentStats: CommentStats = useMemo(() => {
-    const total          = commentTotal;
-    const repliedByAi    = comments.filter((c) => c.isReplied && c.repliedByAi === true).length;
-    const repliedByHuman = comments.filter((c) => c.isReplied && c.repliedByAi === false).length;
-    const unanswered     = comments.filter((c) => !c.isReplied).length;
+    const total = commentTotal;
+    const repliedByAi = comments.filter(
+      (c) => c.isReplied && c.repliedByAi === true,
+    ).length;
+    const repliedByHuman = comments.filter(
+      (c) => c.isReplied && c.repliedByAi === false,
+    ).length;
+    const unanswered = comments.filter((c) => !c.isReplied).length;
     // Estimate DM count from posts with privateReplyEnabled
-    const withPrivateDm  = posts.filter((p) => p.postAiConfig?.privateReplyEnabled).reduce(
-      (sum, p) => sum + (p._count?.comments ?? p.commentsCount), 0,
-    );
+    const withPrivateDm = posts
+      .filter((p) => p.postAiConfig?.privateReplyEnabled)
+      .reduce((sum, p) => sum + (p._count?.comments ?? p.commentsCount), 0);
     return { total, repliedByAi, repliedByHuman, unanswered, withPrivateDm };
   }, [comments, commentTotal, posts]);
 
@@ -461,25 +550,59 @@ export function usePostsComments() {
 
   return {
     // Pages
-    pages, activeKey, setActiveKey, activePage,
+    pages,
+    activeKey,
+    setActiveKey,
+    activePage,
     // Posts
-    posts, selectedPost, loadingPosts,
-    deletingId, confirmDeleteId,
-    requestDeletePost, cancelDeletePost, confirmDeletePost,
+    posts,
+    selectedPost,
+    loadingPosts,
+    deletingId,
+    confirmDeleteId,
+    requestDeletePost,
+    cancelDeletePost,
+    confirmDeletePost,
     selectPost,
     // Add post
-    addDialogOpen, setAddDialogOpen, feedPosts, loadingFeed, openAddDialog, handleAddPost,
+    addDialogOpen,
+    setAddDialogOpen,
+    feedPosts,
+    loadingFeed,
+    openAddDialog,
+    handleAddPost,
     // Comments
-    comments, loadingComments, commentFilter, commentSearch,
-    commentPage, commentTotal, syncingComments,
-    handleFilterChange, handleSearchChange, handleSyncComments, loadNextPage,
+    comments,
+    loadingComments,
+    commentFilter,
+    commentSearch,
+    commentPage,
+    commentTotal,
+    syncingComments,
+    handleFilterChange,
+    handleSearchChange,
+    handleSyncComments,
+    loadNextPage,
     // AI typing
     aiTypingComments,
     // Reply
-    replyingToId, replyText, replyMode, replySending,
-    startReply, cancelReply, setReplyText, setReplyMode, submitReply, handleAiReply,
+    replyingToId,
+    replyText,
+    replyMode,
+    replySending,
+    startReply,
+    cancelReply,
+    setReplyText,
+    setReplyMode,
+    submitReply,
+    handleAiReply,
     // Config
-    activeTab, setActiveTab, postConfig, loadingConfig, savingConfig, configError,
+    activeTab,
+    setActiveTab,
+    postConfig,
+    loadingConfig,
+    savingConfig,
+    configError,
     saveConfig,
     autoReplyCount,
     autoReplyLimitReached: autoReplyCount >= 10,

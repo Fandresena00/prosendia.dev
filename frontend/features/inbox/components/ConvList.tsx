@@ -24,40 +24,49 @@ import { Bot } from "lucide-react";
 import type { Account, Conv } from "../types/inbox.types";
 
 interface ConvListProps {
-  accounts:       Account[];
-  activeAcc:      Account | null;
-  onChangeAcc:    (acc: Account) => void;
-  convs:          Conv[];
-  loading:        boolean;
-  selected:       Conv | null;
-  onSelect:       (c: Conv) => void;
-  searchQuery:    string;
+  accounts: Account[];
+  activeAcc: Account | null;
+  onChangeAcc: (acc: Account) => void;
+  convs: Conv[];
+  loading: boolean;
+  selected: Conv | null;
+  onSelect: (c: Conv) => void;
+  searchQuery: string;
   onSearchChange: (q: string) => void;
-  sseStatus:      "connecting" | "connected" | "error";
+  sseStatus: "connecting" | "connected" | "error";
   onOpenSettings: () => void;
-  compactMode?:   boolean;
-  className?:     string;
+  compactMode?: boolean;
+  className?: string;
 }
 
 export function ConvList({
-  accounts, activeAcc, onChangeAcc,
-  convs, loading, selected, onSelect,
-  searchQuery, onSearchChange,
-  sseStatus, onOpenSettings,
+  accounts,
+  activeAcc,
+  onChangeAcc,
+  convs,
+  loading,
+  selected,
+  onSelect,
+  searchQuery,
+  onSearchChange,
+  sseStatus,
+  onOpenSettings,
   compactMode = false,
   className = "",
 }: ConvListProps) {
   const sseDotClass =
-    sseStatus === "connected"   ? "bg-emerald-500" :
-    sseStatus === "error"       ? "bg-destructive animate-pulse" :
-                                  "bg-amber-400 animate-pulse";
+    sseStatus === "connected"
+      ? "bg-emerald-500"
+      : sseStatus === "error"
+        ? "bg-destructive animate-pulse"
+        : "bg-amber-400 animate-pulse";
 
   return (
     <div
       className={`flex min-w-0 max-w-full flex-col border-r border-border/40 bg-card/20 shrink-0 overflow-hidden ${className}`}
     >
       {/* ── Header ── */}
-      <div className="mx-auto w-full max-w-[430px] px-4 pt-4 pb-2.5 shrink-0 border-b border-border/40 space-y-3 sm:max-w-none">
+      <div className="mx-auto w-full max-w-107.5 px-4 pt-4 pb-2.5 shrink-0 border-b border-border/40 space-y-3 sm:max-w-none">
         {/* Title row */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -65,9 +74,11 @@ export function ConvList({
             <span
               className={`h-1.5 w-1.5 rounded-full shrink-0 ${sseDotClass}`}
               title={
-                sseStatus === "connected" ? "Temps réel actif" :
-                sseStatus === "error"     ? "Temps réel déconnecté" :
-                                            "Connexion…"
+                sseStatus === "connected"
+                  ? "Temps réel actif"
+                  : sseStatus === "error"
+                    ? "Temps réel déconnecté"
+                    : "Connexion…"
               }
             />
           </div>
@@ -94,15 +105,19 @@ export function ConvList({
                   colorClass={activeAcc.color}
                 />
                 <div className="flex-1 text-left min-w-0">
-                  <p className="text-xs font-semibold truncate">{activeAcc.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{activeAcc.pageType}</p>
+                  <p className="text-xs font-semibold truncate">
+                    {activeAcc.name}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {activeAcc.pageType}
+                  </p>
                 </div>
                 {activeAcc.verified && <VerifiedBadge />}
                 <IconChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               </button>
             </DropdownMenuTrigger>
 
-            <DropdownMenuContent align="start" className="w-[280px]">
+            <DropdownMenuContent align="start" className="w-70">
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 Pages connectées
               </DropdownMenuLabel>
@@ -121,7 +136,9 @@ export function ConvList({
                   />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate">{acc.name}</p>
-                    <p className="text-[10px] text-muted-foreground">{acc.pageType}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {acc.pageType}
+                    </p>
                   </div>
                   {activeAcc.id === acc.id && (
                     <div className="h-2 w-2 rounded-full bg-primary shrink-0" />
@@ -134,7 +151,7 @@ export function ConvList({
       </div>
 
       {/* ── Search ── */}
-      <div className="mx-auto w-full max-w-[430px] px-3 py-2 shrink-0 sm:max-w-none">
+      <div className="mx-auto w-full max-w-107.5 px-3 py-2 shrink-0 sm:max-w-none">
         <div className="relative">
           <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
           <Input
@@ -148,7 +165,7 @@ export function ConvList({
 
       {/* ── Conversation list ── */}
       <ScrollArea className="flex-1 min-h-0">
-        <div className="mx-auto w-full max-w-[430px] px-2 py-1 space-y-0.5 sm:max-w-none">
+        <div className="mx-auto w-full max-w-107.5 px-2 py-1 space-y-0.5 sm:max-w-none">
           {loading ? (
             <ConvListSkeleton compact={compactMode} />
           ) : convs.length === 0 ? (
@@ -178,21 +195,25 @@ export function ConvList({
 // ─── ConvItem ──────────────────────────────────────────────────────────────────
 
 function ConvItem({
-  conv, isSelected, compact, onClick,
+  conv,
+  isSelected,
+  compact,
+  onClick,
 }: {
-  conv:       Conv;
+  conv: Conv;
   isSelected: boolean;
-  compact:    boolean;
-  onClick:    () => void;
+  compact: boolean;
+  onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
       className={`w-full min-w-0 overflow-hidden text-left rounded-xl transition-all duration-150 group ${
         compact ? "p-2" : "p-2.5"
-      } ${isSelected
-        ? "bg-primary/8 shadow-[inset_0_0_0_1px_rgba(var(--primary),.12)]"
-        : "hover:bg-accent/60"
+      } ${
+        isSelected
+          ? "bg-primary/8 shadow-[inset_0_0_0_1px_rgba(var(--primary),.12)]"
+          : "hover:bg-accent/60"
       }`}
     >
       <div className="flex min-w-0 items-center gap-2.5">
@@ -218,12 +239,16 @@ function ConvItem({
         {/* Content */}
         <div className="min-w-0 flex-1 overflow-hidden">
           <div className="flex min-w-0 items-baseline justify-between gap-1 mb-0.5">
-            <p className={`min-w-0 max-w-[min(62vw,250px)] truncate text-xs sm:max-w-[210px] xl:max-w-[230px] ${conv.unread > 0 ? "font-bold" : "font-medium"}`}>
+            <p
+              className={`min-w-0 max-w-[min(62vw,250px)] truncate text-xs sm:max-w-52.5 xl:max-w-57.5 ${conv.unread > 0 ? "font-bold" : "font-medium"}`}
+            >
               {conv.client}
             </p>
             <span
               className={`text-[10px] shrink-0 tabular-nums ${
-                conv.unread > 0 ? "text-primary font-semibold" : "text-muted-foreground"
+                conv.unread > 0
+                  ? "text-primary font-semibold"
+                  : "text-muted-foreground"
               }`}
             >
               {conv.time}
@@ -231,10 +256,16 @@ function ConvItem({
           </div>
 
           <div className="flex min-w-0 items-center justify-between gap-1">
-            <p className={`min-w-0 max-w-[min(58vw,230px)] flex-1 truncate whitespace-nowrap text-[11px] sm:max-w-[170px] xl:max-w-[190px] ${
-              conv.unread > 0 ? "text-foreground font-medium" : "text-muted-foreground"
-            }`}>
-              {conv.lastMessage || <span className="italic opacity-50">Aucun message</span>}
+            <p
+              className={`min-w-0 max-w-[min(58vw,230px)] flex-1 truncate whitespace-nowrap text-[11px] sm:max-w-42.5 xl:max-w-47.5 ${
+                conv.unread > 0
+                  ? "text-foreground font-medium"
+                  : "text-muted-foreground"
+              }`}
+            >
+              {conv.lastMessage || (
+                <span className="italic opacity-50">Aucun message</span>
+              )}
             </p>
 
             <div className="ml-1 flex shrink-0 items-center gap-1">
@@ -279,10 +310,13 @@ function ModeBadge({ mode }: { mode: "ai" | "human" }) {
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
 function PageAvatar({
-  name, initials, avatarUrl, colorClass,
+  name,
+  initials,
+  avatarUrl,
+  colorClass,
 }: {
-  name:       string;
-  initials:   string;
+  name: string;
+  initials: string;
   avatarUrl?: string;
   colorClass: string;
 }) {
@@ -298,7 +332,11 @@ function PageAvatar({
 
 function VerifiedBadge() {
   return (
-    <svg className="h-3.5 w-3.5 text-primary shrink-0" viewBox="0 0 20 20" fill="currentColor">
+    <svg
+      className="h-3.5 w-3.5 text-primary shrink-0"
+      viewBox="0 0 20 20"
+      fill="currentColor"
+    >
       <path
         fillRule="evenodd"
         d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
@@ -316,7 +354,9 @@ function ConvListSkeleton({ compact }: { compact: boolean }) {
           key={i}
           className={`flex items-center gap-2.5 ${compact ? "px-2 py-2" : "px-2.5 py-2.5"}`}
         >
-          <Skeleton className={`rounded-full shrink-0 ${compact ? "h-9 w-9" : "h-10 w-10"}`} />
+          <Skeleton
+            className={`rounded-full shrink-0 ${compact ? "h-9 w-9" : "h-10 w-10"}`}
+          />
           <div className="flex-1 space-y-1.5">
             <Skeleton className="h-3 w-3/4" />
             <Skeleton className="h-2.5 w-1/2" />

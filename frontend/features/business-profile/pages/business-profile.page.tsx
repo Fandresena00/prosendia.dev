@@ -127,7 +127,7 @@ export function BusinessProfilePage() {
             </div>
           </div>
 
-          <div className="flex w-full flex-col gap-2.5 xl:w-[420px]">
+          <div className="flex w-full flex-col gap-2.5 xl:w-105">
             <ProfileSwitcher
               profiles={bp.profiles}
               activeProfileId={bp.activeProfileId}
