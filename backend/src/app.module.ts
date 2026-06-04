@@ -1,6 +1,6 @@
 /**
  * @file src/app.module.ts
- * CHANGE: Added BusinessProfileModule.
+ * CHANGE: Added BillingModule.
  */
 import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -20,6 +20,7 @@ import { ValidationSchema } from './config/validation.js';
 import { PrismaModule } from './database/prisma.module.js';
 import { AiModule } from './features/ai/ai.module.js';
 import { AuthModule } from './features/auth/auth.module.js';
+import { BillingModule } from './features/billing/billing.module.js'; // ← NEW
 import { BusinessProfileModule } from './features/business-profile/business-profile.module.js';
 import { FacebookPostsModule } from './features/facebook/facebook-posts/facebook-posts.module.js';
 import { FacebookModule } from './features/facebook/facebook.module.js';
@@ -49,10 +50,11 @@ import { UsersModule } from './features/users/users.module.js';
     PrismaModule,
     UsersModule,
     AuthModule,
-    BusinessProfileModule, // ← NEW: profile + AI config management
+    BusinessProfileModule,
     FacebookModule,
     InboxEventsModule,
     QueueModule,
+    BillingModule,   // ← NEW: avant AiModule (AiModule en dépend)
     AiModule,
     InboxModule,
     FacebookPostsModule,

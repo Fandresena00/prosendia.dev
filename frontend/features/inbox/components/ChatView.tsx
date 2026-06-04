@@ -14,8 +14,12 @@ import { IconCamera, IconFile, IconSend } from "@tabler/icons-react";
 import { ChevronLeft, Loader2, RefreshCw } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
 import type {
-  Conv, ConvMode, FileAttachment,
-  Msg, PhotoAttachment, PhotoPreset,
+  Conv,
+  ConvMode,
+  FileAttachment,
+  Msg,
+  PhotoAttachment,
+  PhotoPreset,
 } from "../types/inbox.types";
 import { groupByDate } from "../utils/inbox.utils";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -25,65 +29,90 @@ import { ModeToggle } from "./ModeToggle";
 import { PhotoPresetSheet } from "./PhotoPresetSheet";
 
 interface ChatViewProps {
-  selected:    Conv;
-  onBack:      () => void;
-  isOnline:    boolean;
-  convMode:    ConvMode;
-  onModeChange:(mode: ConvMode) => void;
-  msgs:        Msg[];
-  hasMore:     boolean;
+  selected: Conv;
+  onBack: () => void;
+  isOnline: boolean;
+  convMode: ConvMode;
+  onModeChange: (mode: ConvMode) => void;
+  msgs: Msg[];
+  hasMore: boolean;
   loadingMsgs: boolean;
-  onLoadMore:  () => void;
-  isSyncing?:  boolean;
-  sseStatus?:  "connecting" | "connected" | "error";
-  pendingPhotos:       PhotoAttachment[];
-  pendingFile:         FileAttachment | null;
-  pendingPreset:       PhotoPreset | null;
-  onRemovePhoto:       (i: number) => void;
-  onRemoveFile:        () => void;
+  onLoadMore: () => void;
+  isSyncing?: boolean;
+  sseStatus?: "connecting" | "connected" | "error";
+  pendingPhotos: PhotoAttachment[];
+  pendingFile: FileAttachment | null;
+  pendingPreset: PhotoPreset | null;
+  onRemovePhoto: (i: number) => void;
+  onRemoveFile: () => void;
   onRemovePendingPreset: () => void;
-  presets:         PhotoPreset[];
-  onSelectPreset:  (p: PhotoPreset) => void;
+  presets: PhotoPreset[];
+  onSelectPreset: (p: PhotoPreset) => void;
   onOpenAddPreset: () => void;
-  onRemovePreset:  (id: string) => void;
-  message:         string;
+  onRemovePreset: (id: string) => void;
+  message: string;
   onMessageChange: (v: string) => void;
-  canSend:         boolean;
-  onSend:          () => void;
-  onEmojiSelect:   (e: { native: string }) => void;
-  photoRef:        RefObject<HTMLInputElement | null>;
-  fileRef:         RefObject<HTMLInputElement | null>;
-  bottomRef:       RefObject<HTMLDivElement | null>;
-  textareaRef:     RefObject<HTMLTextAreaElement | null>;
-  onPhotoFiles:    (files: FileList | null) => void;
-  onFileSelect:    (files: FileList | null) => void;
-  infoPanel?:      ReactNode;
-  className?:      string;
+  canSend: boolean;
+  onSend: () => void;
+  onEmojiSelect: (e: { native: string }) => void;
+  photoRef: RefObject<HTMLInputElement | null>;
+  fileRef: RefObject<HTMLInputElement | null>;
+  bottomRef: RefObject<HTMLDivElement | null>;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  onPhotoFiles: (files: FileList | null) => void;
+  onFileSelect: (files: FileList | null) => void;
+  infoPanel?: ReactNode;
+  className?: string;
 }
 
 export function ChatView({
-  selected, onBack, isOnline, convMode, onModeChange,
-  msgs, hasMore, loadingMsgs, onLoadMore,
-  isSyncing = false, sseStatus,
-  pendingPhotos, pendingFile, pendingPreset,
-  onRemovePhoto, onRemoveFile, onRemovePendingPreset,
-  presets, onSelectPreset, onOpenAddPreset, onRemovePreset,
-  message, onMessageChange, canSend, onSend, onEmojiSelect,
-  photoRef, fileRef, bottomRef, textareaRef,
-  onPhotoFiles, onFileSelect,
+  selected,
+  onBack,
+  isOnline,
+  convMode,
+  onModeChange,
+  msgs,
+  hasMore,
+  loadingMsgs,
+  onLoadMore,
+  isSyncing = false,
+  pendingPhotos,
+  pendingFile,
+  pendingPreset,
+  onRemovePhoto,
+  onRemoveFile,
+  onRemovePendingPreset,
+  presets,
+  onSelectPreset,
+  onOpenAddPreset,
+  onRemovePreset,
+  message,
+  onMessageChange,
+  canSend,
+  onSend,
+  onEmojiSelect,
+  photoRef,
+  fileRef,
+  bottomRef,
+  textareaRef,
+  onPhotoFiles,
+  onFileSelect,
   infoPanel,
   className = "",
 }: ChatViewProps) {
   const grouped = groupByDate(msgs);
 
   return (
-    <div className={`flex flex-col flex-1 min-w-0 overflow-hidden ${className}`}>
+    <div
+      className={`flex flex-col flex-1 min-w-0 overflow-hidden ${className}`}
+    >
       {/* ── Header ── */}
       <div className="flex items-center justify-between gap-3 border-b border-border/40 px-4 h-14 shrink-0 bg-background/80 backdrop-blur-sm">
         {/* Left: back + avatar + name */}
         <div className="flex items-center gap-3 min-w-0">
           <Button
-            variant="ghost" size="icon"
+            variant="ghost"
+            size="icon"
             className="sm:hidden h-8 w-8 rounded-full shrink-0"
             onClick={onBack}
           >
@@ -92,8 +121,13 @@ export function ChatView({
 
           <div className="relative shrink-0">
             <Avatar className="h-9 w-9">
-              <AvatarImage src={selected.avatarUrl ?? undefined} alt={selected.client} />
-              <AvatarFallback className="text-sm font-bold">{selected.initials}</AvatarFallback>
+              <AvatarImage
+                src={selected.avatarUrl ?? undefined}
+                alt={selected.client}
+              />
+              <AvatarFallback className="text-sm font-bold">
+                {selected.initials}
+              </AvatarFallback>
             </Avatar>
             {isOnline && (
               <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-background" />
@@ -122,7 +156,10 @@ export function ChatView({
           <ModeToggle mode={convMode} onChange={onModeChange} />
           <PhotoPresetSheet
             presets={presets}
-            onSelectPreset={(p) => { onSelectPreset(p); textareaRef.current?.focus(); }}
+            onSelectPreset={(p) => {
+              onSelectPreset(p);
+              textareaRef.current?.focus();
+            }}
             onOpenAdd={onOpenAddPreset}
             onRemovePreset={onRemovePreset}
           />
@@ -192,18 +229,27 @@ export function ChatView({
             accept="image/*"
             multiple
             className="hidden"
-            onChange={(e) => { onPhotoFiles(e.target.files); e.target.value = ""; }}
+            onChange={(e) => {
+              onPhotoFiles(e.target.files);
+              e.target.value = "";
+            }}
           />
 
           {/* File */}
-          <ActionButton label="Fichier" onClick={() => fileRef.current?.click()}>
+          <ActionButton
+            label="Fichier"
+            onClick={() => fileRef.current?.click()}
+          >
             <IconFile className="h-4.5 w-4.5" />
           </ActionButton>
           <input
             ref={fileRef}
             type="file"
             className="hidden"
-            onChange={(e) => { onFileSelect(e.target.files); e.target.value = ""; }}
+            onChange={(e) => {
+              onFileSelect(e.target.files);
+              e.target.value = "";
+            }}
           />
 
           {/* Emoji */}
@@ -218,7 +264,10 @@ export function ChatView({
             rows={1}
             className="flex-1 resize-none text-sm min-h-9 max-h-36 rounded-2xl border-0 bg-[#F0F2F5] dark:bg-[#3A3B3C] focus-visible:ring-1 focus-visible:ring-primary/50 py-2 px-4 leading-relaxed"
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                onSend();
+              }
             }}
           />
 
@@ -250,10 +299,12 @@ function DateSeparator({ label }: { label: string }) {
 }
 
 function ActionButton({
-  label, onClick, children,
+  label,
+  onClick,
+  children,
 }: {
-  label:    string;
-  onClick:  () => void;
+  label: string;
+  onClick: () => void;
   children: React.ReactNode;
 }) {
   return (
@@ -273,12 +324,14 @@ function MessagesSkeleton() {
     <div className="space-y-4 py-2">
       {[
         { align: "start", w: "w-48" },
-        { align: "end",   w: "w-40" },
+        { align: "end", w: "w-40" },
         { align: "start", w: "w-56" },
-        { align: "end",   w: "w-32" },
+        { align: "end", w: "w-32" },
       ].map((row, i) => (
         <div key={i} className={`flex items-end gap-2 justify-${row.align}`}>
-          {row.align === "start" && <Skeleton className="h-8 w-8 rounded-full shrink-0" />}
+          {row.align === "start" && (
+            <Skeleton className="h-8 w-8 rounded-full shrink-0" />
+          )}
           <Skeleton className={`h-10 rounded-2xl ${row.w}`} />
         </div>
       ))}

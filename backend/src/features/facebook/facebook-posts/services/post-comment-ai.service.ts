@@ -1,19 +1,10 @@
 /**
  * @file features/facebook-posts/services/post-comment-ai.service.ts
  *
- * Generates and sends AI replies to Facebook post comments.
- *
- * Entry point: processNewComment(commentId, options)
- *
- * Called from two paths:
- *   - Webhook path (emitNew: true, default): comment just arrived via webhook.
- *     Emits comment:new SSE before processing so the frontend sees it immediately.
- *   - Scheduler fallback (emitNew: false): comment already in DB and visible.
- *     Skips comment:new, only emits comment:replied after AI replies.
- *
- * AI gate: the post-level PostAiConfig.autoReply flag is the ONLY gate.
- *   The global AiConfig.autoReply has no effect on post comments —
- *   each post's AI is independently controlled via the "Add post" UI.
+ * CHANGE: Intégration CreditService.
+ *   - Vérifie les crédits AVANT l'appel IA (blocage si 0)
+ *   - callModel() retourne maintenant { content, totalTokens, modelId }
+ *   - Déduit les crédits APRÈS chaque appel réussi (public + DM privé)
  */
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -23,6 +14,7 @@ import {
   REPLY_AI_FALLBACK_MODELS,
   REPLY_AI_MODEL,
 } from '../../../ai/config/ai-models.config.js';
+import { CreditService } from '../../../billing/services/credit.service.js';
 import { PostsEventEmitter } from '../posts-events/posts-event-emitter.js';
 import {
   CommentPromptBuilderService,
@@ -34,13 +26,9 @@ import { FacebookPostsService } from './facebook-posts.service.js';
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 type ModelConfig = { replyModelId: string; replyTemperature: number } | null;
+type ModelResult = { content: string; totalTokens: number; modelId: string };
 
 export interface ProcessCommentOptions {
-  /**
-   * Whether to emit comment:new SSE before processing.
-   * True for webhook path (comment is genuinely new).
-   * False for scheduler fallback (comment already visible in the UI).
-   */
   emitNew?: boolean;
 }
 
@@ -49,11 +37,12 @@ export class PostCommentAiService {
   private readonly logger = new Logger(PostCommentAiService.name);
 
   constructor(
-    private readonly prisma:          PrismaService,
-    private readonly openRouter:      OpenRouterClient,
-    private readonly commentPrompts:  CommentPromptBuilderService,
-    private readonly fbPosts:         FacebookPostsService,
-    private readonly sseEmitter:      PostsEventEmitter,
+    private readonly prisma:         PrismaService,
+    private readonly openRouter:     OpenRouterClient,
+    private readonly commentPrompts: CommentPromptBuilderService,
+    private readonly fbPosts:        FacebookPostsService,
+    private readonly sseEmitter:     PostsEventEmitter,
+    private readonly creditService:  CreditService,
   ) {}
 
   // ─── Main entry ────────────────────────────────────────────────────────────
@@ -95,22 +84,22 @@ export class PostCommentAiService {
     const bp       = post.businessProfile;
     const aiConfig = bp.aiConfig;
 
-    // Gate: AI only runs when the POST-LEVEL autoReply is explicitly enabled.
-    // The global AiConfig.autoReply does not control post comment AI.
     if (config?.autoReply !== true) return;
-
     if (comment.isReplied) return;
 
-    // Spam filter — skip low-value comments.
     const spam = this.commentPrompts.scoreComment(comment.message);
     if (!spam.shouldReply) {
-      this.logger.debug(
-        `Comment ${commentId} skipped — score=${spam.score} (${spam.reason})`,
-      );
+      this.logger.debug(`Comment ${commentId} skipped — score=${spam.score} (${spam.reason})`);
       return;
     }
 
-    // Emit comment:new only for the webhook path (genuinely new comment).
+    // ⭐ CREDIT CHECK — bloquer si solde épuisé
+    const hasCredits = await this.creditService.hasCredits(bp.userId);
+    if (!hasCredits) {
+      this.logger.warn(`Comment AI blocked — no credits: user=${bp.userId} comment=${commentId}`);
+      return;
+    }
+
     if (emitNew) {
       this.sseEmitter.commentAdded(bp.userId, post.id, {
         id:              comment.id,
@@ -128,7 +117,6 @@ export class PostCommentAiService {
       });
     }
 
-    // Build prompt context.
     const commentLang: DetectedLanguage =
       (config?.replyLanguage as DetectedLanguage | null) ??
       this.commentPrompts.detectLanguage(comment.message);
@@ -149,18 +137,14 @@ export class PostCommentAiService {
       r.images.map((img) => ({ url: img.url, description: img.description })),
     );
 
-    const postCaption = post.message ?? '';
-    const publicMaxTokens = Math.min(
-      config?.maxReplyTokens ?? aiConfig?.maxReplyTokens ?? 120,
-      120,
-    );
+    const postCaption     = post.message ?? '';
+    const publicMaxTokens = Math.min(config?.maxReplyTokens ?? aiConfig?.maxReplyTokens ?? 120, 120);
 
-    // Generate and send the public comment reply.
     const publicPrompt = this.commentPrompts.buildPublicCommentReplyPrompt(
       ctx, postCaption, config?.customInstructions ?? null, images, commentLang,
     );
 
-    const publicReply = await this.callModel(
+    const publicResult = await this.callModel(
       [
         { role: 'system', content: publicPrompt },
         { role: 'user',   content: comment.message },
@@ -169,41 +153,45 @@ export class PostCommentAiService {
       bp.aiModelConfig,
     );
 
-    if (!publicReply) {
+    if (!publicResult) {
       this.logger.warn(`No public reply generated for comment=${commentId}`);
       return;
     }
 
-    const publicResult = await this.fbPosts.replyToCommentPublic(
-      commentId, publicReply, true,
-    );
-    if (!publicResult.success) return;
+    const publicSend = await this.fbPosts.replyToCommentPublic(commentId, publicResult.content, true);
+    if (!publicSend.success) return;
 
-    // Emit comment:replied so the frontend updates the comment inline
-    // without a page refresh — this fires on both webhook and scheduler paths.
+    // ⭐ CREDIT DEDUCTION — réponse publique
+    if (publicResult.totalTokens > 0) {
+      await this.creditService
+        .consumeCredits(bp.userId, publicResult.totalTokens, 'COMMENT_AI_CONSUME', publicResult.modelId, undefined, commentId)
+        .catch((err: Error) =>
+          this.logger.warn(`Credit deduction failed comment=${commentId}: ${err.message}`),
+        );
+    }
+
     this.sseEmitter.commentReplied(bp.userId, post.id, commentId, {
-      content:      publicReply,
-      repliedByAi:  true,
+      content:     publicResult.content,
+      repliedByAi: true,
     });
 
     this.logger.log(`AI replied to comment=${commentId}`);
 
-    // Optional private DM reply.
-    const privateEnabled =
-      (config as { privateReplyEnabled?: boolean } | null)?.privateReplyEnabled ?? false;
-
+    // Optional private DM
+    const privateEnabled = (config as { privateReplyEnabled?: boolean } | null)?.privateReplyEnabled ?? false;
     if (!privateEnabled) return;
 
     const fixedTemplate = (config as { privateReplyMessage?: string } | null)
       ?.privateReplyMessage?.trim() ?? null;
 
-    let dmText: string | null = fixedTemplate;
+    let dmResult: ModelResult | null = null;
+    let dmText: string | null        = fixedTemplate;
 
     if (!dmText) {
       const dmPrompt = this.commentPrompts.buildPrivateDmReplyPrompt(
         ctx, postCaption, comment.message, config?.customInstructions ?? null, images, commentLang,
       );
-      dmText = await this.callModel(
+      dmResult = await this.callModel(
         [
           { role: 'system', content: dmPrompt },
           { role: 'user',   content: 'Génère le message privé de bienvenue.' },
@@ -211,38 +199,50 @@ export class PostCommentAiService {
         150,
         bp.aiModelConfig,
       );
+      dmText = dmResult?.content ?? null;
     }
 
     if (dmText) {
       await this.fbPosts.sendPrivateReplyToComment(commentId, dmText, true);
+
+      // ⭐ CREDIT DEDUCTION — DM privé généré par IA
+      if (dmResult && dmResult.totalTokens > 0) {
+        await this.creditService
+          .consumeCredits(bp.userId, dmResult.totalTokens, 'COMMENT_AI_CONSUME', dmResult.modelId, undefined, commentId)
+          .catch(() => undefined);
+      }
+
       this.logger.log(`AI sent private DM for comment=${commentId}`);
     }
   }
 
   // ─── Model call with fallback chain ────────────────────────────────────────
 
+  /**
+   * Appelle OpenRouter avec fallback automatique.
+   * Retourne content + totalTokens + modelId pour la déduction de crédits.
+   */
   private async callModel(
     messages:    ChatMessage[],
     maxTokens:   number,
     modelConfig: ModelConfig,
-  ): Promise<string | null> {
+  ): Promise<ModelResult | null> {
     const primary     = modelConfig?.replyModelId ?? REPLY_AI_MODEL.MODEL_ID;
     const temperature = modelConfig?.replyTemperature ?? REPLY_AI_MODEL.TEMPERATURE;
     const models      = [primary, ...REPLY_AI_FALLBACK_MODELS.filter((m) => m !== primary)];
 
     for (const modelId of models) {
       try {
-        const result = await this.openRouter.complete({
-          model: modelId,
-          messages,
-          maxTokens,
-          temperature,
-        });
-        if (result.content.trim()) return result.content.trim();
+        const result = await this.openRouter.complete({ model: modelId, messages, maxTokens, temperature });
+        if (result.content.trim()) {
+          return {
+            content:     result.content.trim(),
+            totalTokens: (result.promptTokens ?? 0) + (result.replyTokens ?? 0),
+            modelId:     result.model ?? modelId,
+          };
+        }
       } catch (err) {
-        this.logger.warn(
-          `Model ${modelId} failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        this.logger.warn(`Model ${modelId} failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 

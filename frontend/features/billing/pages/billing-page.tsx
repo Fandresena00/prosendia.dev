@@ -1,30 +1,23 @@
 /**
  * @file features/billing/pages/billing-page.tsx
  *
- * Page Facturation complète — connectée au backend.
- *
- * Sections :
- *   1. Statut crédits + alertes (CreditStatusBanner)
- *   2. Explication des crédits IA
- *   3. Plans disponibles (PackCard)
- *   4. Modes de paiement acceptés
- *   5. Historique paiements
- *   6. Historique consommation crédits IA
+ * Page Facturation — toutes les données viennent du backend via useBilling().
+ * Le frontend n'a aucune connaissance des valeurs de crédits, prix ou limites.
  */
 
 "use client";
 
-import { useState } from "react";
-import { Loader2, RefreshCw, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useBilling } from "../hooks/use-billing";
+import { Loader2, RefreshCw, Zap } from "lucide-react";
+import { useState } from "react";
+import { CreditHistory } from "../components/credit-history";
 import { CreditStatusBanner } from "../components/credit-status-banner";
 import { PackCard } from "../components/packs-card";
 import { PaymentDialog } from "../components/payment-dialog";
 import { PaymentHistory } from "../components/payment-history";
-import { CreditHistory } from "../components/credit-history";
 import PaymentMethod from "../components/payment-method";
+import { useBilling } from "../hooks/use-billing";
 import type { Plan } from "../types/billing.types";
 
 export default function BillingPage() {
@@ -42,9 +35,12 @@ export default function BillingPage() {
   const [payDialog, setPayDialog] = useState<{
     open: boolean;
     plan: Plan | null;
-  }>({ open: false, plan: null });
+  }>({
+    open: false,
+    plan: null,
+  });
 
-  // ─── Loading ─────────────────────────────────────────────────────────────
+  // ─── Loading ──────────────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -60,7 +56,11 @@ export default function BillingPage() {
     return (
       <div className="p-5 flex flex-col items-center gap-4 h-64 justify-center">
         <p className="text-sm text-muted-foreground">{error}</p>
-        <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => window.location.reload()}
+        >
           <RefreshCw className="h-4 w-4 mr-2" />
           Réessayer
         </Button>
@@ -89,7 +89,7 @@ export default function BillingPage() {
         </Button>
       </div>
 
-      {/* ── Statut crédits ─────────────────────────────────────────────────── */}
+      {/* ── Statut crédits — données du backend uniquement ─────────────────── */}
       {creditStatus && (
         <CreditStatusBanner
           status={creditStatus}
@@ -98,17 +98,20 @@ export default function BillingPage() {
       )}
 
       {/* ── Explication des crédits IA ──────────────────────────────────────── */}
-      <div className="rounded-md border border-border/40 bg-secondary/20 px-5 py-4 space-y-2">
+      <div className="rounded-md border border-border/40 bg-secondary/20 px-5 py-4 space-y-3">
         <div className="flex items-center gap-2">
           <Zap className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold">Comment fonctionnent les crédits IA ?</h2>
+          <h2 className="text-sm font-semibold">
+            Comment fonctionnent les crédits IA ?
+          </h2>
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Les crédits représentent votre utilisation de l'intelligence artificielle VendeoAI.
-          Chaque réponse IA (Messenger ou commentaire) consomme des crédits proportionnellement
-          aux tokens utilisés. <strong className="text-foreground">1 crédit = 100 tokens IA.</strong>
+          Les crédits représentent votre utilisation de l&apos;intelligence
+          artificielle VendeoAI. Chaque réponse IA (Messenger ou commentaire)
+          consomme des crédits proportionnellement aux tokens utilisés.{" "}
+          <strong className="text-foreground">1 crédit = 100 tokens IA.</strong>
         </p>
-        <div className="grid sm:grid-cols-3 gap-3 pt-1">
+        <div className="grid sm:grid-cols-3 gap-3">
           {[
             { label: "Réponse Messenger", value: "~2–8 crédits" },
             { label: "Réponse commentaire", value: "~1–3 crédits" },
@@ -118,26 +121,33 @@ export default function BillingPage() {
               key={item.label}
               className="flex justify-between items-center rounded border border-border/30 px-3 py-2"
             >
-              <span className="text-xs text-muted-foreground">{item.label}</span>
-              <span className="text-xs font-semibold text-primary">{item.value}</span>
+              <span className="text-xs text-muted-foreground">
+                {item.label}
+              </span>
+              <span className="text-xs font-semibold text-primary">
+                {item.value}
+              </span>
             </div>
           ))}
         </div>
-        {creditStatus && creditStatus.creditsGranted && (
-          <p className="text-xs text-muted-foreground pt-1">
+
+        {/* Solde actuel en tokens — calculé depuis la balance retournée par le backend */}
+        {creditStatus && (
+          <p className="text-xs text-muted-foreground">
             Solde actuel :{" "}
             <strong className="text-foreground">
               {creditStatus.creditBalance.toLocaleString("fr-FR")} crédits
             </strong>{" "}
             ≈{" "}
             <strong className="text-foreground">
-              {(creditStatus.creditBalance * 100).toLocaleString("fr-FR")} tokens IA
+              {(creditStatus.creditBalance * 100).toLocaleString("fr-FR")}{" "}
+              tokens IA
             </strong>
           </p>
         )}
       </div>
 
-      {/* ── Plans ──────────────────────────────────────────────────────────── */}
+      {/* ── Plans — rendus depuis les données du backend ────────────────────── */}
       <div>
         <h2 className="text-sm font-semibold mb-4">Choisir un plan</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -152,14 +162,15 @@ export default function BillingPage() {
           ))}
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
-          ⚠️ Aucune recharge automatique — chaque abonnement est valable 30 jours et se renouvelle manuellement.
+          ⚠️ Aucune recharge automatique — chaque abonnement est valable 30
+          jours et se renouvelle manuellement.
         </p>
       </div>
 
       {/* ── Modes de paiement ──────────────────────────────────────────────── */}
       <PaymentMethod />
 
-      {/* ── Historiques (tabs) ─────────────────────────────────────────────── */}
+      {/* ── Historiques ────────────────────────────────────────────────────── */}
       <div>
         <Tabs defaultValue="payments">
           <div className="flex items-center justify-between mb-4">
@@ -175,10 +186,7 @@ export default function BillingPage() {
           </div>
 
           <TabsContent value="payments" className="mt-0">
-            <PaymentHistory
-              history={history}
-              formatCurrency={formatCurrency}
-            />
+            <PaymentHistory history={history} formatCurrency={formatCurrency} />
           </TabsContent>
 
           <TabsContent value="credits" className="mt-0">
@@ -192,6 +200,7 @@ export default function BillingPage() {
         open={payDialog.open}
         onClose={() => {
           setPayDialog({ open: false, plan: null });
+          // Recharger le statut après fermeture (le paiement peut avoir été initié)
           void refetchStatus();
         }}
         plan={payDialog.plan}

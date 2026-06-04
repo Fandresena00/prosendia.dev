@@ -1,7 +1,8 @@
 /**
  * @file features/billing/hooks/use-billing.ts
  *
- * Hook principal billing — charge les données depuis le backend.
+ * Hook principal — toutes les données viennent du backend.
+ * Aucune donnée hardcodée ici.
  */
 
 "use client";
@@ -16,39 +17,43 @@ import type {
 } from "../types/billing.types";
 
 interface UseBillingReturn {
-  plans:          Plan[];
-  history:        PaymentHistoryItem[];
-  ledger:         CreditLedgerEntry[];
-  creditStatus:   CreditStatus | null;
-  currentPlan:    Plan | null;
-  isLoading:      boolean;
-  error:          string | null;
-  refetchStatus:  () => Promise<void>;
+  plans: Plan[];
+  history: PaymentHistoryItem[];
+  ledger: CreditLedgerEntry[];
+  creditStatus: CreditStatus | null;
+  currentPlan: Plan | null;
+  isLoading: boolean;
+  error: string | null;
+  refetchStatus: () => Promise<void>;
   formatCurrency: (n: number) => string;
 }
 
 export function useBilling(): UseBillingReturn {
-  const [plans,        setPlans]        = useState<Plan[]>([]);
-  const [history,      setHistory]      = useState<PaymentHistoryItem[]>([]);
-  const [ledger,       setLedger]       = useState<CreditLedgerEntry[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [history, setHistory] = useState<PaymentHistoryItem[]>([]);
+  const [ledger, setLedger] = useState<CreditLedgerEntry[]>([]);
   const [creditStatus, setCreditStatus] = useState<CreditStatus | null>(null);
-  const [isLoading,    setIsLoading]    = useState(true);
-  const [error,        setError]        = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const formatCurrency = (n: number) =>
-    n === 0 ? "Gratuit" : n.toLocaleString("fr-MG") + " Ar";
+  const formatCurrency = useCallback(
+    (n: number) => (n === 0 ? "Gratuit" : n.toLocaleString("fr-MG") + " Ar"),
+    [],
+  );
 
   const fetchAll = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
 
-      const [plansData, statusData, historyData, ledgerData] = await Promise.all([
-        billingService.getPlans(),
-        billingService.getCreditStatus(),
-        billingService.getPaymentHistory(1, 20),
-        billingService.getCreditHistory(1, 20),
-      ]);
+      // Tout vient du backend — aucune donnée locale
+      const [plansData, statusData, historyData, ledgerData] =
+        await Promise.all([
+          billingService.getPlans(),
+          billingService.getCreditStatus(),
+          billingService.getPaymentHistory(1, 20),
+          billingService.getCreditHistory(1, 20),
+        ]);
 
       setPlans(plansData);
       setCreditStatus(statusData);
@@ -66,7 +71,7 @@ export function useBilling(): UseBillingReturn {
       const statusData = await billingService.getCreditStatus();
       setCreditStatus(statusData);
     } catch {
-      // silent
+      // silent — ne pas afficher d'erreur sur un refresh silencieux
     }
   }, []);
 
@@ -74,6 +79,8 @@ export function useBilling(): UseBillingReturn {
     void fetchAll();
   }, [fetchAll]);
 
+  // Le plan courant est celui dont l'id correspond au plan de l'utilisateur
+  // retourné par /billing/status — pas de matching local
   const currentPlan = plans.find((p) => p.id === creditStatus?.plan) ?? null;
 
   return {

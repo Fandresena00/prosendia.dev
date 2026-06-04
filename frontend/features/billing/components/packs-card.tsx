@@ -1,5 +1,8 @@
 /**
  * @file features/billing/components/packs-card.tsx
+ *
+ * Affiche un plan tel que retourné par GET /billing/plans.
+ * Aucune valeur hardcodée — tout vient des props `plan`.
  */
 
 "use client";
@@ -11,21 +14,28 @@ import { ArrowRight, CheckCircle, Mail } from "lucide-react";
 import type { CreditStatus, Plan } from "../types/billing.types";
 
 interface PackCardProps {
-  plan:           Plan;
-  creditStatus:   CreditStatus | null;
-  onSelect:       (plan: Plan) => void;
+  plan: Plan;
+  creditStatus: CreditStatus | null;
+  onSelect: (plan: Plan) => void;
   formatCurrency: (n: number) => string;
 }
 
-export function PackCard({ plan, creditStatus, onSelect, formatCurrency }: PackCardProps) {
+export function PackCard({
+  plan,
+  creditStatus,
+  onSelect,
+  formatCurrency,
+}: PackCardProps) {
   const isCurrent = creditStatus?.plan === plan.id;
 
   return (
-    <div className={`relative rounded-md border flex flex-col transition-all ${
-      plan.popular
-        ? "border-primary/40 bg-primary/3 shadow-sm"
-        : "border-border/50 bg-card hover:border-border/80"
-    }`}>
+    <div
+      className={`relative rounded-md border flex flex-col transition-all ${
+        plan.popular
+          ? "border-primary/40 bg-primary/[0.03] shadow-sm"
+          : "border-border/50 bg-card hover:border-border/80"
+      }`}
+    >
       {plan.popular && (
         <div className="absolute -top-3 left-1/2 -translate-x-1/2">
           <Badge className="text-xs px-3 shadow-sm">Populaire</Badge>
@@ -33,10 +43,12 @@ export function PackCard({ plan, creditStatus, onSelect, formatCurrency }: PackC
       )}
 
       <div className="p-5 flex-1">
+        {/* Nom du plan */}
         <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">
           {plan.name}
         </p>
 
+        {/* Prix */}
         <div className="flex items-end gap-1 mb-1">
           {plan.priceAriary === null ? (
             <span className="text-xl font-extrabold">Sur devis</span>
@@ -52,13 +64,14 @@ export function PackCard({ plan, creditStatus, onSelect, formatCurrency }: PackC
           )}
         </div>
 
-        {/* Crédits */}
+        {/* Crédits — affichés seulement si le backend les fournit */}
         {plan.credits !== null && (
           <p className="text-xs text-primary font-medium mb-3">
-            {plan.credits.toLocaleString("fr-FR")} crédits IA
+            {plan.credits.toLocaleString("fr-FR")} crédits IA / mois
           </p>
         )}
 
+        {/* Features — telles que retournées par le backend */}
         <ul className="space-y-2 mb-5">
           {plan.features.map((f) => (
             <li key={f} className="flex items-start gap-2 text-sm">
@@ -71,6 +84,7 @@ export function PackCard({ plan, creditStatus, onSelect, formatCurrency }: PackC
         </ul>
       </div>
 
+      {/* CTA */}
       <div className="p-5 pt-0">
         {isCurrent ? (
           <div className="flex items-center justify-center gap-2 rounded-md border border-border/50 bg-muted/40 py-2 text-sm text-muted-foreground">
@@ -81,7 +95,12 @@ export function PackCard({ plan, creditStatus, onSelect, formatCurrency }: PackC
           <Button
             className="w-full h-9 text-sm gap-2"
             variant="outline"
-            onClick={() => window.open("mailto:contact@vendeoai.com?subject=Plan Custom", "_blank")}
+            onClick={() =>
+              window.open(
+                "mailto:contact@vendeoai.com?subject=Plan%20Custom%20VendeoAI",
+                "_blank",
+              )
+            }
           >
             <Mail className="h-4 w-4" />
             Nous contacter

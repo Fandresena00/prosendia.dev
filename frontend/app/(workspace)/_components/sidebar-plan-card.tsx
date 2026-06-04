@@ -1,43 +1,48 @@
 /**
  * @file app/(workspace)/_components/sidebar-plan-card.tsx
  *
- * CHANGE: Connecté au backend — affiche le solde de crédits réel.
- * Remplace l'ancienne version hardcodée.
- *
- * Affiche :
- *   - Plan actif + barre de crédits
- *   - Alerte visuelle si crédits faibles
- *   - Bouton "Mettre à niveau" si FREE ou crédits < 20%
+ * Barre de crédits dans la sidebar.
+ * Toutes les valeurs viennent de GET /billing/status — rien de hardcodé.
+ * Les flags isLow/isCritical/isDepleted sont calculés par le backend.
  */
 
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { billingService } from "@/features/billing/services/billing.service";
+import type { CreditStatus } from "@/features/billing/types/billing.types";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, Zap } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { billingService } from "@/features/billing/services/billing.service";
-import type { CreditStatus } from "@/features/billing/types/billing.types";
 
 export function SidebarPlanCard() {
   const [status, setStatus] = useState<CreditStatus | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     billingService
       .getCreditStatus()
-      .then(setStatus)
-      .catch(() => undefined);
+      .then((s) => {
+        setStatus(s);
+        setIsLoading(false);
+      })
+      .catch(() => setIsLoading(false));
   }, []);
 
-  if (!status) {
+  // Skeleton pendant le chargement
+  if (isLoading) {
     return (
-      <div className="rounded-md border border-border/30 bg-secondary/20 px-3 py-2.5">
-        <div className="h-2 w-20 rounded bg-border/40 animate-pulse mb-2" />
+      <div className="rounded-md border border-border/30 bg-secondary/20 px-3 py-2.5 space-y-2">
+        <div className="h-2 w-20 rounded bg-border/40 animate-pulse" />
         <div className="h-1.5 w-full rounded-full bg-border/30 animate-pulse" />
+        <div className="h-2 w-24 rounded bg-border/30 animate-pulse" />
       </div>
     );
   }
+
+  // Rien à afficher si l'API est indisponible
+  if (!status) return null;
 
   const {
     planName,
@@ -50,54 +55,83 @@ export function SidebarPlanCard() {
     plan,
   } = status;
 
+  // Afficher le CTA si plan FREE ou crédits faibles (flags venant du backend)
   const showUpgrade = plan === "FREE" || isLow || isCritical || isDepleted;
 
   const barColor = isDepleted
     ? "bg-red-500"
     : isCritical
-    ? "bg-orange-500"
-    : isLow
-    ? "bg-amber-500"
-    : "bg-primary";
+      ? "bg-orange-500"
+      : isLow
+        ? "bg-amber-500"
+        : "bg-primary";
+
+  const ctaLabel = isDepleted
+    ? "Réactiver l'IA"
+    : plan === "FREE"
+      ? "Passer au Pro"
+      : "Renouveler";
 
   return (
-    <div className={cn(
-      "rounded-md border px-3 py-2.5 space-y-2 transition-colors",
-      isDepleted
-        ? "border-red-500/20 bg-red-500/5"
-        : isCritical
-        ? "border-orange-500/20 bg-orange-500/5"
-        : isLow
-        ? "border-amber-500/20 bg-amber-500/5"
-        : "border-border/30 bg-secondary/20",
-    )}>
-      {/* Plan name + alert icon */}
+    <div
+      className={cn(
+        "rounded-md border px-3 py-2.5 space-y-2 transition-colors",
+        isDepleted
+          ? "border-red-500/20 bg-red-500/5"
+          : isCritical
+            ? "border-orange-500/20 bg-orange-500/5"
+            : isLow
+              ? "border-amber-500/20 bg-amber-500/5"
+              : "border-border/30 bg-secondary/20",
+      )}
+    >
+      {/* Nom du plan + icône alerte */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
-          <Zap className={cn("h-3 w-3 shrink-0", isDepleted ? "text-red-500" : isCritical ? "text-orange-500" : isLow ? "text-amber-500" : "text-primary")} />
+          <Zap
+            className={cn(
+              "h-3 w-3 shrink-0",
+              isDepleted
+                ? "text-red-500"
+                : isCritical
+                  ? "text-orange-500"
+                  : isLow
+                    ? "text-amber-500"
+                    : "text-primary",
+            )}
+          />
           <span className="text-[11px] font-semibold truncate">{planName}</span>
         </div>
         {(isLow || isCritical || isDepleted) && (
-          <AlertTriangle className={cn("h-3 w-3 shrink-0", isDepleted ? "text-red-500" : "text-amber-500")} />
+          <AlertTriangle
+            className={cn(
+              "h-3 w-3 shrink-0",
+              isDepleted ? "text-red-500" : "text-amber-500",
+            )}
+          />
         )}
       </div>
 
-      {/* Barre de progression */}
-      {creditsGranted && (
+      {/* Barre de progression — remainingPercent vient du backend */}
+      {creditsGranted !== null && (
         <div className="space-y-1">
           <div className="h-1.5 w-full rounded-full bg-border/40">
             <div
               className={cn("h-1.5 rounded-full transition-all", barColor)}
-              style={{ width: `${Math.max(0, Math.min(100, remainingPercent))}%` }}
+              style={{
+                width: `${Math.max(0, Math.min(100, remainingPercent))}%`,
+              }}
             />
           </div>
           <p className="text-[10px] text-muted-foreground tabular-nums">
-            {creditBalance.toLocaleString("fr-FR")} / {creditsGranted.toLocaleString("fr-FR")} crédits
+            {creditBalance.toLocaleString("fr-FR")}
+            {" / "}
+            {creditsGranted.toLocaleString("fr-FR")} crédits
           </p>
         </div>
       )}
 
-      {/* CTA */}
+      {/* Bouton upgrade si nécessaire */}
       {showUpgrade && (
         <Button
           asChild
@@ -105,9 +139,7 @@ export function SidebarPlanCard() {
           variant={isDepleted || isCritical ? "default" : "outline"}
           className="w-full h-7 text-[11px]"
         >
-          <Link href="/billing">
-            {isDepleted ? "Réactiver l'IA" : plan === "FREE" ? "Passer au Pro" : "Renouveler"}
-          </Link>
+          <Link href="/billing">{ctaLabel}</Link>
         </Button>
       )}
     </div>

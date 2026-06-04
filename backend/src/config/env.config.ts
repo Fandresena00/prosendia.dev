@@ -2,12 +2,7 @@
  * @file src/config/env.config.ts
  * @description Typed configuration factory.
  *
- * CHANGE: Added `backendUrl` — the public-facing URL of this NestJS server.
- * This is used when generating URLs for temporary file uploads that Facebook
- * must be able to download (images sent via the Graph API require a public HTTPS URL).
- *
- * Priority: BACKEND_URL > APP_URL > FRONTEND_URL > http://localhost:{PORT}
- * In production, set BACKEND_URL explicitly (e.g. https://api.vendeoai.com).
+ * CHANGE: Added `papiApiKey` — Papi payment gateway API key.
  */
 
 export default () => ({
@@ -46,4 +41,11 @@ export default () => ({
    * Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
    */
   facebookTokenEncryptionKey: process.env.FACEBOOK_TOKEN_ENCRYPTION_KEY,
+
+  // ── Papi Payment Gateway ──────────────────────────────────────────────────
+  /**
+   * API Key obtenue depuis https://dashboard.papi.mg
+   * Onglet Boutiques → Application → Developer → API Key
+   */
+  papiApiKey: process.env.PAPI_API_KEY,
 });

@@ -1,8 +1,9 @@
 /**
  * @file features/billing/components/credit-status-banner.tsx
  *
- * Bannière principale affichant le plan actif + barre de crédits + alertes.
- * Affiche des alertes visuelles à 20 %, critique à < 100, et bloqué à 0.
+ * Bannière de statut des crédits.
+ * Toutes les valeurs (seuils, balance, pourcentage) viennent du backend via props.
+ * Le frontend ne calcule rien — il affiche ce que /billing/status retourne.
  */
 
 "use client";
@@ -13,17 +14,16 @@ import { AlertTriangle, XCircle, Zap } from "lucide-react";
 import type { CreditStatus } from "../types/billing.types";
 
 interface CreditStatusBannerProps {
-  status:         CreditStatus;
+  status: CreditStatus;
   formatCurrency: (n: number) => string;
 }
 
-export function CreditStatusBanner({ status, formatCurrency }: CreditStatusBannerProps) {
+export function CreditStatusBanner({ status }: CreditStatusBannerProps) {
   const {
     planName,
     creditBalance,
     creditsGranted,
     remainingPercent,
-    usagePercent,
     isLow,
     isCritical,
     isDepleted,
@@ -31,38 +31,56 @@ export function CreditStatusBanner({ status, formatCurrency }: CreditStatusBanne
     periodEnd,
   } = status;
 
-  // ─── Couleur de la barre selon le niveau ─────────────────────────────────
+  // Couleur de la barre — déterminée par les flags booléens du backend
   const barColor = isDepleted
     ? "bg-red-500"
     : isCritical
-    ? "bg-orange-500"
-    : isLow
-    ? "bg-amber-500"
-    : "bg-primary";
+      ? "bg-orange-500"
+      : isLow
+        ? "bg-amber-500"
+        : "bg-primary";
 
   const bannerBg = isDepleted
     ? "border-red-500/25 bg-red-500/5"
     : isCritical
-    ? "border-orange-500/25 bg-orange-500/5"
-    : isLow
-    ? "border-amber-500/25 bg-amber-500/5"
-    : "border-primary/25 bg-primary/5";
+      ? "border-orange-500/25 bg-orange-500/5"
+      : isLow
+        ? "border-amber-500/25 bg-amber-500/5"
+        : "border-primary/25 bg-primary/5";
 
   const formattedPeriodEnd = periodEnd
-    ? new Date(periodEnd).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" })
+    ? new Date(periodEnd).toLocaleDateString("fr-FR", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
     : null;
 
   return (
     <div className="space-y-3">
       {/* Bannière principale */}
-      <div className={`flex flex-col sm:flex-row sm:items-center gap-4 rounded-md border ${bannerBg} px-5 py-4`}>
+      <div
+        className={`flex flex-col sm:flex-row sm:items-center gap-4 rounded-md border ${bannerBg} px-5 py-4`}
+      >
         <div className="flex items-center gap-4 flex-1 min-w-0">
-          <div className={`h-10 w-10 rounded-md flex items-center justify-center shrink-0 ${
-            isDepleted ? "bg-red-500/15" : isCritical ? "bg-orange-500/15" : "bg-primary/15"
-          }`}>
-            <IconCreditCard className={`h-5 w-5 ${
-              isDepleted ? "text-red-500" : isCritical ? "text-orange-500" : "text-primary"
-            }`} />
+          <div
+            className={`h-10 w-10 rounded-md flex items-center justify-center shrink-0 ${
+              isDepleted
+                ? "bg-red-500/15"
+                : isCritical
+                  ? "bg-orange-500/15"
+                  : "bg-primary/15"
+            }`}
+          >
+            <IconCreditCard
+              className={`h-5 w-5 ${
+                isDepleted
+                  ? "text-red-500"
+                  : isCritical
+                    ? "text-orange-500"
+                    : "text-primary"
+              }`}
+            />
           </div>
 
           <div className="min-w-0">
@@ -81,7 +99,8 @@ export function CreditStatusBanner({ status, formatCurrency }: CreditStatusBanne
             </div>
 
             <p className="text-xs text-muted-foreground mt-0.5">
-              {creditsGranted
+              {/* Valeurs viennent directement du backend */}
+              {creditsGranted !== null
                 ? `${creditBalance.toLocaleString("fr-FR")} / ${creditsGranted.toLocaleString("fr-FR")} crédits restants`
                 : `${creditBalance.toLocaleString("fr-FR")} crédits`}
               {formattedPeriodEnd && (
@@ -95,38 +114,53 @@ export function CreditStatusBanner({ status, formatCurrency }: CreditStatusBanne
                 </span>
               )}
               {!formattedPeriodEnd && (
-                <span className="ml-2 text-muted-foreground/60">· Renouvellement manuel</span>
+                <span className="ml-2 text-muted-foreground/60">
+                  · Renouvellement manuel
+                </span>
               )}
             </p>
           </div>
         </div>
 
-        {/* Barre de progression */}
-        {creditsGranted && (
+        {/* Barre de progression — remainingPercent vient du backend */}
+        {creditsGranted !== null && (
           <div className="flex items-center gap-3 shrink-0">
             <div className="w-32 h-1.5 rounded-full bg-border/60">
               <div
                 className={`h-1.5 rounded-full transition-all ${barColor}`}
-                style={{ width: `${Math.max(0, Math.min(100, remainingPercent))}%` }}
+                style={{
+                  width: `${Math.max(0, Math.min(100, remainingPercent))}%`,
+                }}
               />
             </div>
-            <span className={`text-xs font-medium tabular-nums ${
-              isDepleted ? "text-red-600" : isCritical ? "text-orange-600" : isLow ? "text-amber-600" : "text-muted-foreground"
-            }`}>
+            <span
+              className={`text-xs font-medium tabular-nums ${
+                isDepleted
+                  ? "text-red-600"
+                  : isCritical
+                    ? "text-orange-600"
+                    : isLow
+                      ? "text-amber-600"
+                      : "text-muted-foreground"
+              }`}
+            >
               {Math.round(remainingPercent)}%
             </span>
           </div>
         )}
       </div>
 
-      {/* Alertes */}
+      {/* Alertes — affichées selon les flags booléens retournés par le backend */}
       {isDepleted && (
         <div className="flex items-start gap-3 rounded-md border border-red-500/25 bg-red-500/5 px-4 py-3">
           <XCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
           <div>
-            <p className="text-sm font-semibold text-red-700">Crédits épuisés — IA désactivée</p>
+            <p className="text-sm font-semibold text-red-700">
+              Crédits épuisés — IA désactivée
+            </p>
             <p className="text-xs text-red-600/80 mt-0.5">
-              Votre compte a été repassé en plan Gratuit. Souscrivez à un abonnement pour réactiver les réponses IA.
+              Votre compte a été repassé en plan Gratuit. Souscrivez à un
+              abonnement pour réactiver les réponses IA.
             </p>
           </div>
         </div>
@@ -137,10 +171,11 @@ export function CreditStatusBanner({ status, formatCurrency }: CreditStatusBanne
           <AlertTriangle className="h-4 w-4 text-orange-500 mt-0.5 shrink-0" />
           <div>
             <p className="text-sm font-semibold text-orange-700">
-              Moins de {creditBalance} crédits restants
+              Moins de {creditBalance.toLocaleString("fr-FR")} crédits restants
             </p>
             <p className="text-xs text-orange-600/80 mt-0.5">
-              L'IA s'arrêtera automatiquement à 0 crédit. Renouvelez votre abonnement pour continuer.
+              L&apos;IA s&apos;arrêtera automatiquement à 0 crédit. Renouvelez
+              votre abonnement pour continuer.
             </p>
           </div>
         </div>
@@ -150,9 +185,12 @@ export function CreditStatusBanner({ status, formatCurrency }: CreditStatusBanne
         <div className="flex items-start gap-3 rounded-md border border-amber-500/25 bg-amber-500/5 px-4 py-3">
           <Zap className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
           <div>
-            <p className="text-sm font-semibold text-amber-700">Crédits presque épuisés</p>
+            <p className="text-sm font-semibold text-amber-700">
+              Crédits presque épuisés
+            </p>
             <p className="text-xs text-amber-600/80 mt-0.5">
-              Il vous reste moins de 20 % de vos crédits IA. Pensez à renouveler votre abonnement.
+              Il vous reste {Math.round(remainingPercent)}% de vos crédits IA.
+              Pensez à renouveler votre abonnement.
             </p>
           </div>
         </div>

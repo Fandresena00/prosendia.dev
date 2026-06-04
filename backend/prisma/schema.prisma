@@ -32,8 +32,9 @@ enum AuthProvider {
 
 enum Plan {
   FREE
+  STARTER
   PRO
-  ENTERPRISE
+  CUSTOM
 }
 
 enum BusinessType {
@@ -85,10 +86,26 @@ enum PaymentStatus {
 }
 
 enum PaymentProvider {
-  ORANGE_MONEY
   MVOLA
+  ORANGE_MONEY
+  AIRTEL_MONEY
   MANUAL
 }
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  PENDING
+}
+
+enum CreditTransactionType {
+  SUBSCRIPTION_GRANT
+  AI_REPLY_CONSUME
+  COMMENT_AI_CONSUME
+  ADMIN_ADJUST
+}
+
 
 enum TokenStatus {
   VALID
@@ -141,8 +158,12 @@ model User {
 
   businessProfiles BusinessProfile[]
   payments         Payment[]
-  packPlans        SubscriptionPlan[]
   refreshTokens    RefreshToken[]
+
+   creditBalance    Int     @default(0)
+    creditAlertSent  Boolean @default(false)
+     subscriptions    Subscription[]
+     creditLedger     CreditLedger[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -597,60 +618,91 @@ model ChatResourceImage {
 // =============================================================================
 // ── Billing
 // =============================================================================
-
-model SubscriptionPlan {
-  id String @id @default(uuid())
-
+model Subscription {
+  id     String @id @default(uuid())
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  plan               Plan
-  currentPeriodStart DateTime
-  currentPeriodEnd   DateTime?
-  isActive           Boolean   @default(true)
-  autoRenew          Boolean   @default(true)
-  cancelReason       String?
-  cancelledAt        DateTime?
+  plan            Plan
+  status          SubscriptionStatus @default(PENDING)
+  creditsGranted  Int
+  periodStart     DateTime
+  periodEnd       DateTime
 
-  payments Payment[]
+  renewedFromId String?
+  renewedFrom   Subscription?  @relation("Renewals", fields: [renewedFromId], references: [id])
+  renewals      Subscription[] @relation("Renewals")
+
+  payments     Payment[]
+  creditLedger CreditLedger[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([userId, isActive])
-  @@map("subscription_plans")
+  @@index([userId, status])
+  @@index([periodEnd])
+  @@map("subscriptions")
 }
 
-model Payment {
-  id String @id @default(uuid())
 
+model Payment {
+  id     String @id @default(uuid())
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  subscriptionPlanId String
-  subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade)
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
   amount   Int
   currency String          @default("MGA")
   status   PaymentStatus   @default(PENDING)
   provider PaymentProvider
 
-  phoneNumber     String?
-  operatorRef     String?
-  operatorMessage String?
-  externalRef     String?
+  // Papi fields
+  papiReference          String?  @unique
+  papiPaymentLink        String?
+  papiNotificationToken  String?
+  papiPayerPhone         String?
+  papiPayerName          String?
+  papiTransactionRef     String?
 
-  adminNote  String?
-  paidAt     DateTime?
-  refundedAt DateTime?
+  paidAt        DateTime?
+  failureReason String?
+  expiresAt     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([status])
-  @@index([subscriptionPlanId])
+  @@index([papiReference])
+  @@index([subscriptionId])
   @@map("payments")
+}
+
+
+model CreditLedger {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  type   CreditTransactionType
+  amount Int                    // positif = ajout, négatif = consommation
+
+  tokensUsed     Int?
+  modelId        String?
+  conversationId String?
+  commentId      String?
+  description    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, type])
+  @@map("credit_ledger")
 }
 
 // =============================================================================
