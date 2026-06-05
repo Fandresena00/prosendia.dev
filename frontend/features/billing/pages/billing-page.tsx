@@ -69,7 +69,7 @@ export default function BillingPage() {
   }
 
   return (
-    <div className="p-5 space-y-8 max-w-5xl">
+    <div className="p-5 space-y-8">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-4">
         <div>

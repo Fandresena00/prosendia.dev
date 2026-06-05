@@ -89,13 +89,21 @@ export const PROVIDER_META: Record<
   PaymentProvider,
   {
     label: string;
-    prefix: string;
+    prefixes: string[];
     operator: string;
   }
 > = {
-  MVOLA: { label: "MVola", prefix: "034", operator: "Telma" },
-  ORANGE_MONEY: { label: "Orange Money", prefix: "032", operator: "Orange" },
-  AIRTEL_MONEY: { label: "Airtel Money", prefix: "033", operator: "Airtel" },
+  MVOLA: { label: "MVola", prefixes: ["034", "038"], operator: "Telma" },
+  ORANGE_MONEY: {
+    label: "Orange Money",
+    prefixes: ["032", "037"],
+    operator: "Orange",
+  },
+  AIRTEL_MONEY: {
+    label: "Airtel Money",
+    prefixes: ["033"],
+    operator: "Airtel",
+  },
 };
 
 /** Labels lisibles pour chaque type d'entrée du ledger de crédits. */

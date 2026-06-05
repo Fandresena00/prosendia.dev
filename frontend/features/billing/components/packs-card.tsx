@@ -32,13 +32,13 @@ export function PackCard({
     <div
       className={`relative rounded-md border flex flex-col transition-all ${
         plan.popular
-          ? "border-primary/40 bg-primary/[0.03] shadow-sm"
+          ? "border-primary/40 bg-primary/3 shadow-sm"
           : "border-border/50 bg-card hover:border-border/80"
       }`}
     >
       {plan.popular && (
         <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-          <Badge className="text-xs px-3 shadow-sm">Populaire</Badge>
+          <Badge className="text-xs px-3 shadow-sm">Recommandé</Badge>
         </div>
       )}
 
@@ -63,6 +63,13 @@ export function PackCard({
             </>
           )}
         </div>
+
+        {/* Mention spécifique pour le plan Entreprise / Custom */}
+        {plan.id === "CUSTOM" && (
+          <p className="text-xs text-primary font-medium mb-3">
+            Plan sur mesure réservé aux entreprises.
+          </p>
+        )}
 
         {/* Crédits — affichés seulement si le backend les fournit */}
         {plan.credits !== null && (

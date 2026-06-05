@@ -35,7 +35,7 @@ export function PaymentHistory({ history, formatCurrency }: PaymentHistoryProps)
       <Card className="border-border/50">
         <CardContent className="flex flex-col items-center gap-4 py-12">
           <Clock className="h-10 w-10 text-muted-foreground/25" />
-          <p className="text-sm font-medium text-muted-foreground">Aucun paiement pour l'instant</p>
+          <p className="text-sm font-medium text-muted-foreground">Aucun paiement pour l&apos;instant</p>
         </CardContent>
       </Card>
     );

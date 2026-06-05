@@ -21,43 +21,53 @@ import { Separator } from "@/components/ui/separator";
 import { ExternalLink, Loader2, Zap } from "lucide-react";
 import { useState } from "react";
 import { usePayment } from "../hooks/use-payment";
-import type { Plan, PaymentProvider } from "../types/billing.types";
+import type { PaymentProvider, Plan } from "../types/billing.types";
 import { PROVIDER_META } from "../types/billing.types";
 import { ProviderLogo } from "./payment-logos";
 
 const PROVIDERS: PaymentProvider[] = ["MVOLA", "ORANGE_MONEY", "AIRTEL_MONEY"];
 
 interface PaymentDialogProps {
-  open:     boolean;
-  onClose:  () => void;
-  plan:     Plan | null;
+  open: boolean;
+  onClose: () => void;
+  plan: Plan | null;
   payerName?: string; // Nom de l'utilisateur pré-rempli
 }
 
-export function PaymentDialog({ open, onClose, plan, payerName = "" }: PaymentDialogProps) {
-  const [provider,    setProvider]    = useState<PaymentProvider>("MVOLA");
-  const [phoneLocal,  setPhoneLocal]  = useState("");
-  const [nameInput,   setNameInput]   = useState(payerName);
+export function PaymentDialog({
+  open,
+  onClose,
+  plan,
+  payerName = "",
+}: PaymentDialogProps) {
+  const [provider, setProvider] = useState<PaymentProvider>("MVOLA");
+  const [selectedPrefix, setSelectedPrefix] = useState(
+    PROVIDER_META["MVOLA"].prefixes[0],
+  );
+  const [phoneLocal, setPhoneLocal] = useState("");
+  const [nameInput, setNameInput] = useState(payerName);
   const { state, errorMsg, pay, reset } = usePayment();
 
-  const meta         = PROVIDER_META[provider];
-  const isLoading    = state === "loading" || state === "redirecting";
+  const meta = PROVIDER_META[provider];
+  const isLoading = state === "loading" || state === "redirecting";
   const isRedirecting = state === "redirecting";
 
   const handleClose = () => {
     if (isLoading) return;
     reset();
     setPhoneLocal("");
+    setSelectedPrefix(PROVIDER_META[provider].prefixes[0]);
     onClose();
   };
 
   const handlePay = async () => {
     if (!plan || !phoneLocal.trim() || !nameInput.trim()) return;
-    const fullPhone = `${meta.prefix}${phoneLocal.replace(/\D/g, "")}`;
+    const fullPhone = `${selectedPrefix}${phoneLocal.replace(/\D/g, "")}`;
     await pay(plan.id, provider, fullPhone, nameInput.trim());
   };
 
-  const isValid = phoneLocal.replace(/\D/g, "").length >= 7 && nameInput.trim().length > 0;
+  const isValid =
+    phoneLocal.replace(/\D/g, "").length >= 7 && nameInput.trim().length > 0;
 
   return (
     <AlertDialog open={open} onOpenChange={handleClose}>
@@ -77,7 +87,9 @@ export function PaymentDialog({ open, onClose, plan, payerName = "" }: PaymentDi
               <Loader2 className="h-7 w-7 text-primary animate-spin" />
             </div>
             <div className="text-center space-y-1">
-              <p className="text-sm font-semibold">Ouverture de la page de paiement</p>
+              <p className="text-sm font-semibold">
+                Ouverture de la page de paiement
+              </p>
               <p className="text-xs text-muted-foreground">
                 Vous allez être redirigé vers Papi pour finaliser le paiement.
               </p>
@@ -96,7 +108,10 @@ export function PaymentDialog({ open, onClose, plan, payerName = "" }: PaymentDi
                 return (
                   <button
                     key={p}
-                    onClick={() => setProvider(p)}
+                    onClick={() => {
+                      setProvider(p);
+                      setSelectedPrefix(m.prefixes[0]);
+                    }}
                     className={`flex flex-col items-center gap-2 rounded-md border p-3 transition-all ${
                       provider === p
                         ? "border-primary/40 bg-primary/5"
@@ -105,8 +120,12 @@ export function PaymentDialog({ open, onClose, plan, payerName = "" }: PaymentDi
                   >
                     <ProviderLogo provider={p} size={28} />
                     <div className="text-center">
-                      <p className="text-xs font-semibold leading-tight">{m.label}</p>
-                      <p className="text-[10px] text-muted-foreground">{m.prefix}</p>
+                      <p className="text-xs font-semibold leading-tight">
+                        {m.label}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground whitespace-nowrap">
+                        {m.prefixes.join(" & ")}
+                      </p>
                     </div>
                     {provider === p && (
                       <div className="h-1.5 w-1.5 rounded-full bg-primary" />
@@ -131,13 +150,25 @@ export function PaymentDialog({ open, onClose, plan, payerName = "" }: PaymentDi
 
             {/* Numéro */}
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">
-                Numéro {meta.label}
-              </Label>
+              <Label className="text-sm font-medium">Numéro {meta.label}</Label>
               <div className="flex items-center gap-2">
-                <span className="flex items-center justify-center h-10 w-14 rounded-md border border-border/50 bg-secondary/50 text-sm font-semibold text-muted-foreground shrink-0">
-                  {meta.prefix}
-                </span>
+                {meta.prefixes.length > 1 ? (
+                  <select
+                    value={selectedPrefix}
+                    onChange={(e) => setSelectedPrefix(e.target.value)}
+                    className="flex items-center justify-center h-10 w-16 rounded-md border border-border/50 bg-secondary/50 text-sm font-semibold text-muted-foreground shrink-0 focus:outline-none focus:ring-1 focus:ring-primary/40 px-1 cursor-pointer"
+                  >
+                    {meta.prefixes.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="flex items-center justify-center h-10 w-14 rounded-md border border-border/50 bg-secondary/50 text-sm font-semibold text-muted-foreground shrink-0">
+                    {selectedPrefix}
+                  </span>
+                )}
                 <Input
                   placeholder="XX XXX XX"
                   value={phoneLocal}
@@ -147,7 +178,7 @@ export function PaymentDialog({ open, onClose, plan, payerName = "" }: PaymentDi
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                {meta.operator} · Format: {meta.prefix}XX XXX XX
+                {meta.operator} · Format: {selectedPrefix}XX XXX XX
               </p>
             </div>
 
@@ -177,8 +208,8 @@ export function PaymentDialog({ open, onClose, plan, payerName = "" }: PaymentDi
                 </span>
               </div>
               <p className="text-[10px] text-muted-foreground leading-relaxed">
-                ⚠️ Sans recharge automatique — renouvellement manuel chaque mois.
-                Vous serez redirigé vers Papi pour le paiement.
+                ⚠️ Sans recharge automatique — renouvellement manuel chaque
+                mois. Vous serez redirigé vers Papi pour le paiement.
               </p>
             </div>
 
@@ -191,7 +222,10 @@ export function PaymentDialog({ open, onClose, plan, payerName = "" }: PaymentDi
 
             {/* Actions */}
             <div className="flex gap-3">
-              <AlertDialogCancel className="flex-1 h-9 text-sm" onClick={handleClose}>
+              <AlertDialogCancel
+                className="flex-1 h-9 text-sm"
+                onClick={handleClose}
+              >
                 Annuler
               </AlertDialogCancel>
               <Button

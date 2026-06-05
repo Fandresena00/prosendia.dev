@@ -1,6 +1,6 @@
 /**
  * @file src/app.module.ts
- * CHANGE: Added BillingModule.
+ * CHANGE: Added DashboardModule.
  */
 import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -20,8 +20,9 @@ import { ValidationSchema } from './config/validation.js';
 import { PrismaModule } from './database/prisma.module.js';
 import { AiModule } from './features/ai/ai.module.js';
 import { AuthModule } from './features/auth/auth.module.js';
-import { BillingModule } from './features/billing/billing.module.js'; // ← NEW
+import { BillingModule } from './features/billing/billing.module.js';
 import { BusinessProfileModule } from './features/business-profile/business-profile.module.js';
+import { DashboardModule } from './features/dashboard/dashboard.module.js'; // ← NEW
 import { FacebookPostsModule } from './features/facebook/facebook-posts/facebook-posts.module.js';
 import { FacebookModule } from './features/facebook/facebook.module.js';
 import { InboxEventsModule } from './features/inbox/inbox-events.module.js';
@@ -32,16 +33,16 @@ import { UsersModule } from './features/users/users.module.js';
 @Module({
   imports: [
     ConfigModule.forRoot({
-      isGlobal: true,
-      cache: true,
-      envFilePath: '.env',
-      load: [envConfig],
+      isGlobal:      true,
+      cache:         true,
+      envFilePath:   '.env',
+      load:          [envConfig],
       validationSchema: ValidationSchema,
     }),
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot({
       throttlers: [
-        { name: 'short', ttl: 60_000, limit: 100 },
+        { name: 'short',  ttl: 60_000,  limit: 100 },
         { name: 'medium', ttl: 600_000, limit: 500 },
       ],
       errorMessage: 'Too many requests.',
@@ -54,7 +55,8 @@ import { UsersModule } from './features/users/users.module.js';
     FacebookModule,
     InboxEventsModule,
     QueueModule,
-    BillingModule,   // ← NEW: avant AiModule (AiModule en dépend)
+    BillingModule,
+    DashboardModule,   // ← NEW: après BillingModule (en dépend)
     AiModule,
     InboxModule,
     FacebookPostsModule,
@@ -68,10 +70,10 @@ import { UsersModule } from './features/users/users.module.js';
     {
       provide: APP_PIPE,
       useValue: new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-        transformOptions: { enableImplicitConversion: true },
+        whitelist:              true,
+        forbidNonWhitelisted:   true,
+        transform:              true,
+        transformOptions:       { enableImplicitConversion: true },
       }),
     },
   ],

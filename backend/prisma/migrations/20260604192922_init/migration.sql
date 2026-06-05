@@ -2,7 +2,7 @@
 CREATE TYPE "AuthProvider" AS ENUM ('LOCAL', 'GOOGLE', 'FACEBOOK');
 
 -- CreateEnum
-CREATE TYPE "Plan" AS ENUM ('FREE', 'PRO', 'ENTERPRISE');
+CREATE TYPE "Plan" AS ENUM ('FREE', 'STARTER', 'PRO', 'CUSTOM');
 
 -- CreateEnum
 CREATE TYPE "BusinessType" AS ENUM ('HAIR_SALON', 'RESTAURANT', 'FREELANCER', 'SHOP', 'SERVICE', 'OTHER');
@@ -26,7 +26,13 @@ CREATE TYPE "HandoverStatus" AS ENUM ('AI', 'HUMAN', 'RESOLVED');
 CREATE TYPE "PaymentStatus" AS ENUM ('PENDING', 'SUCCESS', 'FAILED', 'REFUNDED');
 
 -- CreateEnum
-CREATE TYPE "PaymentProvider" AS ENUM ('ORANGE_MONEY', 'MVOLA', 'MANUAL');
+CREATE TYPE "PaymentProvider" AS ENUM ('MVOLA', 'ORANGE_MONEY', 'AIRTEL_MONEY', 'MANUAL');
+
+-- CreateEnum
+CREATE TYPE "SubscriptionStatus" AS ENUM ('ACTIVE', 'EXPIRED', 'CANCELLED', 'PENDING');
+
+-- CreateEnum
+CREATE TYPE "CreditTransactionType" AS ENUM ('SUBSCRIPTION_GRANT', 'AI_REPLY_CONSUME', 'COMMENT_AI_CONSUME', 'ADMIN_ADJUST');
 
 -- CreateEnum
 CREATE TYPE "TokenStatus" AS ENUM ('VALID', 'INVALID', 'UNKNOWN');
@@ -51,6 +57,8 @@ CREATE TABLE "users" (
     "provider" "AuthProvider" NOT NULL DEFAULT 'LOCAL',
     "providerId" TEXT,
     "onboardingDone" BOOLEAN NOT NULL DEFAULT false,
+    "creditBalance" INTEGER NOT NULL DEFAULT 0,
+    "creditAlertSent" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -275,6 +283,8 @@ CREATE TABLE "post_ai_configs" (
     "customInstructions" TEXT,
     "replyLanguage" TEXT,
     "maxReplyTokens" INTEGER,
+    "privateReplyEnabled" BOOLEAN NOT NULL DEFAULT false,
+    "privateReplyMessage" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -309,42 +319,60 @@ CREATE TABLE "chat_resource_images" (
 );
 
 -- CreateTable
-CREATE TABLE "subscription_plans" (
+CREATE TABLE "subscriptions" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "plan" "Plan" NOT NULL,
-    "currentPeriodStart" TIMESTAMP(3) NOT NULL,
-    "currentPeriodEnd" TIMESTAMP(3),
-    "isActive" BOOLEAN NOT NULL DEFAULT true,
-    "autoRenew" BOOLEAN NOT NULL DEFAULT true,
-    "cancelReason" TEXT,
-    "cancelledAt" TIMESTAMP(3),
+    "status" "SubscriptionStatus" NOT NULL DEFAULT 'PENDING',
+    "creditsGranted" INTEGER NOT NULL,
+    "periodStart" TIMESTAMP(3) NOT NULL,
+    "periodEnd" TIMESTAMP(3) NOT NULL,
+    "renewedFromId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "subscription_plans_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "subscriptions_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "payments" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
-    "subscriptionPlanId" TEXT NOT NULL,
+    "subscriptionId" TEXT NOT NULL,
     "amount" INTEGER NOT NULL,
     "currency" TEXT NOT NULL DEFAULT 'MGA',
     "status" "PaymentStatus" NOT NULL DEFAULT 'PENDING',
     "provider" "PaymentProvider" NOT NULL,
-    "phoneNumber" TEXT,
-    "operatorRef" TEXT,
-    "operatorMessage" TEXT,
-    "externalRef" TEXT,
-    "adminNote" TEXT,
+    "papiReference" TEXT,
+    "papiPaymentLink" TEXT,
+    "papiNotificationToken" TEXT,
+    "papiPayerPhone" TEXT,
+    "papiPayerName" TEXT,
+    "papiTransactionRef" TEXT,
     "paidAt" TIMESTAMP(3),
-    "refundedAt" TIMESTAMP(3),
+    "failureReason" TEXT,
+    "expiresAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "payments_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "credit_ledger" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "subscriptionId" TEXT,
+    "type" "CreditTransactionType" NOT NULL,
+    "amount" INTEGER NOT NULL,
+    "tokensUsed" INTEGER,
+    "modelId" TEXT,
+    "conversationId" TEXT,
+    "commentId" TEXT,
+    "description" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "credit_ledger_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -439,7 +467,13 @@ CREATE INDEX "chat_resources_businessProfileId_idx" ON "chat_resources"("busines
 CREATE INDEX "chat_resource_images_chatResourceId_idx" ON "chat_resource_images"("chatResourceId");
 
 -- CreateIndex
-CREATE INDEX "subscription_plans_userId_isActive_idx" ON "subscription_plans"("userId", "isActive");
+CREATE INDEX "subscriptions_userId_status_idx" ON "subscriptions"("userId", "status");
+
+-- CreateIndex
+CREATE INDEX "subscriptions_periodEnd_idx" ON "subscriptions"("periodEnd");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "payments_papiReference_key" ON "payments"("papiReference");
 
 -- CreateIndex
 CREATE INDEX "payments_userId_idx" ON "payments"("userId");
@@ -448,7 +482,16 @@ CREATE INDEX "payments_userId_idx" ON "payments"("userId");
 CREATE INDEX "payments_status_idx" ON "payments"("status");
 
 -- CreateIndex
-CREATE INDEX "payments_subscriptionPlanId_idx" ON "payments"("subscriptionPlanId");
+CREATE INDEX "payments_papiReference_idx" ON "payments"("papiReference");
+
+-- CreateIndex
+CREATE INDEX "payments_subscriptionId_idx" ON "payments"("subscriptionId");
+
+-- CreateIndex
+CREATE INDEX "credit_ledger_userId_createdAt_idx" ON "credit_ledger"("userId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "credit_ledger_userId_type_idx" ON "credit_ledger"("userId", "type");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "refresh_tokens_jti_key" ON "refresh_tokens"("jti");
@@ -511,13 +554,22 @@ ALTER TABLE "chat_resources" ADD CONSTRAINT "chat_resources_conversationId_fkey"
 ALTER TABLE "chat_resource_images" ADD CONSTRAINT "chat_resource_images_chatResourceId_fkey" FOREIGN KEY ("chatResourceId") REFERENCES "chat_resources"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "subscription_plans" ADD CONSTRAINT "subscription_plans_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_renewedFromId_fkey" FOREIGN KEY ("renewedFromId") REFERENCES "subscriptions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "payments" ADD CONSTRAINT "payments_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "payments" ADD CONSTRAINT "payments_subscriptionPlanId_fkey" FOREIGN KEY ("subscriptionPlanId") REFERENCES "subscription_plans"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "payments" ADD CONSTRAINT "payments_subscriptionId_fkey" FOREIGN KEY ("subscriptionId") REFERENCES "subscriptions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "credit_ledger" ADD CONSTRAINT "credit_ledger_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "credit_ledger" ADD CONSTRAINT "credit_ledger_subscriptionId_fkey" FOREIGN KEY ("subscriptionId") REFERENCES "subscriptions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "refresh_tokens" ADD CONSTRAINT "refresh_tokens_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
