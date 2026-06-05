@@ -19,9 +19,9 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import * as webPush from 'web-push';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { InboxEventEmitter } from '../../inbox/gateways/inbox-sse.gateway.js';
 import type { NotificationDto } from '../dto/dashboard.dto.js';
@@ -243,7 +243,7 @@ export class NotificationService {
     let exchanges = 0;
     let lastSender: string | null = null;
     for (const msg of recentMessages) {
-      if (msg.sender === 'PAGE' || msg.sender === 'HUMAN') break; // résolution humaine
+      if (msg.sender === ('PAGE' as any) || msg.sender === ('HUMAN' as any)) break; // résolution humaine
       if (msg.sender !== lastSender) {
         exchanges++;
         lastSender = msg.sender;
@@ -528,11 +528,11 @@ export class NotificationService {
     // Web Push (si activé selon le plan)
     const user = await this.prisma.user.findUnique({
       where:  { id: data.userId },
-      select: { activePlan: true, pushNotifications: true },
+      select: { activePlan: true },
     });
 
     const channels = PLAN_CHANNELS[user?.activePlan ?? 'FREE'] ?? ['IN_APP'];
-    const shouldPush = channels.includes('WEB_PUSH') && user?.pushNotifications !== false;
+    const shouldPush = channels.includes('WEB_PUSH');
 
     if (shouldPush && ['CRITICAL', 'WARNING'].includes(data.severity)) {
       await this.sendWebPush(data.userId, data.title, data.message, data.actionUrl);

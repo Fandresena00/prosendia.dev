@@ -23,22 +23,22 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
-import type { AuthenticatedUser } from '../auth/types/authenticated-user.types.js';
+import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard.js';
+import { DashboardStatsService } from '../services/dashboard-stats.service.js';
+import { NotificationService } from '../services/notification.service.js';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator.js';
+import type { AuthenticatedUser } from '../../auth/types/authenticated-user.types.js';
 import {
   MarkReadDto,
   NotificationsQueryDto,
   WebPushSubscribeDto,
-} from './dto/dashboard.dto.js';
-import { DashboardStatsService } from './services/dashboard-stats.service.js';
-import { NotificationService } from './services/notification.service.js';
+} from '../dto/dashboard.dto.js';
 
 @UseGuards(JwtAuthGuard)
 @Controller('dashboard')
 export class DashboardController {
   constructor(
-    private readonly stats:         DashboardStatsService,
+    private readonly stats: DashboardStatsService,
     private readonly notifications: NotificationService,
   ) {}
 
@@ -53,7 +53,9 @@ export class DashboardController {
   async getDashboard(@CurrentUser() user: AuthenticatedUser) {
     const [dashboard, notifPage] = await Promise.all([
       this.stats.getDashboard(user.sub),
-      this.notifications.getNotifications(user.sub, 1, 5, { unreadOnly: false }),
+      this.notifications.getNotifications(user.sub, 1, 5, {
+        unreadOnly: false,
+      }),
     ]);
 
     // Compter les critiques
@@ -64,7 +66,7 @@ export class DashboardController {
     return {
       ...dashboard,
       notifications: notifPage.data,
-      unreadCount:   notifPage.unreadCount,
+      unreadCount: notifPage.unreadCount,
       criticalCount,
     };
   }
@@ -83,13 +85,13 @@ export class DashboardController {
   ) {
     return this.notifications.getNotifications(
       user.sub,
-      query.page      ?? 1,
-      query.pageSize  ?? 20,
+      query.page ?? 1,
+      query.pageSize ?? 20,
       {
-        severity:   query.severity,
-        type:       query.type,
+        severity: query.severity,
+        type: query.type,
         unreadOnly: query.unreadOnly,
-        search:     query.search,
+        search: query.search,
       },
     );
   }
@@ -100,7 +102,9 @@ export class DashboardController {
    */
   @Get('notifications/unread-count')
   getUnreadCount(@CurrentUser() user: AuthenticatedUser) {
-    return this.notifications.getUnreadCount(user.sub).then((count) => ({ count }));
+    return this.notifications
+      .getUnreadCount(user.sub)
+      .then((count) => ({ count }));
   }
 
   /**

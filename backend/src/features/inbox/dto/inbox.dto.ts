@@ -209,6 +209,7 @@ export class SetHandoverDto {
 export type SseEventType =
   | 'new_message'
   | 'conversation_updated'
+  | 'notification'
   | 'sync_complete'
   | 'typing'
   | 'ping';

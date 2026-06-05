@@ -11,11 +11,11 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
-import { CreditService } from '../../billing/services/credit.service.js';
 import { BILLING_PLANS } from '../../billing/billing.constants.js';
+import { CreditService } from '../../billing/services/credit.service.js';
 import type {
-  AiStatsDto,
   ActivityTodayDto,
+  AiStatsDto,
   DailyActivityDto,
   DashboardResponseDto,
   ResponseRateDto,
@@ -29,26 +29,21 @@ export class DashboardStatsService {
   private readonly logger = new Logger(DashboardStatsService.name);
 
   constructor(
-    private readonly prisma:  PrismaService,
+    private readonly prisma: PrismaService,
     private readonly credits: CreditService,
   ) {}
 
   // ─── Main aggregator ─────────────────────────────────────────────────────
 
   async getDashboard(userId: string): Promise<DashboardResponseDto> {
-    const [
-      subscription,
-      aiStats,
-      responseRate,
-      activityToday,
-      weeklyChart,
-    ] = await Promise.all([
-      this.getSubscriptionUsage(userId),
-      this.getAiStats(userId),
-      this.getResponseRate(userId),
-      this.getActivityToday(userId),
-      this.getWeeklyChart(userId),
-    ]);
+    const [subscription, aiStats, responseRate, activityToday, weeklyChart] =
+      await Promise.all([
+        this.getSubscriptionUsage(userId),
+        this.getAiStats(userId),
+        this.getResponseRate(userId),
+        this.getActivityToday(userId),
+        this.getWeeklyChart(userId),
+      ]);
 
     return {
       subscription,
@@ -56,10 +51,10 @@ export class DashboardStatsService {
       responseRate,
       activityToday,
       weeklyChart,
-      notifications:  [], // rempli par DashboardController
-      unreadCount:    0,
-      criticalCount:  0,
-      generatedAt:    new Date(),
+      notifications: [], // rempli par DashboardController
+      unreadCount: 0,
+      criticalCount: 0,
+      generatedAt: new Date(),
     };
   }
 
@@ -68,7 +63,8 @@ export class DashboardStatsService {
   async getSubscriptionUsage(userId: string): Promise<SubscriptionUsageDto> {
     const creditStatus = await this.credits.getCreditStatus(userId);
 
-    const planConfig = BILLING_PLANS[creditStatus.plan as keyof typeof BILLING_PLANS];
+    const planConfig =
+      BILLING_PLANS[creditStatus.plan as keyof typeof BILLING_PLANS];
 
     // Compter les pages actives
     const pagesUsed = await this.prisma.facebookConnection.count({
@@ -79,54 +75,61 @@ export class DashboardStatsService {
     const postsManaged = await this.prisma.facebookPost.count({
       where: {
         businessProfile: { userId },
-        postAiConfig:    { isNot: null },
+        postAiConfig: { isNot: null },
       },
     });
 
     // Compter les images de référence
     const referenceImages = await this.prisma.chatResourceImage.count({
-      where: { resource: { businessProfile: { userId }, isActive: true } },
+      where: { chatResource: { businessProfile: { userId }, isActive: true } },
     });
 
     // Abonnement actif
     const activeSub = await this.prisma.subscription.findFirst({
-      where:   { userId, status: 'ACTIVE' },
-      select:  { periodEnd: true },
+      where: { userId, status: 'ACTIVE' },
+      select: { periodEnd: true },
       orderBy: { createdAt: 'desc' },
     });
 
-    const now          = new Date();
-    const periodEnd    = activeSub?.periodEnd ?? null;
+    const now = new Date();
+    const periodEnd = activeSub?.periodEnd ?? null;
     const daysRemaining = periodEnd
-      ? Math.max(0, Math.ceil((periodEnd.getTime() - now.getTime()) / 86_400_000))
+      ? Math.max(
+          0,
+          Math.ceil((periodEnd.getTime() - now.getTime()) / 86_400_000),
+        )
       : null;
 
     return {
-      planName:           creditStatus.planName,
-      planId:             creditStatus.plan,
-      creditBalance:      creditStatus.creditBalance,
-      creditsGranted:     creditStatus.creditsGranted,
+      planName: creditStatus.planName,
+      planId: creditStatus.plan,
+      creditBalance: creditStatus.creditBalance,
+      creditsGranted: creditStatus.creditsGranted,
       creditRemainingPct: creditStatus.remainingPercent,
-      creditIsLow:        creditStatus.isLow,
-      creditIsCritical:   creditStatus.isCritical,
-      creditIsDepleted:   creditStatus.isDepleted,
+      creditIsLow: creditStatus.isLow,
+      creditIsCritical: creditStatus.isCritical,
+      creditIsDepleted: creditStatus.isDepleted,
       periodEnd,
       daysRemaining,
       pagesUsed,
-      pagesLimit:         planConfig?.maxPages ?? null,
+      pagesLimit: planConfig?.maxPages ?? null,
       postsManaged,
-      postsLimit:         planConfig?.maxManagedPosts ?? null,
+      postsLimit: planConfig?.maxManagedPosts ?? null,
       referenceImages,
-      imagesLimit:        planConfig?.maxReferenceImages ?? null,
+      imagesLimit: planConfig?.maxReferenceImages ?? null,
     };
   }
 
   // ─── AI stats ─────────────────────────────────────────────────────────────
 
   async getAiStats(userId: string): Promise<AiStatsDto> {
-    const now            = new Date();
-    const startOfDay     = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfMonth   = new Date(now.getFullYear(), now.getMonth(), 1);
+    const now = new Date();
+    const startOfDay = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const profileIds = await this.getProfileIds(userId);
 
@@ -139,17 +142,17 @@ export class DashboardStatsService {
       // Réponses IA dans l'inbox aujourd'hui
       this.prisma.message.count({
         where: {
-          sender:         'AI',
-          createdAt:      { gte: startOfDay },
-          conversation:   { businessProfileId: { in: profileIds } },
+          sender: 'AI',
+          createdAt: { gte: startOfDay },
+          conversation: { businessProfileId: { in: profileIds } },
         },
       }),
 
       // Réponses IA ce mois
       this.prisma.message.count({
         where: {
-          sender:       'AI',
-          createdAt:    { gte: startOfMonth },
+          sender: 'AI',
+          createdAt: { gte: startOfMonth },
           conversation: { businessProfileId: { in: profileIds } },
         },
       }),
@@ -184,37 +187,38 @@ export class DashboardStatsService {
   async getResponseRate(userId: string): Promise<ResponseRateDto> {
     const profileIds = await this.getProfileIds(userId);
 
-    const [totalConversations, aiHandled, humanHandled, unanswered] = await Promise.all([
-      this.prisma.conversation.count({
-        where: { businessProfileId: { in: profileIds } },
-      }),
-      this.prisma.conversation.count({
-        where: {
-          businessProfileId: { in: profileIds },
-          messages: { some: { sender: 'AI' } },
-        },
-      }),
-      this.prisma.conversation.count({
-        where: {
-          businessProfileId: { in: profileIds },
-          messages: { some: { sender: { in: ['PAGE', 'HUMAN'] } } },
-          NOT: { messages: { some: { sender: 'AI' } } },
-        },
-      }),
-      this.prisma.conversation.count({
-        where: {
-          businessProfileId: { in: profileIds },
-          messages: {
-            none: { sender: { in: ['AI', 'PAGE', 'HUMAN'] } },
+    const [totalConversations, aiHandled, humanHandled, unanswered] =
+      await Promise.all([
+        this.prisma.conversation.count({
+          where: { businessProfileId: { in: profileIds } },
+        }),
+        this.prisma.conversation.count({
+          where: {
+            businessProfileId: { in: profileIds },
+            messages: { some: { sender: 'AI' } },
           },
-        },
-      }),
-    ]);
+        }),
+        this.prisma.conversation.count({
+          where: {
+            businessProfileId: { in: profileIds },
+            messages: { some: { sender: { in: ['PAGE', 'HUMAN'] as any } } },
+            NOT: { messages: { some: { sender: 'AI' } } },
+          },
+        }),
+        this.prisma.conversation.count({
+          where: {
+            businessProfileId: { in: profileIds },
+            messages: {
+              none: { sender: { in: ['AI', 'PAGE', 'HUMAN'] as any } },
+            },
+          },
+        }),
+      ]);
 
-    const total       = totalConversations || 1;
-    const globalRate  = Math.round(((aiHandled + humanHandled) / total) * 100);
-    const aiRate      = Math.round((aiHandled / total) * 100);
-    const humanRate   = Math.round((humanHandled / total) * 100);
+    const total = totalConversations || 1;
+    const globalRate = Math.round(((aiHandled + humanHandled) / total) * 100);
+    const aiRate = Math.round((aiHandled / total) * 100);
+    const humanRate = Math.round((humanHandled / total) * 100);
 
     return { globalRate, aiRate, humanRate, unansweredCount: unanswered };
   }
@@ -235,33 +239,38 @@ export class DashboardStatsService {
     ] = await Promise.all([
       this.prisma.message.count({
         where: {
-          sender:       'CLIENT',
-          createdAt:    { gte: startOfDay },
+          sender: 'CLIENT',
+          createdAt: { gte: startOfDay },
           conversation: { businessProfileId: { in: profileIds } },
         },
       }),
       this.prisma.postComment.count({
         where: {
           commentedAt: { gte: startOfDay },
-          post:        { businessProfileId: { in: profileIds } },
+          post: { businessProfileId: { in: profileIds } },
         },
       }),
       this.prisma.message.count({
         where: {
-          sender:       'AI',
-          createdAt:    { gte: startOfDay },
+          sender: 'AI',
+          createdAt: { gte: startOfDay },
           conversation: { businessProfileId: { in: profileIds } },
         },
       }),
       this.prisma.conversation.count({
         where: {
           businessProfileId: { in: profileIds },
-          humanTookOverAt:   { gte: startOfDay },
+          humanTookOverAt: { gte: startOfDay },
         },
       }),
     ]);
 
-    return { messagesReceived, commentsReceived, aiRepliesSent, humanInterventions };
+    return {
+      messagesReceived,
+      commentsReceived,
+      aiRepliesSent,
+      humanInterventions,
+    };
   }
 
   // ─── Weekly chart (7 jours glissants) ────────────────────────────────────
@@ -271,7 +280,7 @@ export class DashboardStatsService {
     const result: DailyActivityDto[] = [];
 
     for (let i = 6; i >= 0; i--) {
-      const date  = new Date();
+      const date = new Date();
       date.setDate(date.getDate() - i);
       date.setHours(0, 0, 0, 0);
 
@@ -281,36 +290,36 @@ export class DashboardStatsService {
       const [messages, aiReplies, humanReplies, comments] = await Promise.all([
         this.prisma.message.count({
           where: {
-            sender:       'CLIENT',
-            createdAt:    { gte: date, lt: nextDate },
+            sender: 'CLIENT',
+            createdAt: { gte: date, lt: nextDate },
             conversation: { businessProfileId: { in: profileIds } },
           },
         }),
         this.prisma.message.count({
           where: {
-            sender:       'AI',
-            createdAt:    { gte: date, lt: nextDate },
+            sender: 'AI',
+            createdAt: { gte: date, lt: nextDate },
             conversation: { businessProfileId: { in: profileIds } },
           },
         }),
         this.prisma.message.count({
           where: {
-            sender:       { in: ['PAGE', 'HUMAN'] },
-            createdAt:    { gte: date, lt: nextDate },
+            sender: { in: ['PAGE', 'HUMAN'] as any },
+            createdAt: { gte: date, lt: nextDate },
             conversation: { businessProfileId: { in: profileIds } },
           },
         }),
         this.prisma.postComment.count({
           where: {
             commentedAt: { gte: date, lt: nextDate },
-            post:        { businessProfileId: { in: profileIds } },
+            post: { businessProfileId: { in: profileIds } },
           },
         }),
       ]);
 
       result.push({
-        date:     date.toISOString().slice(0, 10),
-        day:      DAY_LABELS[date.getDay()],
+        date: date.toISOString().slice(0, 10),
+        day: DAY_LABELS[date.getDay()],
         messages,
         aiReplies,
         humanReplies,
@@ -325,7 +334,7 @@ export class DashboardStatsService {
 
   private async getProfileIds(userId: string): Promise<string[]> {
     const profiles = await this.prisma.businessProfile.findMany({
-      where:  { userId },
+      where: { userId },
       select: { id: true },
     });
     return profiles.map((p) => p.id);
