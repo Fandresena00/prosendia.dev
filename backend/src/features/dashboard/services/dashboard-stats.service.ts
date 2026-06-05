@@ -201,7 +201,7 @@ export class DashboardStatsService {
         this.prisma.conversation.count({
           where: {
             businessProfileId: { in: profileIds },
-            messages: { some: { sender: { in: ['PAGE', 'HUMAN'] as any } } },
+            messages: { some: { sender: 'PAGE' } },
             NOT: { messages: { some: { sender: 'AI' } } },
           },
         }),
@@ -209,7 +209,7 @@ export class DashboardStatsService {
           where: {
             businessProfileId: { in: profileIds },
             messages: {
-              none: { sender: { in: ['AI', 'PAGE', 'HUMAN'] as any } },
+              none: { sender: { in: ['AI', 'PAGE'] } },
             },
           },
         }),
@@ -304,7 +304,7 @@ export class DashboardStatsService {
         }),
         this.prisma.message.count({
           where: {
-            sender: { in: ['PAGE', 'HUMAN'] as any },
+            sender: 'PAGE',
             createdAt: { gte: date, lt: nextDate },
             conversation: { businessProfileId: { in: profileIds } },
           },
