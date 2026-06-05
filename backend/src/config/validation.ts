@@ -29,7 +29,8 @@ export const ValidationSchema = Joi.object({
     'string.uri': 'APP_URL must be a valid URI',
   }),
   BACKEND_URL: Joi.string().uri().optional().messages({
-    'string.uri': 'BACKEND_URL must be a valid URI (e.g. https://api.vendeoai.com)',
+    'string.uri':
+      'BACKEND_URL must be a valid URI (e.g. https://api.vendeoai.com)',
   }),
   APP_TITLE: Joi.string().min(1).default('VendeoAI'),
 
@@ -70,7 +71,8 @@ export const ValidationSchema = Joi.object({
     .required()
     .messages({
       'any.required': 'FACEBOOK_TOKEN_ENCRYPTION_KEY is required',
-      'string.length': 'FACEBOOK_TOKEN_ENCRYPTION_KEY must be 64 hex characters (32 bytes)',
+      'string.length':
+        'FACEBOOK_TOKEN_ENCRYPTION_KEY must be 64 hex characters (32 bytes)',
       'string.hex': 'FACEBOOK_TOKEN_ENCRYPTION_KEY must be a valid hex string',
     }),
 
@@ -79,4 +81,9 @@ export const ValidationSchema = Joi.object({
     'any.required': 'PAPI_API_KEY is required for payment processing',
     'string.empty': 'PAPI_API_KEY cannot be empty',
   }),
+
+  // Web Push VAPID keys (optionnels — désactive Web Push si absent)
+  VAPID_PUBLIC_KEY: Joi.string().optional(),
+  VAPID_PRIVATE_KEY: Joi.string().optional(),
+  VAPID_EMAIL: Joi.string().optional(),
 });
