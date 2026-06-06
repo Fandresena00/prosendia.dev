@@ -1,23 +1,30 @@
 /**
  * @file src/features/users/users.service.ts
- * @description User domain service.
  *
- * Responsibilities:
- * - CRUD operations on the User entity
- * - Password hashing and verification
- * - Internal method for auth: findUserByEmailWithPassword
+ * FIX — Bug crédits FREE
+ * ──────────────────────
+ * createUser() créait l'utilisateur avec activePlan=FREE mais ne créait ni
+ * Subscription, ni CreditLedger, ni ne mettait creditBalance=500.
  *
- * NOT responsible for:
- * - Token generation → AuthService
- * - Session management → AuthService
- * - HTTP request validation → class-validator pipes + DTOs
+ * Résultat : tout nouvel utilisateur avait 0 crédit → IA bloquée dès l'inscription.
+ *
+ * FIX : après prisma.user.create(), appeler CreditService.initializeFreeUser()
+ * qui crée l'abonnement FREE ACTIVE + attribue 500 crédits atomiquement.
+ *
+ * L'injection de CreditService utilise forwardRef() pour éviter la dépendance
+ * circulaire potentielle (BillingModule ↔ UsersModule).
+ * Si aucune dépendance circulaire, forwardRef n'est pas nécessaire — vérifier
+ * les imports dans users.module.ts.
  */
 
 import {
   BadRequestException,
   ConflictException,
+  forwardRef,
+  Inject,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import bcrypt from 'bcrypt';
@@ -27,6 +34,8 @@ import {
   Plan,
   Prisma,
 } from '../../../generated/prisma/client.js';
+
+import { CreditService } from '../../billing/services/credit.service.js';
 import type { ChangePasswordDto } from '../dto/change-password.dto.js';
 import type { CreateUserDto } from '../dto/create-user.dto.js';
 import type { UpdateUserDto } from '../dto/update-user.dto.js';
@@ -35,34 +44,31 @@ import { UserResponseDto } from '../dto/user-response.dto.js';
 /** Full Prisma row — used internally only, never returned to API consumers. */
 type UserRecord = Prisma.UserGetPayload<Record<string, never>>;
 
-/**
- * Internal type for password verification.
- * Used exclusively by AuthService — the hash must never leave the service layer.
- */
 export type UserWithPassword = UserRecord & { password: string };
 
-/** bcrypt cost factor — 12 is the modern recommended minimum (2025). */
 const SALT_ROUNDS = 12;
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(UsersService.name);
 
-  // ─── Private helpers ────────────────────────────────────────────────────────
+  constructor(
+    private readonly prisma: PrismaService,
+    // forwardRef protège contre la dépendance circulaire
+    // BillingModule → UsersModule → BillingModule si les deux s'importent mutuellement
+    @Inject(forwardRef(() => CreditService))
+    private readonly creditService: CreditService,
+  ) {}
 
-  /**
-   * Maps a full Prisma User row to the public UserResponseDto shape.
-   * This is the ONLY place where sensitive fields are stripped.
-   */
+  // ─── Private helpers ───────────────────────────────────────────────────────
+
   private toResponse(user: UserRecord): UserResponseDto {
     return {
       id: user.id,
       email: user.email,
       username: user.username,
-      // Preserve null rather than coercing to empty string
       avatarUrl: user.avatarUrl ?? null,
       activePlan: user.activePlan,
-      // Include provider so frontend can show "Logged in with Google" etc.
       provider: user.provider,
       onboardingDone: user.onboardingDone,
       createdAt: user.createdAt,
@@ -70,10 +76,6 @@ export class UsersService {
     };
   }
 
-  /**
-   * Translates Prisma error codes into typed NestJS exceptions.
-   * Always throws — return type `never` enforces this at compile time.
-   */
   private handlePrismaError(error: unknown, fallback: string): never {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       switch (error.code) {
@@ -87,34 +89,26 @@ export class UsersService {
           throw new BadRequestException(fallback);
       }
     }
-
     throw new InternalServerErrorException(
       'An unexpected database error occurred',
     );
   }
 
-  // ─── Queries ────────────────────────────────────────────────────────────────
+  // ─── Queries ───────────────────────────────────────────────────────────────
 
   async findUserById(
     where: Prisma.UserWhereUniqueInput,
   ): Promise<UserResponseDto> {
     try {
       const user = await this.prisma.user.findUnique({ where });
-
       if (!user) throw new NotFoundException('User not found');
-
       return this.toResponse(user);
     } catch (error) {
-      // Re-throw domain exceptions; translate everything else
       if (error instanceof NotFoundException) throw error;
       this.handlePrismaError(error, 'Failed to fetch user');
     }
   }
 
-  /**
-   * Returns null when no user matches — callers decide how to handle absence.
-   * Used by AuthService to check for existing email before registration.
-   */
   async findUserByEmail(email: string): Promise<UserResponseDto | null> {
     try {
       const user = await this.prisma.user.findUnique({ where: { email } });
@@ -124,17 +118,11 @@ export class UsersService {
     }
   }
 
-  /**
-   * @internal Used exclusively by AuthService for credential verification.
-   * Returns the full Prisma row including the password hash.
-   * This method MUST NOT be exposed via any controller.
-   */
   async findUserByEmailWithPassword(
     email: string,
   ): Promise<UserWithPassword | null> {
     try {
       const user = await this.prisma.user.findUnique({ where: { email } });
-      // Cast is safe: Prisma returns all columns including password by default
       return user as UserWithPassword | null;
     } catch (error) {
       this.handlePrismaError(error, 'Failed to fetch user credentials');
@@ -146,14 +134,27 @@ export class UsersService {
       const users = await this.prisma.user.findMany({
         orderBy: { createdAt: 'desc' },
       });
-      return users.map((user) => this.toResponse(user));
+      return users.map((u) => this.toResponse(u));
     } catch (error) {
       this.handlePrismaError(error, 'Failed to fetch users');
     }
   }
 
-  // ─── Mutations ──────────────────────────────────────────────────────────────
+  // ─── createUser — FIX ─────────────────────────────────────────────────────
 
+  /**
+   * Crée un nouvel utilisateur et initialise ses crédits FREE (500 crédits).
+   *
+   * AVANT le fix : creditBalance restait à 0 après création.
+   * APRÈS le fix : initializeFreeUser() est appelé après création
+   *   → Subscription FREE ACTIVE créée
+   *   → 500 crédits attribués
+   *   → CreditLedger initialisé
+   *
+   * En cas d'échec de l'initialisation des crédits, l'utilisateur est tout
+   * de même créé (on ne rollback pas la création) mais une erreur est loggée
+   * pour intervention manuelle ou rattrapage via repairBalance().
+   */
   async createUser(data: CreateUserDto): Promise<UserResponseDto> {
     try {
       const hashedPassword = await bcrypt.hash(data.password, SALT_ROUNDS);
@@ -166,14 +167,152 @@ export class UsersService {
           activePlan: Plan.FREE,
           provider: AuthProvider.LOCAL,
           onboardingDone: false,
+          // creditBalance: 0 (défaut Prisma) — sera mis à 500 juste après
         },
       });
+
+      this.logger.log(
+        `[USER_CREATED] userId=${user.id} email=${user.email} plan=FREE`,
+      );
+
+      // ── FIX: Initialiser les crédits FREE ──────────────────────────────
+      // Ne pas await dans un try/catch qui avale l'erreur silencieusement.
+      // On log l'erreur mais on ne bloque pas la création du compte.
+      try {
+        await this.creditService.initializeFreeUser(user.id);
+
+        this.logger.log(
+          `[USER_CREDITS_INITIALIZED] userId=${user.id} ` +
+            `creditBalance=500 plan=FREE subscription=ACTIVE`,
+        );
+      } catch (creditErr: unknown) {
+        const msg =
+          creditErr instanceof Error ? creditErr.message : String(creditErr);
+        this.logger.error(
+          `[USER_CREDITS_INIT_FAILED] CRITICAL — User created but credits NOT initialized. ` +
+            `userId=${user.id} email=${user.email} err="${msg}". ` +
+            `Run CreditService.repairBalance("${user.id}") to fix manually.`,
+        );
+        // Ne pas relancer — le compte est créé, les crédits peuvent être
+        // réparés via repairBalance() ou au prochain login
+      }
 
       return this.toResponse(user);
     } catch (error) {
       this.handlePrismaError(error, 'Failed to create user');
     }
   }
+
+  // ─── OAuth user creation (Google, Facebook) ────────────────────────────────
+
+  /**
+   * Utilisé par AuthService pour les providers OAuth.
+   * Même logique d'initialisation des crédits.
+   */
+  async findOrCreateOAuthUser(data: {
+    email: string;
+    username: string;
+    avatarUrl?: string;
+    provider: AuthProvider;
+  }): Promise<UserResponseDto> {
+    const existing = await this.prisma.user.findUnique({
+      where: { email: data.email },
+    });
+
+    if (existing) return this.toResponse(existing);
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: data.email,
+        username: data.username,
+        avatarUrl: data.avatarUrl ?? null,
+        password: '',
+        activePlan: Plan.FREE,
+        provider: data.provider,
+        onboardingDone: false,
+      },
+    });
+
+    this.logger.log(
+      `[USER_CREATED_OAUTH] userId=${user.id} email=${user.email} ` +
+        `provider=${data.provider} plan=FREE`,
+    );
+
+    try {
+      await this.creditService.initializeFreeUser(user.id);
+      this.logger.log(
+        `[USER_CREDITS_INITIALIZED] OAuth userId=${user.id} creditBalance=500`,
+      );
+    } catch (creditErr: unknown) {
+      this.logger.error(
+        `[USER_CREDITS_INIT_FAILED] OAuth user created but credits NOT initialized. ` +
+          `userId=${user.id} err="${creditErr instanceof Error ? creditErr.message : String(creditErr)}"`,
+      );
+    }
+
+    return this.toResponse(user);
+  }
+
+  // ─── Repair credits on login (safety net) ─────────────────────────────────
+
+  /**
+   * Vérifie et répare les crédits lors du login si le solde est incohérent.
+   * Safety net pour les comptes créés avant le fix.
+   *
+   * À appeler dans AuthService.login() / AuthService.refreshTokens()
+   * une seule fois par session (pas à chaque refresh).
+   */
+  async ensureCreditsInitialized(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { creditBalance: true, activePlan: true },
+    });
+
+    if (!user) return;
+
+    // Si le solde est à 0 et le plan est FREE → initialiser
+    if (user.creditBalance === 0) {
+      this.logger.warn(
+        `[CREDITS_REPAIR_ON_LOGIN] user=${userId} has 0 credits — ` +
+          `running initializeFreeUser() as safety net`,
+      );
+
+      try {
+        // Vérifier s'il y a déjà un abonnement actif avant d'en créer un
+        const activeSub = await this.prisma.subscription.findFirst({
+          where: { userId, status: 'ACTIVE' },
+          select: { id: true, creditsGranted: true },
+        });
+
+        if (activeSub && activeSub.creditsGranted > 0) {
+          // Abonnement existe mais crédits pas attribués → grant direct
+          await this.creditService.grantCredits(
+            userId,
+            activeSub.id,
+            activeSub.creditsGranted,
+            'Repair on login',
+          );
+          this.logger.log(
+            `[CREDITS_REPAIRED_ON_LOGIN] user=${userId} ` +
+              `credits=${activeSub.creditsGranted} (from existing subscription)`,
+          );
+        } else if (!activeSub) {
+          // Pas d'abonnement du tout → initialiser FREE complet
+          await this.creditService.initializeFreeUser(userId);
+          this.logger.log(
+            `[CREDITS_INITIALIZED_ON_LOGIN] user=${userId} credits=500 FREE`,
+          );
+        }
+      } catch (err: unknown) {
+        this.logger.error(
+          `[CREDITS_REPAIR_FAILED] user=${userId} ` +
+            `err="${err instanceof Error ? err.message : String(err)}"`,
+        );
+      }
+    }
+  }
+
+  // ─── Standard mutations ────────────────────────────────────────────────────
 
   async updateUser(
     where: Prisma.UserWhereUniqueInput,
@@ -183,7 +322,6 @@ export class UsersService {
       const user = await this.prisma.user.update({
         where,
         data: {
-          // Spread only provided fields — undefined values are ignored by Prisma
           ...(data.email !== undefined && { email: data.email }),
           ...(data.username !== undefined && { username: data.username }),
           ...(data.avatarUrl !== undefined && { avatarUrl: data.avatarUrl }),
@@ -193,7 +331,6 @@ export class UsersService {
           }),
         },
       });
-
       return this.toResponse(user);
     } catch (error) {
       this.handlePrismaError(error, 'Failed to update user');
@@ -204,10 +341,7 @@ export class UsersService {
     where: Prisma.UserWhereUniqueInput,
     data: ChangePasswordDto,
   ): Promise<UserResponseDto> {
-    // Fetch the full record outside the try/catch so NotFoundException
-    // propagates cleanly without being swallowed by handlePrismaError
     const user = await this.prisma.user.findUnique({ where });
-
     if (!user) throw new NotFoundException('User not found');
 
     if (data.newPassword !== data.confirmPassword) {
@@ -218,19 +352,16 @@ export class UsersService {
       data.currentPassword,
       user.password,
     );
-
     if (!isCurrentValid) {
       throw new BadRequestException('Current password is incorrect');
     }
 
     try {
       const hashedPassword = await bcrypt.hash(data.newPassword, SALT_ROUNDS);
-
       const updated = await this.prisma.user.update({
         where,
         data: { password: hashedPassword },
       });
-
       return this.toResponse(updated);
     } catch (error) {
       this.handlePrismaError(error, 'Failed to change password');

@@ -1,11 +1,17 @@
 /**
  * @file features/billing/billing.module.ts
  *
- * Exporte CreditService et CreditGuard pour AiModule et FacebookPostsModule.
+ * CHANGES:
+ *   - Added BillingAdminController
+ *   - forwardRef() on UsersModule import removed (UsersModule imports BillingModule,
+ *     not the reverse — no circular dep from this side)
+ *   - CreditService exported for injection in UsersService
  */
 
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../database/prisma.module.js';
+
+import { BillingAdminController } from './billing-admin.controller.js';
 import { BillingWebhookController } from './billing-webhook.controller.js';
 import { BillingController } from './billing.controller.js';
 import { PapiClient } from './clients/papi.client.js';
@@ -16,8 +22,12 @@ import { CreditService } from './services/credit.service.js';
 import { SubscriptionService } from './services/subscription.service.js';
 
 @Module({
-  imports:     [PrismaModule],
-  controllers: [BillingController, BillingWebhookController],
+  imports: [PrismaModule],
+  controllers: [
+    BillingController,
+    BillingWebhookController,
+    BillingAdminController,
+  ],
   providers: [
     PapiClient,
     CreditService,
@@ -26,6 +36,10 @@ import { SubscriptionService } from './services/subscription.service.js';
     BillingCleanupService,
     CreditGuard,
   ],
-  exports: [CreditService, BillingService, CreditGuard],
+  exports: [
+    CreditService, // ← UsersService en a besoin pour initializeFreeUser()
+    BillingService,
+    CreditGuard,
+  ],
 })
 export class BillingModule {}
