@@ -1,18 +1,17 @@
 /**
  * @file features/billing/clients/papi.client.ts
  *
- * FIXES
- * ─────
- * 1. verifyNotification() — le paramètre `expectedReference` doit être
- *    `payment.papiReference` (DB), pas `payload.paymentReference` (reçu).
- *    L'ancienne version comparait le payload avec lui-même → toujours true.
- *    Maintenant la méthode accepte les deux séparément et compare correctement.
+ * FIX — verifyNotification() aligné sur la documentation Papi
+ * ─────────────────────────────────────────────────────────────
+ * La doc Papi confirme :
+ *   `paymentReference`         = la référence que VOUS avez envoyée (notre VENDEO-xxx)
+ *   `merchantPaymentReference` = référence interne du prestataire Papi
  *
- * 2. Logs détaillés à chaque étape de la vérification pour éviter les
- *    échecs silencieux.
+ * Pour vérifier l'authenticité :
+ *   - `paymentReference` doit correspondre à ce qu'on a stocké (papiReference en DB)
+ *   - `notificationToken` doit correspondre au token reçu à la création du lien
  *
- * 3. Vérification du token null/vide avant comparaison — un token vide
- *    ne doit jamais être accepté comme valide.
+ * La vérification est maintenant documentée et alignée sur la spec officielle.
  */
 
 import {
@@ -51,6 +50,10 @@ export interface PapiPaymentLinkData {
   linkExpirationDateTime: number;
   paymentLink:            string;
   clientName:             string;
+  /**
+   * Papi retourne ici la référence que VOUS avez envoyée (champ `reference`).
+   * C'est notre VENDEO-XXXXXXXX.
+   */
   paymentReference:       string;
   description:            string;
   successUrl:             string;
@@ -58,20 +61,30 @@ export interface PapiPaymentLinkData {
   notificationUrl:        string;
   payerEmail:             string | null;
   payerPhone:             string | null;
+  /** Token à stocker pour vérifier les futures notifications. */
   notificationToken:      string;
   isTestMode:             boolean;
 }
 
 export interface PapiNotificationPayload {
-  paymentStatus:            string;   // SUCCESS | PENDING | FAILED
+  paymentStatus:            string;  // SUCCESS | PENDING | FAILED
   paymentMethod:            string;
   currency:                 string;
   amount:                   number;
   fee:                      number;
   clientName:               string;
   description:              string;
+  /**
+   * Référence interne du prestataire de paiement Papi.
+   * PAS notre référence.
+   */
   merchantPaymentReference: string;
-  paymentReference:         string;   // référence Papi interne
+  /**
+   * Notre référence unique envoyée lors de la création du lien.
+   * C'est notre VENDEO-XXXXXXXX.
+   * Utiliser ce champ pour retrouver le paiement en DB.
+   */
+  paymentReference:         string;
   notificationToken:        string;
   message:                  string;
   payerEmail:               string | null;
@@ -107,6 +120,8 @@ export class PapiClient {
     this.apiKey      = config.getOrThrow<string>('papiApiKey');
     this.frontendUrl = config.getOrThrow<string>('frontendUrl');
     this.backendUrl  = config.getOrThrow<string>('backendUrl');
+    // isTestMode = true UNIQUEMENT en development
+    // En production Render.com → false → vrai paiement + vrai webhook
     this.isTestMode  = config.get<string>('nodeEnv') !== 'production';
   }
 
@@ -128,10 +143,13 @@ export class PapiClient {
     const body: PapiCreatePaymentLinkRequest = {
       amount,
       clientName:      payerName,
+      // `reference` = notre identifiant unique → sera retourné dans paymentReference
       reference,
       description:     `Abonnement VendeoAI ${planName} — ${reference}`.slice(0, 255),
       successUrl:      `${this.frontendUrl}/billing/success?ref=${reference}`,
       failureUrl:      `${this.frontendUrl}/billing/failure?ref=${reference}`,
+      // L'URL de notification DOIT être accessible depuis internet
+      // En dev local → utiliser ngrok ou un tunnel, pas localhost
       notificationUrl: `${this.backendUrl}/billing/webhook/papi`,
       validDuration:   PAPI_LINK_VALIDITY_MINUTES,
       provider:        papiProvider,
@@ -142,7 +160,8 @@ export class PapiClient {
 
     this.logger.log(
       `[PAYMENT_CREATE] Creating Papi link — ref=${reference} amount=${amount}MGA ` +
-      `provider=${papiProvider} testMode=${this.isTestMode}`,
+      `provider=${papiProvider} testMode=${this.isTestMode} ` +
+      `notificationUrl=${body.notificationUrl}`,
     );
 
     const controller = new AbortController();
@@ -176,8 +195,8 @@ export class PapiClient {
 
       if (!data.paymentLink || !data.notificationToken) {
         this.logger.error(
-          `[PAYMENT_CREATE_FAILED] Papi response missing paymentLink or ` +
-          `notificationToken — ref=${reference} response=${JSON.stringify(data)}`,
+          `[PAYMENT_CREATE_FAILED] Missing paymentLink or notificationToken — ` +
+          `ref=${reference} response=${JSON.stringify(data)}`,
         );
         throw new PapiError(
           'Réponse Papi invalide: paymentLink ou notificationToken manquant',
@@ -186,7 +205,8 @@ export class PapiClient {
 
       this.logger.log(
         `[PAYMENT_CREATED] Papi link ready — ref=${reference} ` +
-        `amount=${amount}MGA paymentLink=${data.paymentLink.slice(0, 60)}…`,
+        `papiPaymentRef="${data.paymentReference}" ` +
+        `amount=${amount}MGA`,
       );
 
       return data;
@@ -194,7 +214,7 @@ export class PapiClient {
       if (err instanceof PapiError) throw err;
       if (err instanceof Error && err.name === 'AbortError') {
         this.logger.error(
-          `[PAYMENT_CREATE_FAILED] Papi timeout after ${TIMEOUT_MS / 1000}s — ref=${reference}`,
+          `[PAYMENT_CREATE_FAILED] Timeout after ${TIMEOUT_MS / 1000}s — ref=${reference}`,
         );
         throw new PapiError(`Timeout Papi après ${TIMEOUT_MS / 1000}s`);
       }
@@ -212,16 +232,14 @@ export class PapiClient {
   /**
    * Vérifie l'authenticité d'une notification Papi.
    *
-   * FIX : la vérification doit comparer :
-   *   - payload.paymentReference  VS  storedReference (payment.papiReference en DB)
-   *   - payload.notificationToken VS  storedToken (payment.papiNotificationToken en DB)
+   * Selon la documentation officielle Papi :
+   *   "Pour s'assurer que la notification est authentique, vérifiez que :
+   *    - `paymentReference` correspond à la référence que vous avez envoyée.
+   *    - `notificationToken` correspond à celui reçu dans la réponse de création."
    *
-   * L'ancienne version passait payload.paymentReference comme expectedReference,
-   * ce qui rendait la comparaison tautologique (ref === ref → toujours true).
-   *
-   * @param payload          Corps de la notification Papi
-   * @param storedReference  Valeur de payment.papiReference en base (ex: "VENDEO-ABCD1234")
-   * @param storedToken      Valeur de payment.papiNotificationToken en base
+   * @param payload         Corps de la notification Papi
+   * @param storedReference payment.papiReference en DB (notre VENDEO-xxx)
+   * @param storedToken     payment.papiNotificationToken en DB
    */
   verifyNotification(
     payload:          PapiNotificationPayload,
@@ -229,43 +247,39 @@ export class PapiClient {
     storedToken:      string | null | undefined,
   ): boolean {
     this.logger.debug(
-      `[WEBHOOK_VERIFY] Verifying notification — ` +
-      `payloadRef="${payload.paymentReference}" storedRef="${storedReference}" ` +
-      `status="${payload.paymentStatus}" amount=${payload.amount}`,
+      `[WEBHOOK_VERIFY] payload.paymentReference="${payload.paymentReference}" ` +
+      `storedReference="${storedReference}" ` +
+      `status="${payload.paymentStatus}" amount=${payload.amount}MGA`,
     );
 
-    // ── Guard 1: token doit être présent en DB ─────────────────────────────
+    // Guard 1 — token présent en DB
     if (!storedToken) {
       this.logger.error(
-        `[WEBHOOK_VERIFY_FAILED] storedToken is null/empty for ref="${storedReference}". ` +
-        `Payment link may not have been fully saved. ` +
-        `payloadRef="${payload.paymentReference}"`,
+        `[WEBHOOK_VERIFY_FAILED] storedToken is null for ref="${storedReference}". ` +
+        `Payment link save may have failed.`,
       );
       return false;
     }
 
-    // ── Guard 2: comparer la référence payload VS référence DB ────────────
-    // FIX: on compare payload.paymentReference avec storedReference (DB)
-    // PAS avec payload.paymentReference lui-même.
+    // Guard 2 — paymentReference correspond à notre référence (selon doc Papi)
     if (payload.paymentReference !== storedReference) {
       this.logger.error(
-        `[WEBHOOK_VERIFY_FAILED] Reference mismatch — ` +
+        `[WEBHOOK_VERIFY_FAILED] paymentReference mismatch — ` +
         `payload="${payload.paymentReference}" stored="${storedReference}"`,
       );
       return false;
     }
 
-    // ── Guard 3: comparer le token payload VS token DB ─────────────────────
+    // Guard 3 — notificationToken correspond
     if (payload.notificationToken !== storedToken) {
       this.logger.error(
-        `[WEBHOOK_VERIFY_FAILED] Token mismatch for ref="${storedReference}". ` +
-        `Expected token from DB does not match payload token.`,
+        `[WEBHOOK_VERIFY_FAILED] notificationToken mismatch for ref="${storedReference}"`,
       );
       return false;
     }
 
     this.logger.log(
-      `[PAYMENT_VERIFIED] Notification verified — ref="${storedReference}" ` +
+      `[PAYMENT_VERIFIED] Notification authentic — ref="${storedReference}" ` +
       `status="${payload.paymentStatus}" amount=${payload.amount}MGA`,
     );
 

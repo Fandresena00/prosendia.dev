@@ -1,16 +1,20 @@
 /**
  * @file features/billing/billing.module.ts
  *
- * CHANGES:
- *   - Added BillingAdminController
- *   - forwardRef() on UsersModule import removed (UsersModule imports BillingModule,
- *     not the reverse — no circular dep from this side)
- *   - CreditService exported for injection in UsersService
+ * CHANGE: Import DashboardModule pour injecter NotificationService
+ * dans SubscriptionService via le token NOTIFICATION_SERVICE_TOKEN.
+ *
+ * Le forwardRef() est nécessaire car :
+ *   BillingModule  → DashboardModule → BillingModule (via CreditService)
+ *
+ * Architecture du token :
+ *   DashboardModule fournit NotificationService avec le token
+ *   NOTIFICATION_SERVICE_TOKEN pour que BillingModule puisse l'injecter
+ *   sans import circulaire direct.
  */
 
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { PrismaModule } from '../../database/prisma.module.js';
-
 import { BillingAdminController } from './billing-admin.controller.js';
 import { BillingWebhookController } from './billing-webhook.controller.js';
 import { BillingController } from './billing.controller.js';
@@ -19,10 +23,20 @@ import { CreditGuard } from './guards/credit.guard.js';
 import { BillingCleanupService } from './services/billing-cleanup.service.js';
 import { BillingService } from './services/billing.service.js';
 import { CreditService } from './services/credit.service.js';
-import { SubscriptionService } from './services/subscription.service.js';
+import {
+  NOTIFICATION_SERVICE_TOKEN,
+  SubscriptionService,
+} from './services/subscription.service.js';
+
+// Import conditionnel pour éviter la circularité
+// DashboardModule exporte NotificationService sous le token NOTIFICATION_SERVICE_TOKEN
+import { DashboardModule } from '../dashboard/dashboard.module.js';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [
+    PrismaModule,
+    forwardRef(() => DashboardModule), // ← pour NotificationService
+  ],
   controllers: [
     BillingController,
     BillingWebhookController,
@@ -37,9 +51,10 @@ import { SubscriptionService } from './services/subscription.service.js';
     CreditGuard,
   ],
   exports: [
-    CreditService, // ← UsersService en a besoin pour initializeFreeUser()
+    CreditService,
     BillingService,
     CreditGuard,
+    SubscriptionService,
   ],
 })
 export class BillingModule {}

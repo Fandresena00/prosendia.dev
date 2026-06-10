@@ -1,30 +1,58 @@
 /**
  * @file features/billing/services/subscription.service.ts
  *
- * FIXES
- * ─────
- * 1. Logs structurés sur toutes les transitions d'état.
- * 2. activateSubscription() relance l'erreur si grantCredits échoue
- *    (l'ancienne version laissait l'abonnement ACTIVE sans crédits).
- * 3. expireSubscriptions() log chaque expiration individuellement.
- * 4. cancelExpiredPending() — log détaillé.
+ * CHANGE: Intégration NotificationService.
+ *   - notifySubscriptionActivated() après activation réussie
+ *   - notifyPaymentFailed() après échec (appelé depuis billing.service)
+ *   - forwardRef() pour éviter la dépendance circulaire
+ *     BillingModule → DashboardModule → InboxEventsModule → (pas de retour)
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { BILLING_PLANS } from '../billing.constants.js';
 import type { SubscriptionStatusDto } from '../dto/billing.dto.js';
 import { CreditService } from './credit.service.js';
 
+// Import optionnel pour éviter la dépendance circulaire au bootstrap
+// NotificationService est injecté via forwardRef si disponible
+type NotificationServiceLike = {
+  notifySubscriptionActivated(
+    userId: string, planName: string, credits: number,
+    amount: number, periodEnd: Date,
+  ): Promise<void>;
+  notifyCreditsLow(userId: string, balance: number, total: number): Promise<void>;
+  notifyCredentialsDepleted(userId: string): Promise<void>;
+  notifySubscriptionExpiring(userId: string, daysLeft: number, planName: string): Promise<void>;
+};
+
+export const NOTIFICATION_SERVICE_TOKEN = 'NOTIFICATION_SERVICE';
+
 @Injectable()
 export class SubscriptionService {
   private readonly logger = new Logger(SubscriptionService.name);
 
   constructor(
-    private readonly prisma:   PrismaService,
-    private readonly credits:  CreditService,
+    private readonly prisma:  PrismaService,
+    private readonly credits: CreditService,
+    // Optional pour éviter le crash si DashboardModule n'est pas importé
+    @Optional()
+    @Inject(NOTIFICATION_SERVICE_TOKEN)
+    private readonly notifService?: NotificationServiceLike,
   ) {}
+
+  // ─── Notify helper ────────────────────────────────────────────────────────
+
+  private async notifySilent(fn: () => Promise<void>): Promise<void> {
+    try {
+      await fn();
+    } catch (err: unknown) {
+      this.logger.warn(
+        `[NOTIFICATION_FAILED] ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   // ─── Get active ───────────────────────────────────────────────────────────
 
@@ -93,18 +121,16 @@ export class SubscriptionService {
 
   // ─── Activate ─────────────────────────────────────────────────────────────
 
-  /**
-   * Active un abonnement après confirmation de paiement.
-   * Étapes atomiques :
-   *   1. Expirer les anciens abonnements ACTIVE
-   *   2. Passer le nouvel abonnement en ACTIVE
-   *   3. Mettre à jour user.activePlan
-   *   4. Attribuer les crédits (CRITICAL — relancer si échec)
-   */
   async activateSubscription(subscriptionId: string): Promise<void> {
     const sub = await this.prisma.subscription.findUnique({
       where:  { id: subscriptionId },
-      select: { userId: true, plan: true, creditsGranted: true, status: true },
+      select: {
+        userId:         true,
+        plan:           true,
+        creditsGranted: true,
+        status:         true,
+        periodEnd:      true,
+      },
     });
 
     if (!sub) {
@@ -123,12 +149,12 @@ export class SubscriptionService {
     const planConfig = BILLING_PLANS[sub.plan as keyof typeof BILLING_PLANS];
 
     this.logger.log(
-      `[SUBSCRIPTION_ACTIVATING] Starting activation — ` +
+      `[SUBSCRIPTION_ACTIVATING] Starting — ` +
       `subscriptionId=${subscriptionId} user=${sub.userId} ` +
       `plan=${sub.plan} credits=${sub.creditsGranted}`,
     );
 
-    // Transaction : expirer anciens + activer nouveau + mettre à jour user
+    // Transaction : expirer anciens + activer + mettre à jour user
     await this.prisma.$transaction(async (tx) => {
       const previousActive = await tx.subscription.findMany({
         where:  { userId: sub.userId, status: 'ACTIVE', id: { not: subscriptionId } },
@@ -142,8 +168,7 @@ export class SubscriptionService {
         });
         this.logger.log(
           `[SUBSCRIPTION_EXPIRED_PREVIOUS] Expired ${previousActive.length} previous ` +
-          `subscription(s) for user=${sub.userId}: ` +
-          `${previousActive.map((s) => s.id).join(', ')}`,
+          `subscription(s) — ${previousActive.map((s) => s.id).join(', ')}`,
         );
       }
 
@@ -163,7 +188,7 @@ export class SubscriptionService {
       `subscriptionId=${subscriptionId} user=${sub.userId} plan=${sub.plan}`,
     );
 
-    // Attribuer les crédits — CRITIQUE : si échoue, relancer pour que le webhook retente
+    // Attribuer les crédits — CRITIQUE
     try {
       await this.credits.grantCredits(
         sub.userId,
@@ -173,19 +198,40 @@ export class SubscriptionService {
       );
 
       this.logger.log(
-        `[CREDITS_GRANTED] ${sub.creditsGranted} credits granted — ` +
+        `[CREDITS_GRANTED] ${sub.creditsGranted} credits — ` +
         `subscriptionId=${subscriptionId} user=${sub.userId} plan=${sub.plan}`,
       );
     } catch (creditErr: unknown) {
       const msg = creditErr instanceof Error ? creditErr.message : String(creditErr);
       this.logger.error(
-        `[CREDITS_GRANT_FAILED] CRITICAL — subscription is ACTIVE but credits NOT granted. ` +
+        `[CREDITS_GRANT_FAILED] CRITICAL — subscription ACTIVE but NO credits. ` +
         `subscriptionId=${subscriptionId} user=${sub.userId} ` +
-        `credits=${sub.creditsGranted} err="${msg}". ` +
-        `Manual credit grant required or webhook retry will fix this.`,
+        `credits=${sub.creditsGranted} err="${msg}"`,
       );
-      // Relancer → le webhook controller retournera 500 → Papi retentera
       throw creditErr;
+    }
+
+    // Notification in-app + Web Push — fire-and-forget
+    if (this.notifService) {
+      const payment = await this.prisma.payment.findFirst({
+        where:  { subscriptionId, status: 'SUCCESS' },
+        select: { amount: true },
+        orderBy: { paidAt: 'desc' },
+      });
+
+      await this.notifySilent(() =>
+        this.notifService!.notifySubscriptionActivated(
+          sub.userId,
+          planConfig?.name ?? sub.plan,
+          sub.creditsGranted,
+          payment?.amount ?? 0,
+          sub.periodEnd,
+        ),
+      );
+
+      this.logger.log(
+        `[NOTIFICATION_SENT] PAYMENT_CONFIRMED — user=${sub.userId}`,
+      );
     }
   }
 
@@ -200,54 +246,77 @@ export class SubscriptionService {
     });
 
     if (!expired.length) {
-      this.logger.debug('[SUBSCRIPTION_EXPIRE_CRON] No subscriptions to expire');
+      this.logger.debug('[SUBSCRIPTION_EXPIRE_CRON] Nothing to expire');
       return;
     }
 
     this.logger.log(
-      `[SUBSCRIPTION_EXPIRE_CRON] Found ${expired.length} subscription(s) to expire`,
+      `[SUBSCRIPTION_EXPIRE_CRON] Expiring ${expired.length} subscription(s)`,
     );
 
     for (const sub of expired) {
       try {
         await this.prisma.$transaction(async (tx) => {
-          await tx.subscription.update({
-            where: { id: sub.id },
-            data:  { status: 'EXPIRED' },
-          });
-          await tx.user.update({
-            where: { id: sub.userId },
-            data:  { activePlan: 'FREE' },
-          });
+          await tx.subscription.update({ where: { id: sub.id }, data: { status: 'EXPIRED' } });
+          await tx.user.update({ where: { id: sub.userId }, data: { activePlan: 'FREE' } });
         });
 
         this.logger.log(
-          `[SUBSCRIPTION_EXPIRED] subscriptionId=${sub.id} user=${sub.userId} ` +
-          `plan=${sub.plan} periodEnd=${sub.periodEnd?.toISOString()} → FREE`,
+          `[SUBSCRIPTION_EXPIRED] id=${sub.id} user=${sub.userId} ` +
+          `plan=${sub.plan} → FREE`,
         );
 
-        // Attribuer crédits FREE
         await this.credits.grantCredits(
-          sub.userId,
-          sub.id,
-          BILLING_PLANS.FREE.credits,
-          'Gratuit (abonnement expiré)',
+          sub.userId, sub.id, BILLING_PLANS.FREE.credits, 'Gratuit (abonnement expiré)',
         );
 
         this.logger.log(
-          `[CREDITS_GRANTED] FREE credits granted after expiry — ` +
-          `user=${sub.userId} credits=${BILLING_PLANS.FREE.credits}`,
+          `[CREDITS_GRANTED] FREE after expiry — user=${sub.userId}`,
         );
       } catch (err: unknown) {
         this.logger.error(
-          `[SUBSCRIPTION_EXPIRE_ERROR] Failed to expire subscriptionId=${sub.id} ` +
-          `user=${sub.userId}: ${err instanceof Error ? err.message : String(err)}`,
+          `[SUBSCRIPTION_EXPIRE_ERROR] id=${sub.id}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
   }
 
-  // ─── Cancel expired pending payments (cron hourly) ───────────────────────
+  // ─── Expiry warnings (cron 09:00 daily) ──────────────────────────────────
+
+  @Cron('0 9 * * *')
+  async checkExpiringSubscriptions(): Promise<void> {
+    if (!this.notifService) return;
+
+    const now              = new Date();
+    const sevenDaysFromNow = new Date(now.getTime() + 7 * 86_400_000);
+
+    const expiringSubs = await this.prisma.subscription.findMany({
+      where: { status: 'ACTIVE', periodEnd: { gt: now, lt: sevenDaysFromNow } },
+      include: { user: { select: { id: true, activePlan: true } } },
+    });
+
+    for (const sub of expiringSubs) {
+      const daysLeft = Math.ceil((sub.periodEnd.getTime() - now.getTime()) / 86_400_000);
+      // Notifier seulement à J-7, J-3, J-1
+      if (![7, 3, 1].includes(daysLeft)) continue;
+
+      const planConfig = BILLING_PLANS[sub.plan as keyof typeof BILLING_PLANS];
+      await this.notifySilent(() =>
+        this.notifService!.notifySubscriptionExpiring(
+          sub.user.id,
+          daysLeft,
+          planConfig?.name ?? sub.plan,
+        ),
+      );
+
+      this.logger.log(
+        `[NOTIFICATION_SENT] SUBSCRIPTION_EXPIRING — user=${sub.user.id} daysLeft=${daysLeft}`,
+      );
+    }
+  }
+
+  // ─── Cancel expired pending (cron hourly) ────────────────────────────────
 
   @Cron(CronExpression.EVERY_HOUR)
   async cancelExpiredPending(): Promise<void> {
@@ -260,7 +329,7 @@ export class SubscriptionService {
     if (!expired.length) return;
 
     this.logger.log(
-      `[PAYMENT_EXPIRE_CRON] Cancelling ${expired.length} expired pending payment(s)`,
+      `[PAYMENT_EXPIRE_CRON] Cancelling ${expired.length} expired pending`,
     );
 
     const ids    = expired.map((p) => p.id);
@@ -269,7 +338,7 @@ export class SubscriptionService {
     await this.prisma.$transaction(async (tx) => {
       await tx.payment.updateMany({
         where: { id: { in: ids } },
-        data:  { status: 'FAILED', failureReason: 'Lien de paiement expiré' },
+        data:  { status: 'FAILED', failureReason: 'Lien expiré' },
       });
       await tx.subscription.updateMany({
         where: { id: { in: subIds }, status: 'PENDING' },
@@ -279,8 +348,7 @@ export class SubscriptionService {
 
     for (const p of expired) {
       this.logger.log(
-        `[PAYMENT_EXPIRED] paymentId=${p.id} ref="${p.papiReference}" ` +
-        `subscriptionId=${p.subscriptionId} user=${p.userId} → FAILED/CANCELLED`,
+        `[PAYMENT_EXPIRED] id=${p.id} ref="${p.papiReference}" → FAILED/CANCELLED`,
       );
     }
   }
