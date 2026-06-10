@@ -13,10 +13,10 @@ import { Module, forwardRef } from '@nestjs/common';
 import { PrismaModule } from '../../database/prisma.module.js';
 import { BillingModule } from '../billing/billing.module.js';
 import { InboxEventsModule } from '../inbox/inbox-events.module.js';
-import { DashboardController } from './dashboard.controller.js';
 import { DashboardStatsService } from './services/dashboard-stats.service.js';
 import { NotificationService } from './services/notification.service.js';
 import { NOTIFICATION_SERVICE_TOKEN } from '../billing/services/subscription.service.js';
+import { DashboardController } from './controllers/dashboard.controller.js';
 
 @Module({
   imports: [
