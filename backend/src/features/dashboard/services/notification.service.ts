@@ -10,7 +10,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import * as webPush from 'web-push';
+import webPush from 'web-push';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { InboxEventEmitter } from '../../inbox/gateways/inbox-sse.gateway.js';
 import type { NotificationDto } from '../dto/dashboard.dto.js';
