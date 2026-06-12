@@ -1,20 +1,21 @@
 /**
- * @file features/auth/auth.service.ts
- * @description API layer for auth endpoints. No token params — cookies are automatic.
+ * @file src/features/auth/services/auth.service.ts
+ *
+ * CHANGES:
+ *   - register() → renommé initiateRegistration() — appelle POST /auth/register
+ *     et retourne { email, message }, PAS de session (pas de cookies encore)
+ *   - verifyEmail() — NOUVEAU — appelle POST /auth/verify-email, crée la session
+ *   - resendVerification() — NOUVEAU — appelle POST /auth/resend-verification
  */
 
 import { User } from "@/features/auth/schemas/user.schema";
 import { apiClient } from "@/lib/api-client";
-import { LoginInput, RegisterInput } from "../schemas/auth.schema";
-import { AuthResponse } from "../types/auth.types";
+import type { LoginInput, RegisterInput } from "../schemas/auth.schema";
+import type { AuthResponse } from "../types/auth.types";
 
 const BASE = "/auth" as const;
 
 export const authService = {
-  /**
-   * GET /users/me — requires valid access token cookie.
-   * Called by restoreSession() and on-demand for profile refresh.
-   */
   getProfile(): Promise<User> {
     return apiClient<User>(`${BASE}/me`);
   },
@@ -26,35 +27,48 @@ export const authService = {
     });
   },
 
-  register(data: RegisterInput): Promise<AuthResponse> {
-    return apiClient<AuthResponse>(`${BASE}/register`, {
+  /**
+   * Step 1 — envoie le formulaire, déclenche l'envoi du code email.
+   * Ne crée PAS le compte. Ne set PAS de cookie.
+   * Retourne { email, message }.
+   */
+  initiateRegistration(
+    data: RegisterInput,
+  ): Promise<{ email: string; message: string }> {
+    return apiClient<{ email: string; message: string }>(`${BASE}/register`, {
       method: "POST",
       body: JSON.stringify(data),
     });
   },
 
   /**
-   * skipRefresh: true — prevents the 401 → refresh → retry loop on logout.
-   * If the session is already expired when logout is called, we still clear locally.
+   * Step 2 — valide le code, crée le compte, set les cookies HttpOnly.
+   * Retourne { user } → on peut ouvrir la session.
    */
-  logout(): Promise<void> {
-    return apiClient<void>(`${BASE}/logout`, {
-      method: "POST",
-      skipRefresh: true,
-    });
-  },
-
-  verifyEmail(data: { email: string; code: string }): Promise<AuthResponse> {
+  verifyEmail(data: {
+    email: string;
+    code: string;
+  }): Promise<AuthResponse> {
     return apiClient<AuthResponse>(`${BASE}/verify-email`, {
       method: "POST",
       body: JSON.stringify(data),
     });
   },
 
+  /**
+   * Renvoie un nouveau code de vérification pour l'email donné.
+   */
   resendVerification(email: string): Promise<{ message: string }> {
     return apiClient<{ message: string }>(`${BASE}/resend-verification`, {
       method: "POST",
       body: JSON.stringify({ email }),
+    });
+  },
+
+  logout(): Promise<void> {
+    return apiClient<void>(`${BASE}/logout`, {
+      method: "POST",
+      skipRefresh: true,
     });
   },
 };

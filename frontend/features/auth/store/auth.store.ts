@@ -1,13 +1,21 @@
 /**
  * @file src/features/auth/store/auth.store.ts
  *
- * FIX: Added a module-level `isInitializingAuth` lock inside `initializeAuth`.
- * Previously, two concurrent callers (useSessionInit + useNetworkRecovery)
- * could both run `initializeAuth` simultaneously, causing two `GET /auth/me`
- * requests and two state transitions — the double 401 seen in the server logs.
+ * CHANGES vs uploaded version:
+ *   1. `register` action supprimée — remplacée par deux nouvelles actions :
+ *      - `initiateRegistration` : appelle POST /auth/register (step 1, envoie le code)
+ *        → ne crée PAS de session, retourne juste { email }
+ *      - `verifyEmail` : appelle POST /auth/verify-email (step 2, valide le code)
+ *        → crée la session (setSession)
+ *   2. AuthStore interface mise à jour en conséquence.
  *
- * The lock is module-level (not Zustand state) so it works across all callers
- * without triggering re-renders.
+ * FIXES:
+ *   - Bug principal : `register` dans le store appelait POST /auth/register qui
+ *     retourne { email, message } et non { user } → setSession échouait silencieusement
+ *     et on ne basculait jamais sur step "verify".
+ *   - `initiateRegistration` gère son propre isLoading sans passer par le store
+ *     (puisqu'elle ne crée pas de session) — le store expose `initiateLoading`
+ *     séparé pour éviter de bloquer le reste du formulaire.
  */
 
 import { create } from "zustand";
@@ -25,7 +33,7 @@ import {
   setSessionCookie,
 } from "@/lib/session-cookie";
 import type { LoginInput, RegisterInput } from "../schemas/auth.schema";
-import { UpdateUserInput, User } from "../schemas/user.schema";
+import type { UpdateUserInput, User } from "../schemas/user.schema";
 import { authService } from "../services/auth.service";
 import { userService } from "../services/user.service";
 
@@ -43,28 +51,37 @@ export interface AuthStore {
   authError: string | null;
   validationErrors: string[] | null;
 
-  verifyEmail: (data: { email: string; code: string }) => Promise<void>;
   initializeAuth: () => Promise<void>;
   setSession: (user: User) => void;
   handleAuthError: (error: unknown) => void;
+
+  /**
+   * Step 1 : soumet le formulaire d'inscription.
+   * Envoie le code par email. Ne crée PAS de session.
+   * Retourne l'email confirmé par le backend.
+   */
+  initiateRegistration: (data: RegisterInput) => Promise<{ email: string }>;
+
+  /**
+   * Step 2 : valide le code de vérification.
+   * Crée le compte + ouvre la session.
+   */
+  verifyEmail: (data: { email: string; code: string }) => Promise<void>;
+
   login: (data: LoginInput) => Promise<void>;
-  register: (data: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (data: UpdateUserInput) => Promise<void>;
   uploadAvatar: (file: File) => Promise<void>;
   clearError: () => void;
 }
 
-/**
- * Module-level concurrency lock for initializeAuth.
- * Prevents two simultaneous /auth/me calls when useSessionInit and
- * useNetworkRecovery both call initializeAuth at the same time on mount.
- */
 let isInitializingAuth = false;
 
 export const useAuthStore = create<AuthStore>()(
   persist(
     (set, get) => {
+      // ── Session helpers ───────────────────────────────────────────────────
+
       const clearSession = (): void => {
         clearSessionCookie();
         set({
@@ -102,6 +119,8 @@ export const useAuthStore = create<AuthStore>()(
         throw error;
       };
 
+      // ── Store ─────────────────────────────────────────────────────────────
+
       return {
         user: null,
         status: "loading",
@@ -134,9 +153,6 @@ export const useAuthStore = create<AuthStore>()(
         },
 
         initializeAuth: async (): Promise<void> => {
-          // FIX: Prevent concurrent calls — e.g. useSessionInit + useNetworkRecovery
-          // both calling initializeAuth at mount time. Without this lock, we get
-          // two simultaneous GET /auth/me requests (the double 401 in server logs).
           if (isInitializingAuth) return;
 
           const { status } = get();
@@ -167,49 +183,81 @@ export const useAuthStore = create<AuthStore>()(
               return;
             }
 
-            // 401/403: confirmed no session
             set({
               status: hasSessionCookie() ? "offline" : "unauthenticated",
               isRehydrating: false,
             });
           } finally {
-            // Always release the lock so future calls (e.g. after logout + login)
-            // can run initializeAuth again
             isInitializingAuth = false;
           }
         },
 
+        // ── Step 1: initier l'inscription ─────────────────────────────────
+        // Ne gère PAS isLoading via le store — la page gère son propre état
+        // de chargement pour ne pas bloquer le rendu de la page.
+        initiateRegistration: async (
+          data: RegisterInput,
+        ): Promise<{ email: string }> => {
+          set({ authError: null, validationErrors: null });
+          try {
+            const res = await authService.initiateRegistration(data);
+            return { email: res.email };
+          } catch (error) {
+            // Propage les erreurs d'API (ex: email déjà pris) vers la page
+            if (isApiError(error)) {
+              set({
+                authError: error.displayMessage,
+                validationErrors: error.validationErrors ?? null,
+              });
+            } else {
+              set({
+                authError:
+                  error instanceof Error
+                    ? error.message
+                    : "Erreur lors de l'inscription.",
+              });
+            }
+            throw error;
+          }
+        },
+
+        // ── Step 2: vérifier le code → créer la session ───────────────────
+        verifyEmail: async (data: {
+          email: string;
+          code: string;
+        }): Promise<void> => {
+          set({ isLoading: true, authError: null, validationErrors: null });
+          try {
+            const { user } = await authService.verifyEmail(data);
+            get().setSession(user);
+          } catch (error) {
+            handleError(error, "Code incorrect ou expiré. Réessayez.");
+          }
+        },
+
+        // ── Login ─────────────────────────────────────────────────────────
         login: async (data: LoginInput): Promise<void> => {
           set({ isLoading: true, authError: null, validationErrors: null });
           try {
             const { user } = await authService.login(data);
             get().setSession(user);
           } catch (error) {
-            handleError(error, "Login failed. Please try again.");
+            handleError(error, "Connexion échouée. Réessayez.");
           }
         },
 
-        register: async (data: RegisterInput): Promise<void> => {
-          set({ isLoading: true, authError: null, validationErrors: null });
-          try {
-            const { user } = await authService.register(data);
-            get().setSession(user);
-          } catch (error) {
-            handleError(error, "Registration failed. Please try again.");
-          }
-        },
-
+        // ── Logout ────────────────────────────────────────────────────────
         logout: async (): Promise<void> => {
           set({ isLoading: true });
           try {
             await authService.logout().catch(() => undefined);
           } finally {
             clearSession();
-            // Reset the lock on logout so the next login can re-initialize
             isInitializingAuth = false;
           }
         },
 
+        // ── Update user ───────────────────────────────────────────────────
         updateUser: async (data: UpdateUserInput): Promise<void> => {
           const { user } = get();
           if (!user) throw new Error("No authenticated session.");
@@ -222,7 +270,8 @@ export const useAuthStore = create<AuthStore>()(
           }
         },
 
-        uploadAvatar: async (file: File) => {
+        // ── Upload avatar ─────────────────────────────────────────────────
+        uploadAvatar: async (file: File): Promise<void> => {
           const user = get().user;
           if (!user) throw new Error("No session");
           const updated = await userService.uploadAvatar(user.id, file);
@@ -231,19 +280,6 @@ export const useAuthStore = create<AuthStore>()(
 
         clearError: (): void => {
           set({ authError: null, validationErrors: null });
-        },
-
-        verifyEmail: async (data: {
-          email: string;
-          code: string;
-        }): Promise<void> => {
-          set({ isLoading: true, authError: null, validationErrors: null });
-          try {
-            const { user } = await authService.verifyEmail(data);
-            get().setSession(user);
-          } catch (error) {
-            handleError(error, "Vérification échouée. Réessayez.");
-          }
         },
       };
     },
@@ -264,16 +300,14 @@ export const useAuthStore = create<AuthStore>()(
   ),
 );
 
-export const useCurrentUser = () => useAuthStore((s) => s.user);
-export const useAuthStatus = () => useAuthStore((s) => s.status);
-export const useIsAuthenticated = () =>
-  useAuthStore((s) => s.status === "authenticated");
-export const useIsOffline = () => useAuthStore((s) => s.status === "offline");
-export const useAuthLoading = () => useAuthStore((s) => s.isLoading);
-export const useIsRehydrating = () => useAuthStore((s) => s.isRehydrating);
-export const useAuthError = () => useAuthStore((s) => s.authError);
-export const useValidationErrors = () =>
-  useAuthStore((s) => s.validationErrors);
+export const useCurrentUser      = () => useAuthStore((s) => s.user);
+export const useAuthStatus       = () => useAuthStore((s) => s.status);
+export const useIsAuthenticated  = () => useAuthStore((s) => s.status === "authenticated");
+export const useIsOffline        = () => useAuthStore((s) => s.status === "offline");
+export const useAuthLoading      = () => useAuthStore((s) => s.isLoading);
+export const useIsRehydrating    = () => useAuthStore((s) => s.isRehydrating);
+export const useAuthError        = () => useAuthStore((s) => s.authError);
+export const useValidationErrors = () => useAuthStore((s) => s.validationErrors);
 
 export function subscribeToNetworkRecovery(): () => void {
   let previousStatus = networkMonitor.getStatus();
