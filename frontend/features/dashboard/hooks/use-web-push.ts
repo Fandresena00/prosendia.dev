@@ -12,7 +12,8 @@ import { dashboardService } from "../services/dashboard.service";
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
 
 export function useWebPush(planId: string | undefined) {
-  const eligible = planId === "STARTER" || planId === "PRO" || planId === "CUSTOM";
+  const eligible =
+    planId === "STARTER" || planId === "PRO" || planId === "CUSTOM";
 
   useEffect(() => {
     if (!eligible || !VAPID_PUBLIC_KEY) return;
@@ -38,8 +39,9 @@ async function registerPush() {
     if (permission !== "granted") return;
 
     const sub = await reg.pushManager.subscribe({
-      userVisibleOnly:      true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+        .buffer as ArrayBuffer,
     });
 
     await dashboardService.subscribePush(sub.toJSON());
@@ -49,8 +51,8 @@ async function registerPush() {
 }
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding  = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64   = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData  = window.atob(base64);
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
   return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
 }

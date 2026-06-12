@@ -19,9 +19,11 @@ export default function PaymentMethod() {
                 <ProviderLogo provider={p} size={32} />
                 <div>
                   <p className="text-sm font-semibold">{meta.label}</p>
-                  <p className="text-xs text-muted-foreground">{meta.operator} Madagascar</p>
+                  <p className="text-xs text-muted-foreground">
+                    {meta.operator} Madagascar
+                  </p>
                   <p className="text-xs text-muted-foreground/70 mt-0.5">
-                    Numéros {meta.prefix}
+                    Numéros {meta.prefixes}
                   </p>
                 </div>
               </CardContent>
