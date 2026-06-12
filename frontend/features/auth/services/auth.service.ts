@@ -43,4 +43,18 @@ export const authService = {
       skipRefresh: true,
     });
   },
+
+  verifyEmail(data: { email: string; code: string }): Promise<AuthResponse> {
+    return apiClient<AuthResponse>(`${BASE}/verify-email`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  resendVerification(email: string): Promise<{ message: string }> {
+    return apiClient<{ message: string }>(`${BASE}/resend-verification`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
 };

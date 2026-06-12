@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * @file src/app/(auth)/sign-in/page.tsx
+ * Redesigned: password show/hide toggle + live email validation.
+ */
+
 import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { VendeoLogo } from "@/components/shared/vendeo-logo";
 import { Button } from "@/components/ui/button";
@@ -7,29 +12,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  LoginSchema,
-  type LoginInput,
-} from "@/features/auth/schemas/auth.schema";
+import { LoginSchema, type LoginInput } from "@/features/auth/schemas/auth.schema";
 import { useAuthStore } from "@/features/auth/store/auth.store";
 import { EASE, fadeUp } from "@/lib/motion";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { IconBrandGoogle } from "@tabler/icons-react";
 import { motion } from "framer-motion";
-import {
-  ArrowRight,
-  MessageCircleMore,
-  Settings,
-  TrendingUp,
-  Users,
-  Zap,
-} from "lucide-react";
+import { ArrowRight, MessageCircleMore, Settings, TrendingUp, Users, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { AuthDotGrid } from "../components/shared/auth-background";
 import { ChatDemo } from "../components/signin/chat-demo";
+import { EmailHint, PasswordInput } from "../components/shared/password-field";
 
 const FEATURES = [
   { icon: MessageCircleMore, label: "Réponses auto" },
@@ -46,11 +42,14 @@ export default function SignInPage() {
   const {
     register,
     handleSubmit,
+    control,
     formState: { errors },
   } = useForm<LoginInput>({
     resolver: zodResolver(LoginSchema as never),
     defaultValues: { email: "", password: "" },
   });
+
+  const watchedEmail = useWatch({ control, name: "email" });
 
   const onSubmit = async (data: LoginInput): Promise<void> => {
     clearError();
@@ -59,7 +58,6 @@ export default function SignInPage() {
       toast.success("Connexion réussie !");
       router.push("/dashboard");
     } catch {
-      // authError is set in store — shown in the UI below
       toast.error("Erreur lors de la connexion");
     }
   };
@@ -81,10 +79,8 @@ export default function SignInPage() {
         <div
           className="pointer-events-none absolute right-0 top-1/4"
           style={{
-            width: 300,
-            height: 300,
-            background:
-              "radial-gradient(circle, oklch(0.52 0.24 256 / 0.08) 0%, transparent 70%)",
+            width: 300, height: 300,
+            background: "radial-gradient(circle, oklch(0.52 0.24 256 / 0.08) 0%, transparent 70%)",
           }}
         />
         <div className="flex items-center gap-3">
@@ -98,22 +94,17 @@ export default function SignInPage() {
               Automatisation Facebook
             </p>
             <h2 className="text-[1.65rem] font-bold leading-[1.1] tracking-tight">
-              Votre assistant IA répond à vos clients.
-              <br />
+              Votre assistant IA répond à vos clients.<br />
               <span
                 className="bg-clip-text text-transparent"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(135deg, oklch(0.72 0.2 256), oklch(0.58 0.22 272))",
-                }}
+                style={{ backgroundImage: "linear-gradient(135deg, oklch(0.72 0.2 256), oklch(0.58 0.22 272))" }}
               >
                 Pendant que vous vendez.
               </span>
             </h2>
             <p className="text-[13px] leading-relaxed text-muted-foreground">
               VendeoAI gère vos messages et commentaires Facebook en temps réel,
-              filtre les demandes et ne vous alerte que quand c&apos;est
-              vraiment nécessaire.
+              filtre les demandes et ne vous alerte que quand c&apos;est vraiment nécessaire.
             </p>
           </div>
 
@@ -124,9 +115,7 @@ export default function SignInPage() {
                 className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-3 py-1.5 backdrop-blur-sm"
               >
                 <Icon className="h-3 w-3 text-primary" />
-                <span className="text-[11px] font-medium text-foreground/75">
-                  {label}
-                </span>
+                <span className="text-[11px] font-medium text-foreground/75">{label}</span>
               </div>
             ))}
           </div>
@@ -141,44 +130,30 @@ export default function SignInPage() {
 
       {/* ── Right — form ── */}
       <div className="relative z-10 flex flex-1 items-center justify-center p-6 sm:p-10">
-        <div className="w-full max-w-90">
-          <motion.div
-            {...fadeUp(0)}
-            className="mb-8 flex items-center gap-2 lg:hidden"
-          >
+        <div className="w-full max-w-[360px]">
+          <motion.div {...fadeUp(0)} className="mb-8 flex items-center gap-2 lg:hidden">
             <VendeoLogo size={7} />
             <span className="text-sm font-bold">VendeoAI</span>
           </motion.div>
 
           <motion.div {...fadeUp(0.05)} className="mb-7 space-y-1.5">
-            <h1 className="text-[1.6rem] font-bold tracking-tight">
-              Bon retour 👋
-            </h1>
+            <h1 className="text-[1.6rem] font-bold tracking-tight">Bon retour 👋</h1>
             <p className="text-[13px] text-muted-foreground">
               Connectez-vous à votre espace VendeoAI
             </p>
           </motion.div>
 
           <motion.div {...fadeUp(0.1)}>
-            <form
-              onSubmit={handleSubmit(onSubmit)}
-              className="space-y-4"
-              noValidate
-            >
-              {/* Store-level error */}
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
               {authError && (
-                <p
-                  role="alert"
-                  className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-[12px] text-destructive"
-                >
+                <p role="alert" className="rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2 text-[12px] text-destructive">
                   {authError}
                 </p>
               )}
 
+              {/* Email */}
               <div className="space-y-1.5">
-                <Label htmlFor="email" className="text-[12px] font-medium">
-                  Email
-                </Label>
+                <Label htmlFor="email" className="text-[12px] font-medium">Email</Label>
                 <Input
                   id="email"
                   type="email"
@@ -188,13 +163,10 @@ export default function SignInPage() {
                   aria-invalid={!!errors.email}
                   {...register("email")}
                 />
-                {errors.email && (
-                  <p className="text-[11px] text-destructive">
-                    {errors.email.message}
-                  </p>
-                )}
+                <EmailHint value={watchedEmail ?? ""} error={errors.email?.message} />
               </div>
 
+              {/* Password */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="password" className="text-[12px] font-medium">
@@ -207,20 +179,14 @@ export default function SignInPage() {
                     Oublié ?
                   </Link>
                 </div>
-                <Input
+                <PasswordInput
                   id="password"
-                  type="password"
                   placeholder="••••••••"
-                  className="h-9 text-[13px]"
                   autoComplete="current-password"
                   aria-invalid={!!errors.password}
+                  error={errors.password?.message}
                   {...register("password")}
                 />
-                {errors.password && (
-                  <p className="text-[11px] text-destructive">
-                    {errors.password.message}
-                  </p>
-                )}
               </div>
 
               <Button
@@ -229,9 +195,7 @@ export default function SignInPage() {
                 disabled={isLoading}
                 style={{ boxShadow: "0 4px 16px oklch(0.52 0.24 256 / 28%)" }}
               >
-                {isLoading ? (
-                  <Spinner />
-                ) : (
+                {isLoading ? <Spinner /> : (
                   <>
                     <span>Se connecter</span>
                     <ArrowRight className="h-3.5 w-3.5" />
@@ -249,25 +213,15 @@ export default function SignInPage() {
           </motion.div>
 
           <motion.div {...fadeUp(0.18)}>
-            <Button
-              variant="outline"
-              type="button"
-              className="w-full h-9 gap-2 text-[13px] font-medium border-border/60 hover:border-border"
-            >
+            <Button variant="outline" type="button" className="w-full h-9 gap-2 text-[13px] font-medium border-border/60 hover:border-border">
               <IconBrandGoogle className="h-4 w-4" />
               Continuer avec Google
             </Button>
           </motion.div>
 
-          <motion.p
-            {...fadeUp(0.22)}
-            className="mt-6 text-center text-[12px] text-muted-foreground"
-          >
+          <motion.p {...fadeUp(0.22)} className="mt-6 text-center text-[12px] text-muted-foreground">
             Pas encore de compte ?{" "}
-            <Link
-              href="/sign-up"
-              className="font-semibold text-primary transition-colors hover:text-primary/75"
-            >
+            <Link href="/sign-up" className="font-semibold text-primary transition-colors hover:text-primary/75">
               S&apos;inscrire gratuitement
             </Link>
           </motion.p>

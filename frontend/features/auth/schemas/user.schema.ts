@@ -1,39 +1,39 @@
 /**
- * @file features/users/user.schema.ts
- * @description Zod schemas and inferred types for the User domain.
- * Single source of truth — import User type from here everywhere.
+ * @file src/features/users/schemas/user.schema.ts
+ * CHANGE: Added emailVerified + emailVerifiedAt fields.
  */
 
 import { z } from "zod";
 
-export const PlanSchema = z.enum(["FREE", "PRO", "ENTERPRISE"]);
+export const PlanSchema = z.enum(["FREE", "STARTER", "PRO", "CUSTOM"]);
 export const ProviderSchema = z.enum(["LOCAL", "GOOGLE", "FACEBOOK"]);
 
 export const UserSchema = z.object({
-  id: z.uuid(),
-  email: z.email(),
-  username: z.string(),
-  avatarUrl: z.url().nullable(), // mieux : string + url
-  activePlan: PlanSchema,
-  provider: ProviderSchema,
-  providerId: z.string().nullable().default(null),
-  onboardingDone: z.boolean(),
-  createdAt: z.string(), // ← ajoutez les parenthèses
-  updatedAt: z.string(),
+  id:              z.string().uuid(),
+  email:           z.string().email(),
+  username:        z.string(),
+  avatarUrl:       z.string().url().nullable(),
+  activePlan:      PlanSchema,
+  provider:        ProviderSchema,
+  providerId:      z.string().nullable().default(null),
+  onboardingDone:  z.boolean(),
+  /** True once the user has confirmed their email address */
+  emailVerified:   z.boolean(),
+  /** ISO string or null */
+  emailVerifiedAt: z.string().nullable(),
+  createdAt:       z.string(),
+  updatedAt:       z.string(),
 });
+
 export const UpdateUserSchema = z.object({
-  username: z
-    .string()
-    .min(3, "Username must be at least 3 characters")
-    .max(30, "Username must be at most 30 characters")
-    .optional(),
-  email: z.email({ message: "Invalid email address" }).optional(),
-  avatarUrl: z.url({ message: "Invalid URL" }).nullable().optional(),
-  activePlan: PlanSchema.optional(),
+  username:       z.string().min(3).max(30).optional(),
+  email:          z.string().email().optional(),
+  avatarUrl:      z.string().url().nullable().optional(),
+  activePlan:     PlanSchema.optional(),
   onboardingDone: z.boolean().optional(),
 });
 
-export type User = z.infer<typeof UserSchema>;
+export type User           = z.infer<typeof UserSchema>;
 export type UpdateUserInput = z.infer<typeof UpdateUserSchema>;
-export type Plan = z.infer<typeof PlanSchema>;
-export type AuthProvider = z.infer<typeof ProviderSchema>;
+export type Plan           = z.infer<typeof PlanSchema>;
+export type AuthProvider   = z.infer<typeof ProviderSchema>;

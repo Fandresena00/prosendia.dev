@@ -4,9 +4,14 @@
  * Centre de notifications avec :
  *   - Filtres (sévérité, type, non lu)
  *   - Recherche full-text
- *   - Actions rapides (ouvrir conversation, profil Facebook, post)
+ *   - Actions rapides (ouvrir conversation, post)
  *   - Marquer tout comme lu
  *   - Suppression individuelle
+ *
+ * NOTE sur les liens Facebook :
+ *   facebookProfileUrl contient des URLs de profils privés qui ne sont pas
+ *   accessibles publiquement. On utilise conversationUrl (inbox interne) ou
+ *   postUrl à la place. Le lien "Voir conversation" ouvre l'inbox VendeoAI.
  */
 "use client";
 
@@ -21,6 +26,7 @@ import {
   CheckCheck,
   ExternalLink,
   Info,
+  MessageSquare,
   Search,
   Trash2,
   X,
@@ -30,6 +36,26 @@ import {
 import Link from "next/link";
 import { useState } from "react";
 import type { Notification, NotificationSeverity } from "../types/dashboard.types";
+
+// ─── URL helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Normalise une URL de conversation vers le format search-param.
+ * Le backend peut renvoyer "/inbox/conversations/<id>" ou déjà "/inbox?conv=<id>".
+ * On normalise tout en "/inbox?conv=<id>" pour être cohérent avec le routage.
+ */
+function normalizeConversationUrl(url: string | null): string | null {
+  if (!url) return null;
+  // Already in search-param format
+  if (url.includes("?conv=")) return url;
+  // Pattern: /inbox/conversations/<uuid>
+  const match = url.match(/\/conversations\/([a-f0-9-]{36})/i);
+  if (match?.[1]) return `/inbox?conv=${match[1]}`;
+  // Pattern: ends with a UUID (fallback)
+  const uuidMatch = url.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i);
+  if (uuidMatch?.[1]) return `/inbox?conv=${uuidMatch[1]}`;
+  return url;
+}
 
 // ─── Severity config ─────────────────────────────────────────────────────────
 
@@ -101,6 +127,19 @@ function NotificationItem({
     return `${Math.floor(hrs / 24)}j`;
   })();
 
+  // Determine the best action URL:
+  // 1. conversationUrl (normalized to /inbox?conv=<id>) for messenger notifications
+  // 2. postUrl for post/comment notifications
+  // 3. actionUrl as fallback
+  // NOTE: facebookProfileUrl links to private profiles and is NOT shown
+  // as a direct link — Facebook private profiles are inaccessible to
+  // external viewers. We show the client name as plain text instead.
+  const normalizedConvUrl = normalizeConversationUrl(notif.conversationUrl ?? notif.actionUrl ?? null);
+  const primaryUrl   = normalizedConvUrl ?? notif.postUrl;
+  const primaryLabel = notif.actionLabel ?? (notif.conversationId ? "Voir la conversation" : notif.postId ? "Voir le post" : "Voir");
+
+  const secondaryUrl   = notif.postUrl && notif.actionUrl !== notif.postUrl ? notif.postUrl : null;
+
   return (
     <div className={cn(
       "group flex items-start gap-3 px-4 py-3 transition-colors border-b border-border/20 last:border-0",
@@ -108,7 +147,10 @@ function NotificationItem({
       "hover:bg-accent/30",
     )}>
       {/* Icon */}
-      <div className={cn("mt-0.5 h-7 w-7 rounded-full flex items-center justify-center shrink-0", cfg.bg, `border ${cfg.border}`)}>
+      <div className={cn(
+        "mt-0.5 h-7 w-7 rounded-full flex items-center justify-center shrink-0",
+        cfg.bg, `border ${cfg.border}`,
+      )}>
         <Icon className={cn("h-3.5 w-3.5", cfg.iconColor)} />
       </div>
 
@@ -116,7 +158,10 @@ function NotificationItem({
       <div className="flex-1 min-w-0">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className={cn("text-[12px] font-semibold leading-tight truncate", !notif.isRead && "text-foreground")}>
+            <p className={cn(
+              "text-[12px] font-semibold leading-tight truncate",
+              !notif.isRead && "text-foreground",
+            )}>
               {notif.title}
             </p>
             <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2 leading-relaxed">
@@ -129,32 +174,29 @@ function NotificationItem({
           </div>
         </div>
 
+        {/* Client name (plain — profile URL is private, not linkable) */}
+        {notif.clientName && (
+          <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
+            <MessageSquare className="h-2.5 w-2.5 opacity-50" />
+            {notif.clientName}
+          </p>
+        )}
+
         {/* Action links */}
         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-          {notif.actionUrl && (
+          {primaryUrl && (
             <Link
-              href={notif.actionUrl}
+              href={primaryUrl}
               onClick={() => !notif.isRead && onMarkRead(notif.id)}
               className="text-[10px] font-medium text-primary hover:underline flex items-center gap-0.5"
             >
-              {notif.actionLabel ?? "Voir"}
+              {primaryLabel}
               <ExternalLink className="h-2.5 w-2.5" />
             </Link>
           )}
-          {notif.facebookProfileUrl && notif.clientName && (
-            <a
-              href={notif.facebookProfileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-0.5"
-            >
-              Profil FB
-              <ExternalLink className="h-2.5 w-2.5" />
-            </a>
-          )}
-          {notif.postUrl && (
+          {secondaryUrl && (
             <Link
-              href={notif.postUrl}
+              href={secondaryUrl}
               className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-0.5"
             >
               Voir post
@@ -204,8 +246,8 @@ export function NotificationCenter({
   onMarkRead,
   onDelete,
 }: NotificationCenterProps) {
-  const [filter,   setFilter]   = useState<SeverityFilter>("ALL");
-  const [search,   setSearch]   = useState("");
+  const [filter,     setFilter]     = useState<SeverityFilter>("ALL");
+  const [search,     setSearch]     = useState("");
   const [unreadOnly, setUnreadOnly] = useState(false);
 
   const filtered = notifications.filter((n) => {
@@ -276,7 +318,7 @@ export function NotificationCenter({
           </div>
 
           {/* Severity pills */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-wrap">
             {(["ALL", "CRITICAL", "WARNING", "INFO", "SUCCESS"] as const).map((s) => (
               <button
                 key={s}

@@ -186,10 +186,14 @@ model User {
   password  String
   avatarUrl String?
 
+  providerId     String?
+  onboardingDone  Boolean      @default(false)
+emailVerified   Boolean      @default(false)
+emailVerifiedAt DateTime?
+
   activePlan     Plan         @default(FREE)
   provider       AuthProvider @default(LOCAL)
-  providerId     String?
-  onboardingDone Boolean      @default(false)
+
 
   businessProfiles BusinessProfile[]
   payments         Payment[]
@@ -207,6 +211,25 @@ model User {
   webPushSubscriptions WebPushSubscription[]
   notifications Notification[]
 }
+
+model EmailVerification {
+  id        String   @id @default(uuid())
+  email     String
+  username  String
+  /// bcrypt hash of the 6-digit code
+  codeHash  String
+  /// hashed password (bcrypt) stored temporarily until verification
+  passwordHash String
+  /// expiry — 30 minutes from creation
+  expiresAt DateTime
+  /// consumed = already used, prevents replay
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@map("email_verifications")
+}
+
 
 // =============================================================================
 // ── Business

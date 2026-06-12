@@ -43,6 +43,7 @@ export interface AuthStore {
   authError: string | null;
   validationErrors: string[] | null;
 
+  verifyEmail: (data: { email: string; code: string }) => Promise<void>;
   initializeAuth: () => Promise<void>;
   setSession: (user: User) => void;
   handleAuthError: (error: unknown) => void;
@@ -231,6 +232,19 @@ export const useAuthStore = create<AuthStore>()(
         clearError: (): void => {
           set({ authError: null, validationErrors: null });
         },
+
+        verifyEmail: async (data: {
+          email: string;
+          code: string;
+        }): Promise<void> => {
+          set({ isLoading: true, authError: null, validationErrors: null });
+          try {
+            const { user } = await authService.verifyEmail(data);
+            get().setSession(user);
+          } catch (error) {
+            handleError(error, "Vérification échouée. Réessayez.");
+          }
+        },
       };
     },
     {
@@ -250,19 +264,22 @@ export const useAuthStore = create<AuthStore>()(
   ),
 );
 
-export const useCurrentUser      = () => useAuthStore((s) => s.user);
-export const useAuthStatus       = () => useAuthStore((s) => s.status);
-export const useIsAuthenticated  = () => useAuthStore((s) => s.status === "authenticated");
-export const useIsOffline        = () => useAuthStore((s) => s.status === "offline");
-export const useAuthLoading      = () => useAuthStore((s) => s.isLoading);
-export const useIsRehydrating    = () => useAuthStore((s) => s.isRehydrating);
-export const useAuthError        = () => useAuthStore((s) => s.authError);
-export const useValidationErrors = () => useAuthStore((s) => s.validationErrors);
+export const useCurrentUser = () => useAuthStore((s) => s.user);
+export const useAuthStatus = () => useAuthStore((s) => s.status);
+export const useIsAuthenticated = () =>
+  useAuthStore((s) => s.status === "authenticated");
+export const useIsOffline = () => useAuthStore((s) => s.status === "offline");
+export const useAuthLoading = () => useAuthStore((s) => s.isLoading);
+export const useIsRehydrating = () => useAuthStore((s) => s.isRehydrating);
+export const useAuthError = () => useAuthStore((s) => s.authError);
+export const useValidationErrors = () =>
+  useAuthStore((s) => s.validationErrors);
 
 export function subscribeToNetworkRecovery(): () => void {
   let previousStatus = networkMonitor.getStatus();
   return networkMonitor.subscribe((networkStatus) => {
-    const wasOffline = previousStatus === "offline" || previousStatus === "unknown";
+    const wasOffline =
+      previousStatus === "offline" || previousStatus === "unknown";
     const isNowOnline = networkStatus === "online";
     previousStatus = networkStatus;
     if (wasOffline && isNowOnline) {

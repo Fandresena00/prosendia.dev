@@ -86,4 +86,9 @@ export const ValidationSchema = Joi.object({
   VAPID_PUBLIC_KEY: Joi.string().optional(),
   VAPID_PRIVATE_KEY: Joi.string().optional(),
   VAPID_EMAIL: Joi.string().optional(),
+
+  RESEND_API_KEY: Joi.string().required().messages({
+    'any.required': 'RESEND_API_KEY is required',
+  }),
+  EMAIL_FROM: Joi.string().optional(),
 });

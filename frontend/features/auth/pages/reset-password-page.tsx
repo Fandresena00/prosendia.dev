@@ -1,13 +1,16 @@
 "use client";
 
+/**
+ * @file src/app/(auth)/reset-password/page.tsx
+ * Redesigned: PasswordInput toggle + real-time rules + StrengthBar.
+ */
+
 import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { VendeoLogo } from "@/components/shared/vendeo-logo";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { EASE, fadeUp } from "@/lib/motion";
 import { motion } from "framer-motion";
-import { ArrowLeft, CheckCircle, Eye, EyeOff, Lock } from "lucide-react";
+import { ArrowLeft, CheckCircle, Lock } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { StrengthBar } from "../components/reset-password/strength-bar";
@@ -15,20 +18,32 @@ import {
   AuthDotGrid,
   AuthRadialGlow,
 } from "../components/shared/auth-background";
+import { PasswordInput, PasswordRequirements } from "../components/shared/password-field";
+
+const PASSWORD_RULES = [
+  { test: (v: string) => v.length >= 8 },
+  { test: (v: string) => /[A-Z]/.test(v) },
+  { test: (v: string) => /[a-z]/.test(v) },
+  { test: (v: string) => /\d/.test(v) },
+  { test: (v: string) => /[^A-Za-z0-9]/.test(v) },
+];
+
+function isStrongEnough(v: string): boolean {
+  return PASSWORD_RULES.every((r) => r.test(v));
+}
 
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  const isValid = password.length >= 8;
+  const strong = isStrongEnough(password);
   const matches = password === confirmPassword && password.length > 0;
+  const canSubmit = strong && matches;
 
   const handleReset = () => {
-    if (!matches || !isValid) return;
+    if (!canSubmit) return;
     setIsLoading(true);
     setTimeout(() => {
       setIsLoading(false);
@@ -44,7 +59,7 @@ export default function ResetPasswordPage() {
         <ThemeSwitcher />
       </div>
 
-      <div className="relative z-10 w-full max-w-90">
+      <div className="relative z-10 w-full max-w-[360px]">
         <motion.div {...fadeUp(0)} className="mb-8 flex items-center gap-2">
           <VendeoLogo size={7} />
           <span className="text-sm font-bold">VendeoAI</span>
@@ -63,88 +78,56 @@ export default function ResetPasswordPage() {
                 Nouveau mot de passe
               </h1>
               <p className="text-[13px] leading-relaxed text-muted-foreground">
-                Créez un mot de passe sécurisé d&apos;au moins 8 caractères.
+                Créez un mot de passe sécurisé pour votre compte.
               </p>
             </motion.div>
 
             <motion.div {...fadeUp(0.12)} className="space-y-4">
+              {/* New password */}
               <div className="space-y-1.5">
-                <Label className="text-[12px] font-medium">
-                  Nouveau mot de passe
-                </Label>
-                <div className="relative">
-                  <Input
-                    type={showPassword ? "text" : "password"}
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="h-9 pr-9 text-[13px]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {showPassword ? (
-                      <EyeOff className="h-3.5 w-3.5" />
-                    ) : (
-                      <Eye className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </div>
-                {password.length > 0 && <StrengthBar password={password} />}
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-[12px] font-medium">
-                  Confirmer le mot de passe
-                </Label>
-                <div className="relative">
-                  <Input
-                    type={showConfirm ? "text" : "password"}
-                    placeholder="••••••••"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="h-9 pr-9 text-[13px]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirm(!showConfirm)}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {showConfirm ? (
-                      <EyeOff className="h-3.5 w-3.5" />
-                    ) : (
-                      <Eye className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </div>
-                {confirmPassword.length > 0 && (
-                  <p
-                    className={`text-[11px] flex items-center gap-1 ${matches ? "text-emerald-400" : "text-rose-400"}`}
-                  >
-                    <span>{matches ? "✓" : "✗"}</span>
-                    {matches
-                      ? "Les mots de passe correspondent"
-                      : "Les mots de passe ne correspondent pas"}
-                  </p>
+                <PasswordInput
+                  label="Nouveau mot de passe"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+                {password.length > 0 && (
+                  <>
+                    <StrengthBar password={password} />
+                    <PasswordRequirements value={password} className="mt-1" />
+                  </>
                 )}
               </div>
+
+              {/* Confirm password */}
+              <div className="space-y-1.5">
+                <PasswordInput
+                  label="Confirmer le mot de passe"
+                  placeholder="••••••••"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+                {confirmPassword.length > 0 && (
+                  <div className={`flex items-center gap-1.5 text-[11px] ${matches ? "text-emerald-400" : "text-rose-400"}`}>
+                    <span>{matches ? "✓" : "✗"}</span>
+                    {matches ? "Les mots de passe correspondent" : "Les mots de passe ne correspondent pas"}
+                  </div>
+                )}
+              </div>
+
               <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
                   <span className="font-semibold text-primary">Conseil :</span>{" "}
-                  Utilisez majuscules, minuscules, chiffres et symboles pour un
-                  mot de passe solide.
+                  Utilisez majuscules, minuscules, chiffres et symboles pour un mot de passe solide.
                 </p>
               </div>
+
               <Button
-                disabled={!matches || !isValid || isLoading}
+                disabled={!canSubmit || isLoading}
                 className="w-full h-9 gap-2 text-[13px] font-semibold disabled:opacity-40"
-                style={{
-                  boxShadow:
-                    matches && isValid
-                      ? "0 4px 16px oklch(0.52 0.24 256 / 24%)"
-                      : "none",
-                }}
+                style={{ boxShadow: canSubmit ? "0 4px 16px oklch(0.52 0.24 256 / 24%)" : "none" }}
                 onClick={handleReset}
               >
                 {isLoading ? (
@@ -182,24 +165,16 @@ export default function ResetPasswordPage() {
               <motion.div
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
-                transition={{
-                  duration: 0.4,
-                  type: "spring",
-                  stiffness: 220,
-                  delay: 0.1,
-                }}
+                transition={{ duration: 0.4, type: "spring", stiffness: 220, delay: 0.1 }}
                 className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10"
                 style={{ boxShadow: "0 0 20px oklch(0.5 0.15 155 / 15%)" }}
               >
                 <CheckCircle className="h-7 w-7 text-emerald-400" />
               </motion.div>
               <div>
-                <h2 className="text-[1.4rem] font-bold">
-                  Mot de passe mis à jour !
-                </h2>
+                <h2 className="text-[1.4rem] font-bold">Mot de passe mis à jour !</h2>
                 <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
-                  Votre mot de passe a été changé avec succès. Vous pouvez
-                  maintenant vous connecter.
+                  Votre mot de passe a été changé avec succès. Vous pouvez maintenant vous connecter.
                 </p>
               </div>
             </div>

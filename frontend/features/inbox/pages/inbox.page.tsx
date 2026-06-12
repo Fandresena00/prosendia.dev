@@ -3,6 +3,10 @@
 /**
  * @file features/inbox/pages/inbox.page.tsx
  * Root layout for the inbox.
+ *
+ * NOTE: This component uses useSearchParams (via useInbox) which requires
+ * a Suspense boundary in Next.js App Router. The default export wraps
+ * InboxPage in <Suspense> so callers don't need to worry about it.
  */
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +19,7 @@ import {
 } from "@/components/ui/empty";
 import { Loader2, MessageSquareDashed, RefreshCw } from "lucide-react";
 import Link from "next/link";
+import { Suspense } from "react";
 import { AddPresetDialog } from "../components/AddPresetDialog";
 import { ChatView } from "../components/ChatView";
 import { ConvList } from "../components/ConvList";
@@ -24,6 +29,14 @@ import { useInbox } from "../hooks/useInbox";
 import type { PhotoPreset } from "../types/inbox.types";
 
 export function InboxPage() {
+  return (
+    <Suspense fallback={null}>
+      <InboxPageInner />
+    </Suspense>
+  );
+}
+
+function InboxPageInner() {
   const inbox = useInbox();
 
   // ── Empty state: no Facebook page connected ────────────────────────────────

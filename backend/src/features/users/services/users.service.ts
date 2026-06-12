@@ -71,6 +71,8 @@ export class UsersService {
       activePlan: user.activePlan,
       provider: user.provider,
       onboardingDone: user.onboardingDone,
+      emailVerified: user.emailVerified, // ← NEW
+      emailVerifiedAt: user.emailVerifiedAt ?? null, // ← NEW
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
@@ -140,7 +142,51 @@ export class UsersService {
     }
   }
 
-  // ─── createUser — FIX ─────────────────────────────────────────────────────
+  async createVerifiedUser(data: {
+    email: string;
+    username: string;
+    passwordHash: string;
+  }): Promise<UserResponseDto> {
+    try {
+      const now = new Date();
+
+      const user = await this.prisma.user.create({
+        data: {
+          email: data.email,
+          username: data.username,
+          password: data.passwordHash, // already bcrypt-hashed
+          activePlan: Plan.FREE,
+          provider: AuthProvider.LOCAL,
+          onboardingDone: false,
+          emailVerified: true, // ← verified at creation
+          emailVerifiedAt: now, // ← timestamp
+        },
+      });
+
+      this.logger.log(
+        `[USER_CREATED_VERIFIED] userId=${user.id} email=${user.email} ` +
+          `emailVerified=true plan=FREE`,
+      );
+
+      try {
+        await this.creditService.initializeFreeUser(user.id);
+        this.logger.log(
+          `[USER_CREDITS_INITIALIZED] userId=${user.id} creditBalance=500`,
+        );
+      } catch (creditErr: unknown) {
+        const msg =
+          creditErr instanceof Error ? creditErr.message : String(creditErr);
+        this.logger.error(
+          `[USER_CREDITS_INIT_FAILED] userId=${user.id} err="${msg}". ` +
+            `Run CreditService.repairBalance("${user.id}") to fix manually.`,
+        );
+      }
+
+      return this.toResponse(user);
+    } catch (error) {
+      this.handlePrismaError(error, 'Failed to create verified user');
+    }
+  } // ─── createUser — FIX ─────────────────────────────────────────────────────
 
   /**
    * Crée un nouvel utilisateur et initialise ses crédits FREE (500 crédits).
@@ -167,6 +213,8 @@ export class UsersService {
           activePlan: Plan.FREE,
           provider: AuthProvider.LOCAL,
           onboardingDone: false,
+          emailVerified: false,
+          emailVerifiedAt: null,
           // creditBalance: 0 (défaut Prisma) — sera mis à 500 juste après
         },
       });
@@ -230,6 +278,8 @@ export class UsersService {
         activePlan: Plan.FREE,
         provider: data.provider,
         onboardingDone: false,
+        emailVerified: true,
+        emailVerifiedAt: new Date(),
       },
     });
 

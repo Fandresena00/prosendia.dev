@@ -28,8 +28,10 @@ export interface NavItem {
   title: string;
   url: string;
   icon: ElementType;
-  /** Badge value — pass a string for static, or a store selector key for dynamic */
+  /** Badge value — static string shown as-is */
   badge?: string;
+  /** If true, the badge count comes from the inbox store (unread messages) */
+  dynamicBadge?: "inbox_unread";
   /** Minimum plan required to access this item (undefined = always visible) */
   plan?: Plan;
   /** Prevents navigation — useful for "coming soon" features */
@@ -55,10 +57,10 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: IconHome,
       },
       {
-        title: "Inbox",
+        title: "Messages",
         url: "/inbox",
         icon: IconMessageCircle,
-        badge: "3",
+        dynamicBadge: "inbox_unread",
       },
     ],
   },

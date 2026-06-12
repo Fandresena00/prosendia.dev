@@ -1,9 +1,12 @@
 /**
  * @file src/features/auth/auth.controller.ts
- * @description Auth endpoints. Sets HttpOnly cookies — never returns tokens in body.
  *
- * Response body always contains only { user }.
- * Tokens travel exclusively through Set-Cookie / Cookie HTTP headers.
+ * CHANGE: Two-step registration:
+ *   POST /auth/register            → initiateRegistration (send verification code)
+ *   POST /auth/verify-email        → completeRegistration (verify code, create user, set cookies)
+ *   POST /auth/resend-verification → resend code
+ *
+ * All other endpoints unchanged.
  */
 
 import {
@@ -32,7 +35,13 @@ import {
 } from './auth.constants.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
-import { AuthService, AuthServiceResult } from './services/auth.service.js';
+import { ResendVerificationDto } from './dto/resend-verification.dto.js';
+import { VerifyEmailDto } from './dto/verify-email.dto.js';
+import {
+  AuthService,
+  AuthServiceResult,
+  RegistrationInitiated,
+} from './services/auth.service.js';
 import type { JwtRefreshPayload } from './strategies/jwt-refresh.strategy.js';
 import type { AuthenticatedUser } from './types/authenticated-user.types.js';
 
@@ -55,11 +64,7 @@ export class AuthController {
   }
 
   private get baseCookieOptions(): CookieOptions {
-    return {
-      httpOnly: true,
-      secure: this.isProduction,
-      sameSite: 'none',
-    };
+    return { httpOnly: true, secure: this.isProduction, sameSite: 'none' };
   }
 
   private setAuthCookies(res: Response, result: AuthServiceResult): void {
@@ -68,8 +73,6 @@ export class AuthController {
       maxAge: ACCESS_TOKEN_MAX_AGE_MS,
       path: '/',
     });
-
-    // Refresh token scoped to /api/auth — only sent to auth endpoints
     res.cookie(REFRESH_TOKEN_COOKIE, result.refreshToken, {
       ...this.baseCookieOptions,
       maxAge: REFRESH_TOKEN_MAX_AGE_MS,
@@ -82,18 +85,50 @@ export class AuthController {
     res.clearCookie(REFRESH_TOKEN_COOKIE, { path: '/' });
   }
 
-  // ─── Endpoints ───────────────────────────────────────────────────────────────
+  // ─── Step 1: Initiate registration ──────────────────────────────────────────
 
+  /**
+   * POST /auth/register
+   * Validates the signup form, stores pending verification, sends code.
+   * Returns 200 + { email, message } — NO cookies yet.
+   */
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
   @Post('register')
-  async register(
-    @Body() dto: RegisterDto,
+  async register(@Body() dto: RegisterDto): Promise<RegistrationInitiated> {
+    return this.authService.initiateRegistration(dto);
+  }
+
+  // ─── Step 2: Verify email & complete registration ────────────────────────────
+
+  /**
+   * POST /auth/verify-email
+   * Validates the 6-digit code, creates the user, sets auth cookies.
+   */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  @Post('verify-email')
+  async verifyEmail(
+    @Body() dto: VerifyEmailDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<PublicAuthResponse> {
-    const result = await this.authService.register(dto);
+    const result = await this.authService.completeRegistration(dto);
     this.setAuthCookies(res, result);
     return { user: result.user };
   }
+
+  // ─── Resend verification code ────────────────────────────────────────────────
+
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  @Post('resend-verification')
+  async resendVerification(
+    @Body() dto: ResendVerificationDto,
+  ): Promise<{ message: string }> {
+    return this.authService.resendVerificationCode(dto.email);
+  }
+
+  // ─── Login ───────────────────────────────────────────────────────────────────
 
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
@@ -107,6 +142,8 @@ export class AuthController {
     return { user: result.user };
   }
 
+  // ─── Refresh ─────────────────────────────────────────────────────────────────
+
   @UseGuards(JwtRefreshGuard)
   @HttpCode(HttpStatus.OK)
   @Post('refresh')
@@ -119,6 +156,8 @@ export class AuthController {
     return { user: result.user };
   }
 
+  // ─── Logout ──────────────────────────────────────────────────────────────────
+
   @UseGuards(JwtRefreshGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('logout')
@@ -130,11 +169,11 @@ export class AuthController {
     this.clearAuthCookies(res);
   }
 
+  // ─── Me ──────────────────────────────────────────────────────────────────────
+
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  async getMe(
-    @CurrentUser() user: AuthenticatedUser,
-  ): Promise<UserResponseDto> {
+  async getMe(@CurrentUser() user: AuthenticatedUser): Promise<UserResponseDto> {
     return this.usersService.findUserById({ id: user.sub });
   }
 }

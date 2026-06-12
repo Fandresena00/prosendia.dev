@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { Plan } from "@/features/auth/schemas/user.schema";
 import { useCurrentUser } from "@/features/auth/store/auth.store";
+import { useInboxUnreadCount } from "@/features/inbox/store/inbox.store";
 import { IconLock } from "@tabler/icons-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -49,13 +50,31 @@ function NavItemRow({
   item,
   active,
   locked,
+  inboxUnread,
 }: {
   item: NavItem;
   active: boolean;
   locked: boolean;
+  inboxUnread: number;
 }) {
-  const { icon: Icon, title, url, badge, external, disabled } = item;
+  const {
+    icon: Icon,
+    title,
+    url,
+    badge,
+    dynamicBadge,
+    external,
+    disabled,
+  } = item;
   const isInert = disabled || locked;
+
+  // Resolve badge value: dynamic takes precedence over static
+  const badgeValue: string | null =
+    dynamicBadge === "inbox_unread" && inboxUnread > 0
+      ? inboxUnread > 99
+        ? "99+"
+        : String(inboxUnread)
+      : (badge ?? null);
 
   const button = (
     <SidebarMenuButton
@@ -109,12 +128,12 @@ function NavItemRow({
         button
       )}
 
-      {badge && !isInert && (
+      {badgeValue && !isInert && (
         <SidebarMenuBadge
           className="bg-primary text-primary-foreground text-[9px] h-4 min-w-4 rounded-full px-1 flex items-center justify-center"
           style={{ top: "50%", transform: "translateY(-50%)" }}
         >
-          {badge}
+          {badgeValue}
         </SidebarMenuBadge>
       )}
     </SidebarMenuItem>
@@ -127,10 +146,12 @@ function NavGroupSection({
   group,
   pathname,
   userPlan,
+  inboxUnread,
 }: {
   group: NavGroup;
   pathname: string;
   userPlan: Plan;
+  inboxUnread: number;
 }) {
   return (
     <SidebarGroup>
@@ -145,6 +166,7 @@ function NavGroupSection({
               item={item}
               active={pathname === item.url}
               locked={!hasAccess(userPlan, item.plan)}
+              inboxUnread={inboxUnread}
             />
           ))}
         </SidebarMenu>
@@ -159,6 +181,7 @@ export function SidebarNav() {
   const pathname = usePathname();
   const user = useCurrentUser();
   const userPlan: Plan = user?.activePlan ?? "FREE";
+  const inboxUnread = useInboxUnreadCount();
 
   return (
     <SidebarContent className="px-2 gap-0">
@@ -168,6 +191,7 @@ export function SidebarNav() {
           group={group}
           pathname={pathname}
           userPlan={userPlan}
+          inboxUnread={inboxUnread}
         />
       ))}
     </SidebarContent>
