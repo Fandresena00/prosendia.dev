@@ -33,10 +33,10 @@ export function SidebarPlanCard() {
   // Skeleton pendant le chargement
   if (isLoading) {
     return (
-      <div className="rounded-md border border-border/30 bg-secondary/20 px-3 py-2.5 space-y-2">
-        <div className="h-2 w-20 rounded bg-border/40 animate-pulse" />
-        <div className="h-1.5 w-full rounded-full bg-border/30 animate-pulse" />
-        <div className="h-2 w-24 rounded bg-border/30 animate-pulse" />
+      <div className="rounded-md border border-border/30 bg-secondary/20 px-2 sm:px-3 py-2 sm:py-2.5 space-y-1.5 sm:space-y-2">
+        <div className="h-1.5 sm:h-2 w-16 sm:w-20 rounded bg-border/40 animate-pulse" />
+        <div className="h-1 sm:h-1.5 w-full rounded-full bg-border/30 animate-pulse" />
+        <div className="h-1.5 sm:h-2 w-20 sm:w-24 rounded bg-border/30 animate-pulse" />
       </div>
     );
   }
@@ -75,7 +75,7 @@ export function SidebarPlanCard() {
   return (
     <div
       className={cn(
-        "rounded-md border px-3 py-2.5 space-y-2 transition-colors",
+        "rounded-md border px-2 sm:px-3 py-2 sm:py-2.5 space-y-1.5 sm:space-y-2 transition-colors",
         isDepleted
           ? "border-red-500/20 bg-red-500/5"
           : isCritical
@@ -86,11 +86,11 @@ export function SidebarPlanCard() {
       )}
     >
       {/* Nom du plan + icône alerte */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 min-w-0">
+      <div className="flex items-center justify-between gap-1.5 sm:gap-2">
+        <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
           <Zap
             className={cn(
-              "h-3 w-3 shrink-0",
+              "h-2.5 w-2.5 sm:h-3 sm:w-3 shrink-0",
               isDepleted
                 ? "text-red-500"
                 : isCritical
@@ -100,12 +100,14 @@ export function SidebarPlanCard() {
                     : "text-primary",
             )}
           />
-          <span className="text-[11px] font-semibold truncate">{planName}</span>
+          <span className="text-[10px] sm:text-[11px] font-semibold truncate">
+            {planName}
+          </span>
         </div>
         {(isLow || isCritical || isDepleted) && (
           <AlertTriangle
             className={cn(
-              "h-3 w-3 shrink-0",
+              "h-2.5 w-2.5 sm:h-3 sm:w-3 shrink-0",
               isDepleted ? "text-red-500" : "text-amber-500",
             )}
           />
@@ -114,16 +116,19 @@ export function SidebarPlanCard() {
 
       {/* Barre de progression — remainingPercent vient du backend */}
       {creditsGranted !== null && (
-        <div className="space-y-1">
-          <div className="h-1.5 w-full rounded-full bg-border/40">
+        <div className="space-y-0.5 sm:space-y-1">
+          <div className="h-1 sm:h-1.5 w-full rounded-full bg-border/40">
             <div
-              className={cn("h-1.5 rounded-full transition-all", barColor)}
+              className={cn(
+                "h-1 sm:h-1.5 rounded-full transition-all",
+                barColor,
+              )}
               style={{
                 width: `${Math.max(0, Math.min(100, remainingPercent))}%`,
               }}
             />
           </div>
-          <p className="text-[10px] text-muted-foreground tabular-nums">
+          <p className="text-[9px] sm:text-[10px] text-muted-foreground tabular-nums">
             {creditBalance.toLocaleString("fr-FR")}
             {" / "}
             {creditsGranted.toLocaleString("fr-FR")} crédits
@@ -137,7 +142,7 @@ export function SidebarPlanCard() {
           asChild
           size="sm"
           variant={isDepleted || isCritical ? "default" : "outline"}
-          className="w-full h-7 text-[11px]"
+          className="w-full h-6 sm:h-7 text-[10px] sm:text-[11px]"
         >
           <Link href="/billing">{ctaLabel}</Link>
         </Button>

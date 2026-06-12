@@ -35,8 +35,9 @@ import { NAV_GROUPS, NavGroup, NavItem } from "../_config/nav.config";
 
 const PLAN_RANK: Record<Plan, number> = {
   FREE: 0,
-  PRO: 1,
-  ENTERPRISE: 2,
+  STARTER: 1,
+  PRO: 2,
+  CUSTOM: 3,
 };
 
 function hasAccess(userPlan: Plan, requiredPlan?: Plan): boolean {
