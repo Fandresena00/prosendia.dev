@@ -8,27 +8,30 @@ import { dashboardService } from "../services/dashboard.service";
 import type { DashboardData } from "../types/dashboard.types";
 
 export function useDashboard() {
-  const [data,      setData]      = useState<DashboardData | null>(null);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error,     setError]     = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const fetchDashboard = useCallback(async () => {
+  const fetchDashboard = useCallback(async (isSilent = false) => {
     try {
-      setIsLoading(true);
+      if (!isSilent) setIsLoading(true);
       setError(null);
       const result = await dashboardService.getDashboard();
       setData(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur de chargement");
     } finally {
-      setIsLoading(false);
+      if (!isSilent) setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void fetchDashboard();
     // Refresh toutes les 5 minutes
-    const interval = setInterval(() => void fetchDashboard(), 5 * 60 * 1000);
+    const interval = setInterval(
+      () => void fetchDashboard(true),
+      5 * 60 * 1000,
+    );
     return () => clearInterval(interval);
   }, [fetchDashboard]);
 
@@ -48,7 +51,7 @@ export function useDashboard() {
     await dashboardService.deleteNotification(id);
     setData((prev) => {
       if (!prev) return prev;
-      const updated   = prev.notifications.filter((n) => n.id !== id);
+      const updated = prev.notifications.filter((n) => n.id !== id);
       const newUnread = updated.filter((n) => !n.isRead).length;
       return { ...prev, notifications: updated, unreadCount: newUnread };
     });
@@ -58,7 +61,7 @@ export function useDashboard() {
     data,
     isLoading,
     error,
-    refetch:     fetchDashboard,
+    refetch: fetchDashboard,
     markRead,
     deleteNotif,
   };

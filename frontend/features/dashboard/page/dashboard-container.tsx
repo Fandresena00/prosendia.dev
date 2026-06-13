@@ -69,7 +69,7 @@ export default function DashboardPage() {
         <p className="text-sm text-muted-foreground">
           {error ?? "Erreur de chargement"}
         </p>
-        <Button variant="outline" size="sm" onClick={refetch}>
+        <Button variant="outline" size="sm" onClick={() => refetch()}>
           <RefreshCw className="h-4 w-4 mr-2" />
           Réessayer
         </Button>
@@ -113,7 +113,7 @@ export default function DashboardPage() {
             size="sm"
             variant="ghost"
             className="h-7 gap-1.5 text-[11px] text-muted-foreground"
-            onClick={refetch}
+            onClick={() => refetch()}
           >
             <RefreshCw className="h-3 w-3" />
           </Button>

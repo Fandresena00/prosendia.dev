@@ -1,17 +1,8 @@
 /**
  * @file src/features/auth/services/auth.service.ts
  *
- * CHANGE: Two-step registration flow.
- *
- * Before: register() → creates user immediately
- * After:
- *   1. initiateRegistration() → stores pending verification, sends code
- *   2. completeRegistration() → validates code, creates user, returns tokens
- *
- * The old register() method is removed. AuthController now exposes:
- *   POST /auth/register           → initiateRegistration (send code)
- *   POST /auth/verify-email       → completeRegistration (confirm code)
- *   POST /auth/resend-verification → resendVerificationCode
+ * CHANGE: Ajout de loginWithGoogle().
+ * Fichier complet — remplace l'ancien auth.service.ts.
  */
 
 import {
@@ -34,8 +25,8 @@ import { EmailVerificationService } from './email-verification.service.js';
 import { TokenSessionService } from './token-session.service.js';
 
 const REGISTER_HASH_ROUNDS = 12;
-const REFRESH_HASH_ROUNDS = 10;
-const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const REFRESH_HASH_ROUNDS  = 10;
+const REFRESH_TTL_MS       = 7 * 24 * 60 * 60 * 1000;
 
 export interface AuthServiceResult {
   user: UserResponseDto;
@@ -43,7 +34,6 @@ export interface AuthServiceResult {
   refreshToken: string;
 }
 
-/** Returned by initiateRegistration — no tokens yet */
 export interface RegistrationInitiated {
   email: string;
   message: string;
@@ -60,7 +50,7 @@ export class AuthService {
     private readonly emailService: EmailService,
   ) {}
 
-  // ─── Token generation ────────────────────────────────────────────────────────
+  // ─── Token helpers ────────────────────────────────────────────────────────
 
   private generateAccessToken(
     userId: string,
@@ -121,13 +111,8 @@ export class AuthService {
     return { user, accessToken, refreshToken };
   }
 
-  // ─── Step 1: Initiate registration ──────────────────────────────────────────
+  // ─── Inscription locale — Step 1 ─────────────────────────────────────────
 
-  /**
-   * Validates that email is not taken, hashes the password,
-   * stores a pending verification record, and sends the code.
-   * Does NOT create a User record.
-   */
   async initiateRegistration(dto: RegisterDto): Promise<RegistrationInitiated> {
     const existing = await this.usersService.findUserByEmail(dto.email);
     if (existing) {
@@ -148,89 +133,105 @@ export class AuthService {
     };
   }
 
-  // ─── Step 2: Complete registration (verify code) ─────────────────────────────
+  // ─── Inscription locale — Step 2 ─────────────────────────────────────────
 
-  /**
-   * Validates the code, creates the user with stored credentials,
-   * and returns a full auth session.
-   */
   async completeRegistration(dto: VerifyEmailDto): Promise<AuthServiceResult> {
     const pending = await this.emailVerificationService.verifyCode(
       dto.email,
       dto.code,
     );
 
-    // Double-check: no race-condition duplicate
     const existing = await this.usersService.findUserByEmail(pending.email);
     if (existing) {
       throw new ConflictException('Un compte avec cet email existe déjà.');
     }
 
-    // Create the user with the pre-hashed password
-    // UsersService.createUser() hashes password — we need a version that accepts a hash.
-    // We call prisma directly via a dedicated internal method:
     const user = await this.usersService.createVerifiedUser({
-      email: pending.email,
-      username: pending.username,
+      email:        pending.email,
+      username:     pending.username,
       passwordHash: pending.passwordHash,
     });
 
-    // Send welcome email (non-blocking)
+    // Email de bienvenue — non bloquant
     this.emailService
-      .sendWelcomeEmail({
-        to: user.email,
-        username: user.username,
-      })
-      .catch((err: unknown) => {
-        // Non-critical — log but don't fail registration
-      });
+      .sendWelcomeEmail({ to: user.email, username: user.username })
+      .catch(() => undefined);
 
     return this.buildResult(user.id, user.email);
   }
 
-  // ─── Resend verification code ────────────────────────────────────────────────
+  // ─── Renvoyer le code ─────────────────────────────────────────────────────
 
   async resendVerificationCode(email: string): Promise<{ message: string }> {
     await this.emailVerificationService.resendVerificationCode(email);
     return { message: 'Nouveau code envoyé.' };
   }
 
-  // ─── Login ───────────────────────────────────────────────────────────────────
+  // ─── Google OAuth ─────────────────────────────────────────────────────────
 
-  async login(dto: LoginDto): Promise<AuthServiceResult> {
-    const user = await this.usersService.findUserByEmailWithPassword(dto.email);
-    if (!user)
-      throw new UnauthorizedException('Email ou mot de passe incorrect.');
+  /**
+   * Appelé par AuthController.googleCallback() après que
+   * GoogleStrategy.validate() a résolu.
+   *
+   * req.user = UserResponseDto (trouvé ou créé par findOrCreateOAuthUser).
+   * On génère juste les tokens — le compte existe déjà.
+   *
+   * Email de bienvenue envoyé uniquement au premier login
+   * (createdAt ≈ maintenant = nouveau compte).
+   */
+  async loginWithGoogle(user: UserResponseDto): Promise<AuthServiceResult> {
+    const isNewUser =
+      Date.now() - new Date(user.createdAt).getTime() < 10_000;
 
-    const isValid = await bcrypt.compare(dto.password, user.password);
-    if (!isValid)
-      throw new UnauthorizedException('Email ou mot de passe incorrect.');
+    if (isNewUser) {
+      this.emailService
+        .sendWelcomeEmail({ to: user.email, username: user.username })
+        .catch(() => undefined);
+    }
 
     return this.buildResult(user.id, user.email);
   }
 
-  // ─── Refresh ─────────────────────────────────────────────────────────────────
+  // ─── Login local ──────────────────────────────────────────────────────────
+
+  async login(dto: LoginDto): Promise<AuthServiceResult> {
+    const user = await this.usersService.findUserByEmailWithPassword(dto.email);
+    if (!user) {
+      throw new UnauthorizedException('Email ou mot de passe incorrect.');
+    }
+
+    const isValid = await bcrypt.compare(dto.password, user.password);
+    if (!isValid) {
+      throw new UnauthorizedException('Email ou mot de passe incorrect.');
+    }
+
+    return this.buildResult(user.id, user.email);
+  }
+
+  // ─── Refresh ──────────────────────────────────────────────────────────────
 
   async refresh(payload: JwtRefreshPayload): Promise<AuthServiceResult> {
     const isMatch = await bcrypt.compare(
       payload.refreshToken,
       payload.sessionTokenHash,
     );
-    if (!isMatch)
+    if (!isMatch) {
       throw new UnauthorizedException('Session invalide. Reconnectez-vous.');
+    }
     await this.tokenSessionService.revokeSessionByJti(payload.sub, payload.jti);
     return this.buildResult(payload.sub, payload.email);
   }
 
-  // ─── Logout ──────────────────────────────────────────────────────────────────
+  // ─── Logout ───────────────────────────────────────────────────────────────
 
   async logout(payload: JwtRefreshPayload): Promise<void> {
     const isMatch = await bcrypt.compare(
       payload.refreshToken,
       payload.sessionTokenHash,
     );
-    if (!isMatch)
+    if (!isMatch) {
       throw new UnauthorizedException('Session invalide. Reconnectez-vous.');
+    }
     await this.tokenSessionService.revokeSessionByJti(payload.sub, payload.jti);
   }
 }

@@ -1,12 +1,11 @@
 /**
  * @file src/features/auth/auth.controller.ts
  *
- * CHANGE: Two-step registration:
- *   POST /auth/register            → initiateRegistration (send verification code)
- *   POST /auth/verify-email        → completeRegistration (verify code, create user, set cookies)
- *   POST /auth/resend-verification → resend code
+ * CHANGE: Ajout des endpoints Google OAuth.
+ *   GET  /auth/google           → redirige vers Google consent screen
+ *   GET  /auth/google/callback  → traite le retour Google, set cookies, redirige
  *
- * All other endpoints unchanged.
+ * Fichier complet — remplace l'ancien auth.controller.ts.
  */
 
 import {
@@ -16,13 +15,15 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
-import type { CookieOptions, Response } from 'express';
+import type { CookieOptions, Request, Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
+import { GoogleAuthGuard } from '../../common/guards/google-auth.guard.js';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
 import { JwtRefreshGuard } from '../../common/guards/jwt-refresh.guard.js';
 import { UserResponseDto } from '../users/dto/user-response.dto.js';
@@ -57,14 +58,20 @@ export class AuthController {
     private readonly configService: ConfigService,
   ) {}
 
-  // ─── Cookie helpers ──────────────────────────────────────────────────────────
+  // ─── Cookie helpers ──────────────────────────────────────────────────────
 
   private get isProduction(): boolean {
     return this.configService.get<string>('nodeEnv') === 'production';
   }
 
   private get baseCookieOptions(): CookieOptions {
-    return { httpOnly: true, secure: this.isProduction, sameSite: 'none' };
+    return {
+      httpOnly: true,
+      secure: this.isProduction,
+      // 'none' requis en prod pour cross-origin (frontend ≠ backend domain)
+      // 'lax' en local (même origin via localhost)
+      sameSite: this.isProduction ? 'none' : 'lax',
+    };
   }
 
   private setAuthCookies(res: Response, result: AuthServiceResult): void {
@@ -85,13 +92,63 @@ export class AuthController {
     res.clearCookie(REFRESH_TOKEN_COOKIE, { path: '/' });
   }
 
-  // ─── Step 1: Initiate registration ──────────────────────────────────────────
+  // ─── Google OAuth ─────────────────────────────────────────────────────────
 
   /**
-   * POST /auth/register
-   * Validates the signup form, stores pending verification, sends code.
-   * Returns 200 + { email, message } — NO cookies yet.
+   * GET /auth/google
+   * Passport intercepte cette route et redirige vers Google.
+   * Le corps de la méthode ne s'exécute jamais.
    */
+  @Get('google')
+  @UseGuards(GoogleAuthGuard)
+  googleLogin(): void {
+    // handled by Passport
+  }
+
+  /**
+   * GET /auth/google/callback
+   *
+   * Google redirige ici après le consentement.
+   * GoogleStrategy.validate() a déjà run → req.user = UserResponseDto
+   *
+   * Succès  → set cookies + redirect FRONTEND_URL/dashboard
+   * Échec   → redirect FRONTEND_URL/sign-in?error=google_auth_failed
+   */
+  @Get('google/callback')
+  @UseGuards(GoogleAuthGuard)
+  async googleCallback(
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
+
+    try {
+      const user = req.user as UserResponseDto | undefined;
+
+      if (!user) {
+        return res.redirect(`${frontendUrl}/sign-in?error=google_auth_failed`);
+      }
+
+      const result = await this.authService.loginWithGoogle(user);
+      this.setAuthCookies(res, result);
+
+      // Cookie de présence de session pour Edge Middleware Next.js
+      res.cookie('vendeo.session', '1', {
+        maxAge: ACCESS_TOKEN_MAX_AGE_MS,
+        sameSite: this.isProduction ? 'none' : 'lax',
+        secure: this.isProduction,
+        httpOnly: false, // lisible par Edge Middleware
+        path: '/',
+      });
+
+      res.redirect(`${frontendUrl}/dashboard`);
+    } catch {
+      res.redirect(`${frontendUrl}/sign-in?error=google_auth_failed`);
+    }
+  }
+
+  // ─── Inscription locale — Step 1 ─────────────────────────────────────────
+
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @Post('register')
@@ -99,12 +156,8 @@ export class AuthController {
     return this.authService.initiateRegistration(dto);
   }
 
-  // ─── Step 2: Verify email & complete registration ────────────────────────────
+  // ─── Inscription locale — Step 2 ─────────────────────────────────────────
 
-  /**
-   * POST /auth/verify-email
-   * Validates the 6-digit code, creates the user, sets auth cookies.
-   */
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @Post('verify-email')
@@ -117,7 +170,7 @@ export class AuthController {
     return { user: result.user };
   }
 
-  // ─── Resend verification code ────────────────────────────────────────────────
+  // ─── Renvoi du code ───────────────────────────────────────────────────────
 
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
@@ -128,7 +181,7 @@ export class AuthController {
     return this.authService.resendVerificationCode(dto.email);
   }
 
-  // ─── Login ───────────────────────────────────────────────────────────────────
+  // ─── Login local ──────────────────────────────────────────────────────────
 
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
@@ -142,7 +195,7 @@ export class AuthController {
     return { user: result.user };
   }
 
-  // ─── Refresh ─────────────────────────────────────────────────────────────────
+  // ─── Refresh ──────────────────────────────────────────────────────────────
 
   @UseGuards(JwtRefreshGuard)
   @HttpCode(HttpStatus.OK)
@@ -156,7 +209,7 @@ export class AuthController {
     return { user: result.user };
   }
 
-  // ─── Logout ──────────────────────────────────────────────────────────────────
+  // ─── Logout ───────────────────────────────────────────────────────────────
 
   @UseGuards(JwtRefreshGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -169,11 +222,13 @@ export class AuthController {
     this.clearAuthCookies(res);
   }
 
-  // ─── Me ──────────────────────────────────────────────────────────────────────
+  // ─── Me ───────────────────────────────────────────────────────────────────
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  async getMe(@CurrentUser() user: AuthenticatedUser): Promise<UserResponseDto> {
+  async getMe(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<UserResponseDto> {
     return this.usersService.findUserById({ id: user.sub });
   }
 }
