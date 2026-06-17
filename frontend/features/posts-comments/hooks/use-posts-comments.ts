@@ -35,9 +35,9 @@
  *    "✨ Suggestion IA" button on privateReplyMessage / customInstructions.
  */
 
+import { apiClient } from "@/lib/api-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { apiClient } from "@/lib/api-client";
 import type { CommentStats } from "../components/stats-sidebar";
 import {
   addManagedPost,
@@ -88,9 +88,15 @@ export function usePostsComments() {
   >(undefined);
 
   useEffect(() => {
-    apiClient("/billing/status")
-      .then((status: { planName: string; maxManagedPosts: number | null }) => {
-        setManagedPostsLimit({ current: 0, max: status.maxManagedPosts, planName: status.planName });
+    apiClient<{ planName: string; maxManagedPosts: number | null }>(
+      "/billing/status",
+    )
+      .then((status) => {
+        setManagedPostsLimit({
+          current: 0,
+          max: status.maxManagedPosts,
+          planName: status.planName,
+        });
       })
       .catch(() => undefined); // non-critical — dialog just won't show the limit banner
   }, []);
@@ -482,12 +488,22 @@ export function usePostsComments() {
           // already replied…) was silently swallowed, leaving the spinner
           // to time out after 30s with no explanation.
           clearAiTyping(commentId);
-          toast.error(result.message ?? "L'IA n'a pas répondu à ce commentaire.");
-          if (result.reason === "spam_filtered" && typeof result.spamScore === "number") {
+          toast.error(
+            result.message ?? "L'IA n'a pas répondu à ce commentaire.",
+          );
+          if (
+            result.reason === "spam_filtered" &&
+            typeof result.spamScore === "number"
+          ) {
             setComments((prev) =>
               prev.map((c) =>
                 c.id === commentId
-                  ? { ...c, aiSkipped: true, aiSkipReason: result.reason, aiSpamScore: result.spamScore }
+                  ? {
+                      ...c,
+                      aiSkipped: true,
+                      aiSkipReason: result.reason,
+                      aiSpamScore: result.spamScore,
+                    }
                   : c,
               ),
             );
@@ -522,7 +538,11 @@ export function usePostsComments() {
       if (!selectedPost) return null;
       setSuggestingField(field);
       try {
-        const result = await generateAiSuggestion(selectedPost.id, field, currentValue);
+        const result = await generateAiSuggestion(
+          selectedPost.id,
+          field,
+          currentValue,
+        );
         toast.success(
           result.creditsUsed > 0
             ? `Suggestion générée (${result.creditsUsed} crédit${result.creditsUsed > 1 ? "s" : ""} utilisé${result.creditsUsed > 1 ? "s" : ""}).`
@@ -685,7 +705,9 @@ export function usePostsComments() {
   // Keep the plan-limit "current" count in sync with the managed posts
   // actually loaded for the active page (point 6).
   useEffect(() => {
-    setManagedPostsLimit((prev) => (prev ? { ...prev, current: posts.length } : prev));
+    setManagedPostsLimit((prev) =>
+      prev ? { ...prev, current: posts.length } : prev,
+    );
   }, [posts.length]);
 
   return {

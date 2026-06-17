@@ -347,7 +347,17 @@ export class FacebookPostsController {
     @Param('postId') postId: string,
     @Body() dto: UpdatePostAiConfigDto,
   ) {
-    return this.fbPosts.updatePostAiConfig(postId, dto);
+    return this.fbPosts.updatePostAiConfig(postId, {
+      ...dto,
+      keywordRules: dto.keywordRules?.map((rule) => ({
+        id: rule.id ?? '',
+        keyword: rule.keyword,
+        matchType: rule.matchType,
+        replyText: rule.replyText ?? null,
+        sendPrivateReply: rule.sendPrivateReply ?? false,
+        privateReplyText: rule.privateReplyText ?? null,
+      })),
+    });
   }
 
   /**
@@ -407,7 +417,12 @@ export class FacebookPostsController {
    */
   @Post('comments/:commentId/ai-reply')
   @HttpCode(HttpStatus.OK)
-  async aiReply(@Param('commentId') commentId: string): Promise<ProcessCommentResult> {
-    return this.commentAi.processNewComment(commentId, { emitNew: true, force: true });
+  async aiReply(
+    @Param('commentId') commentId: string,
+  ): Promise<ProcessCommentResult> {
+    return this.commentAi.processNewComment(commentId, {
+      emitNew: true,
+      force: true,
+    });
   }
 }

@@ -47,8 +47,11 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { PgBoss, type JobWithMetadata } from 'pg-boss';
-import { PG_BOSS_TOKEN } from '../../queue/providers/pg-boss.provider.js';
-import { QUEUE_JOBS, type CommentAiReplyPayload } from '../../queue/queue.constants.js';
+import { PG_BOSS_TOKEN } from '../../../queue/providers/pg-boss.provider.js';
+import {
+  CommentAiReplyPayload,
+  QUEUE_JOBS,
+} from '../../../queue/queue.constants.js';
 import { PostCommentAiService } from '../services/post-comment-ai.service.js';
 
 const TEAM_SIZE = 3;
@@ -62,21 +65,21 @@ const POLLING_INTERVAL_SECONDS = 2;
 
 @Injectable()
 export class CommentAiReplyWorker implements OnModuleInit, OnModuleDestroy {
-  private readonly logger     = new Logger(CommentAiReplyWorker.name);
-  private isShuttingDown      = false;
+  private readonly logger = new Logger(CommentAiReplyWorker.name);
+  private isShuttingDown = false;
 
   constructor(
     @Inject(PG_BOSS_TOKEN)
-    private readonly boss:       PgBoss,
-    private readonly commentAi:  PostCommentAiService,
+    private readonly boss: PgBoss,
+    private readonly commentAi: PostCommentAiService,
   ) {}
 
   async onModuleInit(): Promise<void> {
     await this.boss.work<CommentAiReplyPayload>(
       QUEUE_JOBS.COMMENT_AI_REPLY,
       {
-        includeMetadata:        true,
-        localConcurrency:       TEAM_SIZE,
+        includeMetadata: true,
+        localConcurrency: TEAM_SIZE,
         pollingIntervalSeconds: POLLING_INTERVAL_SECONDS,
       },
       async (jobs) => {
@@ -85,7 +88,7 @@ export class CommentAiReplyWorker implements OnModuleInit, OnModuleDestroy {
     );
     this.logger.log(
       `Worker registered: ${QUEUE_JOBS.COMMENT_AI_REPLY} ` +
-      `(localConcurrency: ${TEAM_SIZE}, pollingIntervalSeconds: ${POLLING_INTERVAL_SECONDS})`,
+        `(localConcurrency: ${TEAM_SIZE}, pollingIntervalSeconds: ${POLLING_INTERVAL_SECONDS})`,
     );
   }
 
@@ -93,7 +96,9 @@ export class CommentAiReplyWorker implements OnModuleInit, OnModuleDestroy {
     this.isShuttingDown = true;
   }
 
-  private async handle(job: JobWithMetadata<CommentAiReplyPayload>): Promise<void> {
+  private async handle(
+    job: JobWithMetadata<CommentAiReplyPayload>,
+  ): Promise<void> {
     if (this.isShuttingDown) return;
 
     const { commentId, force } = job.data;
@@ -101,7 +106,7 @@ export class CommentAiReplyWorker implements OnModuleInit, OnModuleDestroy {
 
     this.logger.debug(
       `Processing comment.ai_reply — comment=${commentId} job=${job.id} ` +
-      `attempt=${attempt} force=${force ?? false}`,
+        `attempt=${attempt} force=${force ?? false}`,
     );
 
     try {
@@ -110,13 +115,13 @@ export class CommentAiReplyWorker implements OnModuleInit, OnModuleDestroy {
       // SSE events for the same comment.
       const result = await this.commentAi.processNewComment(commentId, {
         emitNew: false,
-        force:   force ?? false,
+        force: force ?? false,
       });
 
       if (result.success) {
         this.logger.log(
           `comment.ai_reply completed — comment=${commentId} ` +
-          (result.ruleMatched ? '(rule-based, 0 credits)' : '(AI-generated)'),
+            (result.ruleMatched ? '(rule-based, 0 credits)' : '(AI-generated)'),
         );
       } else {
         // Not an error — the service already logged/persisted the reason
@@ -127,7 +132,7 @@ export class CommentAiReplyWorker implements OnModuleInit, OnModuleDestroy {
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      const stack    = err instanceof Error ? err.stack  : undefined;
+      const stack = err instanceof Error ? err.stack : undefined;
 
       this.logger.error(
         `comment.ai_reply failed — comment=${commentId} attempt=${attempt}: ${message}`,
