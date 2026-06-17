@@ -27,6 +27,7 @@ export function FacebookPage() {
     loading,
     syncingIds,
     syncSummaries,
+    connectedPagesLimit,
     refresh,
     removePage,
     syncPage,
@@ -84,7 +85,20 @@ export function FacebookPage() {
           {/* Stat pills — only shown when pages exist */}
           {pages.length > 0 && (
             <div className="flex items-center gap-2 shrink-0 mt-0.5">
-              <StatPill value={pages.length} label="pages" />
+              <StatPill
+                value={pages.length}
+                label={
+                  connectedPagesLimit?.max != null
+                    ? `/ ${connectedPagesLimit.max} pages`
+                    : "pages"
+                }
+                variant={
+                  connectedPagesLimit?.max != null &&
+                  pages.length >= connectedPagesLimit.max
+                    ? "amber"
+                    : undefined
+                }
+              />
               <StatPill
                 value={activeCount}
                 label="IA active"
@@ -103,6 +117,7 @@ export function FacebookPage() {
             pages={pages}
             syncingIds={syncingIds}
             syncSummaries={syncSummaries}
+            connectedPagesLimit={connectedPagesLimit}
             onAdd={() => setConnectAccountOpen(true)}
             onSync={async (id) => {
               await syncPage(id);
@@ -116,6 +131,7 @@ export function FacebookPage() {
           open={connectAccountOpen}
           onClose={() => setConnectAccountOpen(false)}
           businessProfileId={defaultProfileId}
+          connectedPagesLimit={connectedPagesLimit}
         />
         <SelectPageDialog
           open={selectPageOpen}
@@ -139,14 +155,16 @@ function StatPill({
 }: {
   value: number;
   label: string;
-  variant?: "emerald" | "violet";
+  variant?: "emerald" | "violet" | "amber";
 }) {
   const classes =
     variant === "emerald"
       ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600"
       : variant === "violet"
         ? "bg-violet-500/10 border-violet-500/20 text-violet-600"
-        : "bg-secondary border-border/60 text-foreground";
+        : variant === "amber"
+          ? "bg-amber-500/10 border-amber-500/20 text-amber-600"
+          : "bg-secondary border-border/60 text-foreground";
 
   return (
     <div

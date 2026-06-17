@@ -4,11 +4,19 @@
  * Step 1 of the OAuth connect flow.
  * Redirects the user to the Facebook OAuth consent screen.
  *
+ * CHANGE — plan-based connection limit (point: limite selon le plan actuel):
+ *   `connectedPagesLimit` is now accepted so the dialog can show an upgrade
+ *   banner and disable "Continuer avec Facebook" BEFORE redirecting to
+ *   Facebook OAuth. Without this, a user at their plan's page limit would
+ *   go through the entire OAuth consent flow only to have the final
+ *   connectPage() call rejected with a 400 — confusing and wasteful.
+ *
  * Usage:
  *   <ConnectAccountDialog
  *     open={open}
  *     onClose={handleClose}
  *     businessProfileId={activeProfileId}   // optional — auto-created if omitted
+ *     connectedPagesLimit={connectedPagesLimit}
  *   />
  */
 
@@ -20,10 +28,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { IconBrandFacebook, IconShield } from "@tabler/icons-react";
+import { IconAlertTriangle, IconBrandFacebook, IconShield } from "@tabler/icons-react";
 import { Info } from "lucide-react";
 import { useState } from "react";
 import { getOAuthUrl } from "../services/facebook.service";
+import type { ConnectedPagesLimitInfo } from "../types/facebook.types";
 
 const SECURITY_NOTES = [
   "Vous êtes redirigé sur Facebook — VendeoAI ne voit jamais votre mot de passe",
@@ -46,17 +55,26 @@ interface ConnectAccountDialogProps {
    * When undefined the backend will auto-create a default BusinessProfile.
    */
   businessProfileId?: string;
+  /** Plan-based limit on connected pages (point: limite selon le plan actuel). */
+  connectedPagesLimit?: ConnectedPagesLimitInfo;
 }
 
 export function ConnectAccountDialog({
   open,
   onClose,
   businessProfileId,
+  connectedPagesLimit,
 }: ConnectAccountDialogProps) {
   const [error,        setError]        = useState<string | null>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
 
+  const isLimitReached =
+    !!connectedPagesLimit &&
+    connectedPagesLimit.max !== null &&
+    connectedPagesLimit.current >= connectedPagesLimit.max;
+
   const handleConnect = async () => {
+    if (isLimitReached) return;
     setError(null);
     setIsRedirecting(true);
     try {
@@ -87,6 +105,23 @@ export function ConnectAccountDialog({
         </AlertDialogHeader>
 
         <div className="space-y-3 py-1">
+          {/* Plan limit banner (point: limite selon le plan actuel) */}
+          {isLimitReached && connectedPagesLimit && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 p-3.5">
+              <div className="flex items-center gap-2 mb-1">
+                <IconAlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                <p className="text-xs font-semibold text-amber-700">
+                  Limite du plan {connectedPagesLimit.planName} atteinte (
+                  {connectedPagesLimit.current}/{connectedPagesLimit.max})
+                </p>
+              </div>
+              <p className="text-[11px] text-amber-600/80 leading-relaxed">
+                Déconnectez une page existante, ou passez à un abonnement
+                supérieur pour connecter davantage de pages Facebook.
+              </p>
+            </div>
+          )}
+
           {/* Security note */}
           <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3.5">
             <div className="flex items-center gap-2 mb-2.5">
@@ -141,10 +176,14 @@ export function ConnectAccountDialog({
             <Button
               className="flex-1 h-8 text-xs gap-1.5 bg-[#1877F2] hover:bg-[#1877F2]/90 text-white"
               onClick={handleConnect}
-              disabled={isRedirecting}
+              disabled={isRedirecting || isLimitReached}
             >
               <IconBrandFacebook className="h-3.5 w-3.5" />
-              {isRedirecting ? "Redirection…" : "Continuer avec Facebook"}
+              {isRedirecting
+                ? "Redirection…"
+                : isLimitReached
+                  ? "Limite atteinte"
+                  : "Continuer avec Facebook"}
             </Button>
           </div>
         </div>

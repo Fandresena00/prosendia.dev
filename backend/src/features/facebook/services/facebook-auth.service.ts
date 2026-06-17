@@ -32,6 +32,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../database/prisma.service.js';
+import { BILLING_PLANS, type PlanId } from '../../billing/billing.constants.js';
 import { FacebookGraphClient } from '../clients/facebook-graph.client.js';
 import { ConnectPageDto } from '../dto/auth/connect-page.dto.js';
 import { FacebookConnectionResponseDto } from '../dto/auth/facebook-connection-response.dto.js';
@@ -166,15 +167,6 @@ export class FacebookAuthService {
       );
     }
 
-    // ── Validate the page token ────────────────────────────────────────────
-
-    const isValid = await this.graphClient.isTokenValid(dto.pageAccessToken);
-    if (!isValid) {
-      throw new BadRequestException(
-        'The provided page access token is invalid or expired.',
-      );
-    }
-
     // ── Conflict check ─────────────────────────────────────────────────────
     // Prevent the same Facebook page from being connected to a DIFFERENT profile.
 
@@ -184,6 +176,51 @@ export class FacebookAuthService {
     if (existing && existing.businessProfileId !== profile.id) {
       throw new ConflictException(
         `Page ${dto.pageId} is already connected to another business profile.`,
+      );
+    }
+
+    // ── Plan limit check (point: limite selon le plan actuel) ─────────────
+    //
+    // Only enforced for a GENUINELY NEW connection. Reconnecting a page
+    // that's already linked to THIS profile (existing?.businessProfileId
+    // === profile.id, e.g. a token refresh / re-auth) never counts against
+    // the limit — it's not adding a new page, just updating one.
+    const isNewConnection = !existing;
+    if (isNewConnection) {
+      const user = await this.prisma.user.findUnique({
+        where:  { id: userId },
+        select: { activePlan: true },
+      });
+      const planId     = (user?.activePlan ?? 'FREE') as PlanId;
+      const planConfig = BILLING_PLANS[planId];
+      const maxPages   = planConfig?.maxPages ?? null;
+
+      if (maxPages !== null) {
+        const connectedCount = await this.prisma.facebookConnection.count({
+          where: { businessProfile: { userId } },
+        });
+
+        if (connectedCount >= maxPages) {
+          throw new BadRequestException(
+            `Limite du plan ${planConfig?.name ?? planId} atteinte ` +
+            `(${maxPages} page${maxPages > 1 ? 's' : ''} Facebook connectée${maxPages > 1 ? 's' : ''} ` +
+            `maximum). Déconnectez une page existante ou passez à un ` +
+            `abonnement supérieur pour en connecter davantage.`,
+          );
+        }
+      }
+    }
+
+    // ── Validate the page token ────────────────────────────────────────────
+    //
+    // Moved AFTER the plan-limit check so a user who has already hit their
+    // limit gets an immediate, clear error without an unnecessary Graph API
+    // round-trip to validate a token we're about to reject anyway.
+
+    const isValid = await this.graphClient.isTokenValid(dto.pageAccessToken);
+    if (!isValid) {
+      throw new BadRequestException(
+        'The provided page access token is invalid or expired.',
       );
     }
 

@@ -92,6 +92,13 @@ export function SelectPageDialog({
         setError(
           `"${selectedPage.name}" est déjà connectée à un autre compte. Elle a été retirée de la liste.`,
         );
+      } else if (msg.includes("Limite du plan")) {
+        // NEW (point: limite selon le plan actuel) — backend rejected the
+        // connection because BILLING_PLANS.<plan>.maxPages was reached.
+        // Surface the backend's message directly (it already includes the
+        // plan name and current/max counts) instead of a generic error.
+        setSelectedPage(null);
+        setError(msg);
       } else {
         setError(msg);
       }

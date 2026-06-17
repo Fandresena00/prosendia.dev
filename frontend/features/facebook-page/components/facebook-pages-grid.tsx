@@ -1,9 +1,16 @@
 /**
  * @file features/facebook/components/facebook-pages-grid.tsx
+ *
+ * CHANGE — plan-based connection limit (point: limite selon le plan actuel):
+ *   `connectedPagesLimit` is passed down to disable both the header
+ *   "Ajouter une page" button and the AddPageTile when the plan's maxPages
+ *   has been reached, with a clear upgrade message instead of letting the
+ *   user open the OAuth dialog only to find out at the last step.
  */
 
 import { Button } from "@/components/ui/button";
 import {
+  IconAlertTriangle,
   IconBrandFacebook,
   IconMessageCircle,
   IconPlus,
@@ -11,27 +18,34 @@ import {
   IconShieldCheck,
   IconTrendingUp,
 } from "@tabler/icons-react";
-import type { FacebookPage, SyncSummary } from "../types/facebook.types";
+import type { ConnectedPagesLimitInfo, FacebookPage, SyncSummary } from "../types/facebook.types";
 import { FacebookPageCard } from "./facebook-page-card";
 
 interface FacebookPagesGridProps {
   pages:         FacebookPage[];
   syncingIds:    Set<string>;
   syncSummaries: Map<string, SyncSummary>;
+  /** Plan-based limit on connected pages (point: limite selon le plan actuel). */
+  connectedPagesLimit?: ConnectedPagesLimitInfo;
   onAdd:         () => void;
   onSync:        (businessProfileId: string) => Promise<void>;
   onRemove:      (businessProfileId: string) => Promise<void>;
 }
 
 export function FacebookPagesGrid({
-  pages, syncingIds, syncSummaries, onAdd, onSync, onRemove,
+  pages, syncingIds, syncSummaries, connectedPagesLimit, onAdd, onSync, onRemove,
 }: FacebookPagesGridProps) {
+  const isLimitReached =
+    !!connectedPagesLimit &&
+    connectedPagesLimit.max !== null &&
+    connectedPagesLimit.current >= connectedPagesLimit.max;
+
   if (pages.length === 0) return <FacebookEmptyState onAdd={onAdd} />;
 
   return (
     <div>
       {/* Section header */}
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
             Pages connectées
@@ -46,11 +60,34 @@ export function FacebookPagesGrid({
           size="sm"
           className="h-8 gap-1.5 text-xs"
           onClick={onAdd}
+          disabled={isLimitReached}
+          title={
+            isLimitReached
+              ? `Limite du plan ${connectedPagesLimit?.planName} atteinte`
+              : undefined
+          }
         >
           <IconPlus className="h-3.5 w-3.5" />
           Ajouter une page
         </Button>
       </div>
+
+      {/* Plan limit banner (point: limite selon le plan actuel) */}
+      {isLimitReached && connectedPagesLimit && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/8 px-3.5 py-3 mb-4">
+          <IconAlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-semibold text-amber-700">
+              Limite du plan {connectedPagesLimit.planName} atteinte (
+              {connectedPagesLimit.current}/{connectedPagesLimit.max})
+            </p>
+            <p className="text-[11px] text-amber-600/80 mt-0.5 leading-relaxed">
+              Déconnectez une page existante, ou passez à un abonnement
+              supérieur pour en connecter davantage.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Cards grid */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -65,7 +102,7 @@ export function FacebookPagesGrid({
           />
         ))}
 
-        <AddPageTile onClick={onAdd} />
+        <AddPageTile onClick={onAdd} disabled={isLimitReached} />
       </div>
     </div>
   );
@@ -73,27 +110,37 @@ export function FacebookPagesGrid({
 
 // ─── Add page tile ────────────────────────────────────────────────────────────
 
-function AddPageTile({ onClick }: { onClick: () => void }) {
+function AddPageTile({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
   return (
     <button
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
       className={`
         flex flex-col items-center justify-center gap-3 rounded-xl
         border border-dashed border-border/50
         p-8 min-h-[240px]
-        hover:border-emerald-500/40 hover:bg-emerald-500/3
         transition-all duration-200 group
+        ${disabled
+          ? "opacity-50 cursor-not-allowed"
+          : "hover:border-emerald-500/40 hover:bg-emerald-500/3"
+        }
       `}
     >
-      <div className="h-9 w-9 rounded-lg bg-secondary flex items-center justify-center group-hover:bg-emerald-500/10 transition-colors">
-        <IconPlus className="h-4.5 w-4.5 text-muted-foreground group-hover:text-emerald-600 transition-colors" />
+      <div className={`h-9 w-9 rounded-lg bg-secondary flex items-center justify-center transition-colors ${
+        disabled ? "" : "group-hover:bg-emerald-500/10"
+      }`}>
+        <IconPlus className={`h-4.5 w-4.5 text-muted-foreground transition-colors ${
+          disabled ? "" : "group-hover:text-emerald-600"
+        }`} />
       </div>
       <div className="text-center">
-        <p className="text-sm font-semibold group-hover:text-emerald-600 transition-colors">
-          Ajouter une page
+        <p className={`text-sm font-semibold transition-colors ${
+          disabled ? "" : "group-hover:text-emerald-600"
+        }`}>
+          {disabled ? "Limite atteinte" : "Ajouter une page"}
         </p>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Via Facebook OAuth
+          {disabled ? "Passez à un abonnement supérieur" : "Via Facebook OAuth"}
         </p>
       </div>
     </button>

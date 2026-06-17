@@ -143,3 +143,14 @@ export type FacebookConnection = z.infer<typeof connectionResponseSchema>;
 export type OAuthCallbackPage  = z.infer<typeof oauthCallbackPageSchema>;
 export type SyncResult         = z.infer<typeof syncResultSchema>;
 export type FacebookPageInfo   = z.infer<typeof facebookPageInfoSchema>;
+
+/**
+ * Plan-based limit info for connected Facebook pages, surfaced from
+ * GET /billing/status (CreditStatusDto.maxPages). Mirrors the
+ * ManagedPostsLimitInfo pattern used for the posts/comments feature.
+ */
+export interface ConnectedPagesLimitInfo {
+  current:  number;
+  max:      number | null; // null = unlimited (CUSTOM plan)
+  planName: string;
+}
