@@ -11,14 +11,38 @@
  *   - Auto-cleared after 30s timeout to avoid stuck indicators.
  *
  * commentStats: aggregated from the current comment list for StatsSidebar.
+ *
+ * CHANGES IN THIS REVISION
+ * ─────────────────────────────────────────────────────────────────────────
+ * 1. FIX — handleAiReply() now reads the result of triggerAiReply() (the
+ *    backend used to be fire-and-forget, 204, with NO feedback — a click on
+ *    "IA" could silently do nothing). Now shows a toast explaining exactly
+ *    why no reply was sent (no credits, spam-filtered, already replied…)
+ *    instead of leaving the "IA en train de répondre…" spinner stuck.
+ * 2. NEW — onCommentAiSkipped SSE handler: when the backend evaluates a
+ *    comment and deliberately skips it (spam-filtered), the comment is
+ *    flagged in state (aiSkipped/aiSkipReason/aiSpamScore) so CommentItem
+ *    can show "IA: pas de réponse (ressemble à du spam)" instead of the
+ *    page looking broken.
+ * 3. NEW — hasNoConnectedPages: derived from `pages.length === 0` once the
+ *    initial load completes, so the page component can render a CTA
+ *    ("Connectez une page Facebook") instead of an empty, confusing UI.
+ * 4. NEW — managedPostsLimit: derived from posts.length vs the active
+ *    plan's maxManagedPosts (read from FacebookPage — see types). Exposed
+ *    so AddPostDialog can disable "Ajouter" and explain the plan limit
+ *    instead of letting the backend 400 silently.
+ * 5. NEW — generateSuggestion(): calls the new ai-suggest endpoint for the
+ *    "✨ Suggestion IA" button on privateReplyMessage / customInstructions.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { apiClient } from "@/lib/api-client";
 import type { CommentStats } from "../components/stats-sidebar";
 import {
   addManagedPost,
   deleteManagedPost,
+  generateAiSuggestion,
   getComments,
   getPageFeed,
   getPagesList,
@@ -53,6 +77,23 @@ export function usePostsComments() {
   // ── Pages ──────────────────────────────────────────────────────────────────
   const [pages, setPages] = useState<FacebookPage[]>([]);
   const [activeKey, setActiveKey] = useState<string>("");
+  const [pagesLoaded, setPagesLoaded] = useState(false);
+
+  // NEW (point 6 — plan-based limits): fetched once from /billing/status,
+  // which already exposes maxManagedPosts per CreditStatusDto. Used by
+  // AddPostDialog to disable "Ajouter" and explain the plan limit instead
+  // of letting the backend reject the request with an unexplained 400.
+  const [managedPostsLimit, setManagedPostsLimit] = useState<
+    { current: number; max: number | null; planName: string } | undefined
+  >(undefined);
+
+  useEffect(() => {
+    apiClient("/billing/status")
+      .then((status: { planName: string; maxManagedPosts: number | null }) => {
+        setManagedPostsLimit({ current: 0, max: status.maxManagedPosts, planName: status.planName });
+      })
+      .catch(() => undefined); // non-critical — dialog just won't show the limit banner
+  }, []);
 
   // ── Posts ──────────────────────────────────────────────────────────────────
   const [posts, setPosts] = useState<ApiPost[]>([]);
@@ -237,6 +278,27 @@ export function usePostsComments() {
                 replyContent: reply.content,
                 repliedAt: new Date().toISOString(),
                 repliedByAi: reply.repliedByAi,
+                aiSkipped: false,
+                aiSkipReason: null,
+              }
+            : c,
+        ),
+      );
+    },
+
+    // NEW: backend deliberately chose NOT to reply (e.g. spam-filtered).
+    // Without this, users see a comment sit unanswered with no explanation
+    // and conclude "l'IA ne marche pas".
+    onCommentAiSkipped: (_postId, commentId, info) => {
+      clearAiTyping(commentId);
+      setComments((prev) =>
+        prev.map((c) =>
+          c.id === commentId
+            ? {
+                ...c,
+                aiSkipped: true,
+                aiSkipReason: info.reason,
+                aiSpamScore: info.spamScore ?? c.aiSpamScore ?? null,
               }
             : c,
         ),
@@ -273,7 +335,8 @@ export function usePostsComments() {
         setPages(list);
         if (list.length > 0) setActiveKey(list[0].key);
       })
-      .catch(() => toast.error("Impossible de charger les pages Facebook."));
+      .catch(() => toast.error("Impossible de charger les pages Facebook."))
+      .finally(() => setPagesLoaded(true));
   }, []);
 
   // ─── Load posts when page changes ─────────────────────────────────────────
@@ -401,14 +464,79 @@ export function usePostsComments() {
     async (commentId: string) => {
       markAiTyping(commentId);
       try {
-        await triggerAiReply(commentId);
-        // The SSE onCommentReplied will update the UI and clear the typing indicator
+        const result = await triggerAiReply(commentId);
+
+        if (result.success) {
+          // SSE onCommentReplied normally arrives first and already updates
+          // the UI; this toast confirms it explicitly (rule-based replies
+          // are instant and don't need an SSE round-trip to feel responsive).
+          clearAiTyping(commentId);
+          toast.success(
+            result.ruleMatched
+              ? "Réponse envoyée via une règle automatique (0 crédit)."
+              : "Réponse IA envoyée.",
+          );
+        } else {
+          // FIX: previously this branch didn't exist — a non-2xx-but-200
+          // "skipped" result (autoReply off, spam-filtered, no credits,
+          // already replied…) was silently swallowed, leaving the spinner
+          // to time out after 30s with no explanation.
+          clearAiTyping(commentId);
+          toast.error(result.message ?? "L'IA n'a pas répondu à ce commentaire.");
+          if (result.reason === "spam_filtered" && typeof result.spamScore === "number") {
+            setComments((prev) =>
+              prev.map((c) =>
+                c.id === commentId
+                  ? { ...c, aiSkipped: true, aiSkipReason: result.reason, aiSpamScore: result.spamScore }
+                  : c,
+              ),
+            );
+          }
+        }
       } catch {
         clearAiTyping(commentId);
         toast.error("Impossible de déclencher la réponse IA.");
       }
     },
     [markAiTyping, clearAiTyping],
+  );
+
+  // ─── AI suggestion (config field helper) ───────────────────────────────────
+
+  const [suggestingField, setSuggestingField] = useState<
+    "privateReplyMessage" | "customInstructions" | null
+  >(null);
+
+  /**
+   * Calls the AI suggestion endpoint for a single config field, taking its
+   * current content into account. Consumes credits — same as any other AI
+   * call. Returns the suggestion text so the caller (PostConfigPanel) can
+   * insert it into the form; does NOT save automatically, so the user can
+   * still review/edit before hitting "Enregistrer".
+   */
+  const generateSuggestion = useCallback(
+    async (
+      field: "privateReplyMessage" | "customInstructions",
+      currentValue: string,
+    ): Promise<string | null> => {
+      if (!selectedPost) return null;
+      setSuggestingField(field);
+      try {
+        const result = await generateAiSuggestion(selectedPost.id, field, currentValue);
+        toast.success(
+          result.creditsUsed > 0
+            ? `Suggestion générée (${result.creditsUsed} crédit${result.creditsUsed > 1 ? "s" : ""} utilisé${result.creditsUsed > 1 ? "s" : ""}).`
+            : "Suggestion générée.",
+        );
+        return result.suggestion;
+      } catch {
+        toast.error("Impossible de générer une suggestion IA.");
+        return null;
+      } finally {
+        setSuggestingField(null);
+      }
+    },
+    [selectedPost],
   );
 
   // ─── Post config save ──────────────────────────────────────────────────────
@@ -548,12 +676,27 @@ export function usePostsComments() {
   const activePage = pages.find((p) => p.key === activeKey) ?? null;
   const autoReplyCount = posts.filter((p) => p.postAiConfig?.autoReply).length;
 
+  // NEW (point 5 / CTA): true once the initial pages load has completed AND
+  // confirmed there are zero connected Facebook pages. The page component
+  // uses this to render a "Connectez votre page Facebook" CTA instead of an
+  // empty, confusing posts/comments UI.
+  const hasNoConnectedPages = pagesLoaded && pages.length === 0;
+
+  // Keep the plan-limit "current" count in sync with the managed posts
+  // actually loaded for the active page (point 6).
+  useEffect(() => {
+    setManagedPostsLimit((prev) => (prev ? { ...prev, current: posts.length } : prev));
+  }, [posts.length]);
+
   return {
     // Pages
     pages,
     activeKey,
     setActiveKey,
     activePage,
+    pagesLoaded,
+    hasNoConnectedPages,
+    managedPostsLimit,
     // Posts
     posts,
     selectedPost,
@@ -606,6 +749,9 @@ export function usePostsComments() {
     saveConfig,
     autoReplyCount,
     autoReplyLimitReached: autoReplyCount >= 10,
+    // AI suggestion
+    suggestingField,
+    generateSuggestion,
     // Stats
     commentStats,
   };

@@ -5,6 +5,8 @@
 
 import { apiClient } from "@/lib/api-client";
 import type {
+  AiReplyResult,
+  AiSuggestionResult,
   ApiComment,
   ApiPost,
   ApiPostAiConfig,
@@ -113,7 +115,7 @@ export async function sendPrivateReply(
   });
 }
 
-export async function triggerAiReply(commentId: string): Promise<void> {
+export async function triggerAiReply(commentId: string): Promise<AiReplyResult> {
   return apiClient(`${BASE}/comments/${commentId}/ai-reply`, { method: "POST" });
 }
 
@@ -130,5 +132,24 @@ export async function updatePostAiConfig(
   return apiClient(`${BASE}/posts/${postId}/ai-config`, {
     method: "PUT",
     body:   JSON.stringify(data),
+  });
+}
+
+// ─── AI suggestion (config field helper) ──────────────────────────────────────
+
+/**
+ * Asks the AI to draft/improve a single config field (private DM message or
+ * custom instructions), taking the field's CURRENT content into account.
+ * Consumes credits like any other AI call — "toute utilisation IA consomme
+ * du crédit, même les suggestions".
+ */
+export async function generateAiSuggestion(
+  postId:       string,
+  field:        "privateReplyMessage" | "customInstructions",
+  currentValue: string,
+): Promise<AiSuggestionResult> {
+  return apiClient(`${BASE}/posts/${postId}/ai-suggest`, {
+    method: "POST",
+    body:   JSON.stringify({ field, currentValue }),
   });
 }

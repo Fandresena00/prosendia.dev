@@ -8,15 +8,30 @@
  *   - singletonSeconds → does not exist; use singletonKey only (pg-boss dedupes per key)
  *   - singletonKey must be a plain string (not a function)
  *   - teamConcurrency → removed (use teamSize only in pg-boss v10)
+ *
+ * CHANGE — COMMENT_AI_REPLY job added
+ * ────────────────────────────────────
+ * Previously, comments were ONLY processed by the 5-minute
+ * PostsSyncSchedulerService cron. The real-time webhook path
+ * (WebhookService.handleFeedChange) never triggered an AI reply.
+ *
+ * This new job lets BOTH the webhook (real-time) and the lightweight
+ * 10-minute recheck cron enqueue AI replies for comments, processed
+ * crash-safely by CommentAiReplyWorker (features/facebook-posts/workers).
+ *
+ * singletonKey = "comment.ai_reply:<commentId>" — if the webhook AND the
+ * 10-minute recheck both try to enqueue a reply for the same comment before
+ * either has run, pg-boss silently drops the duplicate.
  */
 
 // ─── Job names ────────────────────────────────────────────────────────────────
 
 export const QUEUE_JOBS = {
-  AI_REPLY:      'ai.reply',
-  AI_SUMMARIZE:  'ai.summarize',
-  FACEBOOK_SYNC: 'facebook.sync',
-  TOKEN_VALIDATE:'token.validate',
+  AI_REPLY:        'ai.reply',
+  AI_SUMMARIZE:    'ai.summarize',
+  COMMENT_AI_REPLY:'comment.ai_reply',
+  FACEBOOK_SYNC:   'facebook.sync',
+  TOKEN_VALIDATE:  'token.validate',
 } as const;
 
 export type QueueJobName = (typeof QUEUE_JOBS)[keyof typeof QUEUE_JOBS];
@@ -35,6 +50,20 @@ export interface AiReplyPayload {
 export interface AiSummarizePayload {
   conversationId:    string;
   businessProfileId: string;
+}
+
+/**
+ * Payload for the comment AI reply job.
+ *
+ * `force`:
+ *   - false/undefined (webhook real-time, 10-min recheck) → the normal
+ *     spam-score filter (CommentPromptBuilderService.scoreComment) applies.
+ *   - true (manual "IA" button click) → bypass the spam-score filter,
+ *     since the user explicitly asked for a reply on THIS comment.
+ */
+export interface CommentAiReplyPayload {
+  commentId: string;
+  force?:    boolean;
 }
 
 export interface FacebookSyncPayload {
@@ -71,6 +100,14 @@ export const JOB_OPTIONS = {
     retryBackoff:    true,
     expireInSeconds: 600,
     priority:        0,   // low priority — background
+  },
+
+  COMMENT_AI_REPLY: {
+    retryLimit:      3,
+    retryDelay:      10,
+    retryBackoff:    true,
+    expireInSeconds: 300,
+    priority:        1,
   },
 
   FACEBOOK_SYNC: {

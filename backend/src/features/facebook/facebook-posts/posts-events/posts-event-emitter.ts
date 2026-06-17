@@ -19,6 +19,16 @@
  *
  *   // In SSE controller (via subscribe):
  *   return this.postsEmitter.subscribe(userId);
+ *
+ * CHANGE — commentAiSkipped()
+ * ─────────────────────────────
+ * New event emitted when PostCommentAiService evaluates a comment and
+ * deliberately does NOT reply (spam-filtered, autoReply off, no credits…).
+ * Without this, the frontend had no way to distinguish "AI hasn't gotten to
+ * this comment yet" from "AI looked at this and chose not to reply" —
+ * users thought the feature was simply broken. The frontend now shows a
+ * small "IA: pas de réponse (ressemble à du spam)" badge with a manual
+ * "Forcer la réponse IA" action.
  */
 
 import { Injectable } from '@nestjs/common';
@@ -31,6 +41,7 @@ import type { MessageEvent } from '@nestjs/common';
 export type PostsEventType =
   | 'comment:new'
   | 'comment:replied'
+  | 'comment:ai_skipped'
   | 'post:updated'
   | 'sync:completed'
   | 'heartbeat';
@@ -77,6 +88,25 @@ export class PostsEventEmitter extends EventEmitter {
       type:   'comment:replied',
       postId,
       data:   { commentId, reply },
+    } satisfies PostsEvent);
+  }
+
+  /**
+   * Emit when PostCommentAiService evaluated a comment and chose NOT to
+   * reply (spam-filtered, autoReply disabled, no credits, etc.).
+   * `reason` is one of ProcessCommentSkipReason; `spamScore` is included
+   * when the skip was due to the spam filter.
+   */
+  commentAiSkipped(
+    userId:    string,
+    postId:    string,
+    commentId: string,
+    info:      { reason: string; spamScore?: number; message?: string },
+  ): void {
+    this.emit(this.key(userId), {
+      type:   'comment:ai_skipped',
+      postId,
+      data:   { commentId, ...info },
     } satisfies PostsEvent);
   }
 

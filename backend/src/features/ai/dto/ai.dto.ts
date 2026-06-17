@@ -86,11 +86,22 @@ export class AiConfigResponseDto {
 // ─── AiModelConfig ────────────────────────────────────────────────────────────
 
 export class UpdateAiModelConfigDto {
-  /** OpenRouter model ID for customer-facing replies */
+  /** OpenRouter model ID for customer-facing replies (Messenger inbox) */
   @IsOptional() @IsString() replyModelId?:     string;
   @IsOptional() @IsString() replyModelName?:   string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(50) @Max(2000) replyMaxTokens?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) @Max(2)  replyTemperature?: number;
+
+  /**
+   * OpenRouter model override for Facebook post comment replies.
+   * Distinct from replyModelId (Messenger inbox) — see
+   * features/ai/config/ai-models.config.ts COMMENT_AI_MODEL.
+   * Null/unset = use the COMMENT_AI_MODEL default.
+   */
+  @IsOptional() @IsString() commentModelId?:    string;
+  @IsOptional() @IsString() commentModelName?:  string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(50) @Max(1000) commentMaxTokens?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) @Max(2)  commentTemperature?: number;
 
   /** OpenRouter model ID for conversation summarisation */
   @IsOptional() @IsString() summaryModelId?:   string;
@@ -105,6 +116,10 @@ export class AiModelConfigResponseDto {
   replyModelName!:   string;
   replyMaxTokens!:   number;
   replyTemperature!: number;
+  commentModelId!:   string | null;
+  commentModelName!: string | null;
+  commentMaxTokens!: number | null;
+  commentTemperature!: number | null;
   summaryModelId!:   string;
   summaryModelName!: string;
   summaryMaxTokens!: number;

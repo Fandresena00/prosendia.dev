@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  IconAlertTriangle,
   IconBrandFacebook,
   IconCheck,
   IconMessageForward,
@@ -148,6 +149,23 @@ export function CommentItem({
               </span>
             )}
 
+            {/* NEW: AI deliberately skipped this comment (e.g. looks like spam).
+                Without this, users can't tell "not processed yet" from
+                "AI looked and chose not to reply" — the feature looked broken. */}
+            {!aiTyping && !comment.isReplied && comment.aiSkipped && (
+              <span
+                className="flex items-center gap-1 text-[10px] text-amber-600 font-medium"
+                title={
+                  typeof comment.aiSpamScore === "number"
+                    ? `Score de pertinence: ${comment.aiSpamScore}/100`
+                    : undefined
+                }
+              >
+                <IconAlertTriangle className="h-3 w-3" />
+                IA : pas de réponse (ressemble à du spam)
+              </span>
+            )}
+
             {!aiTyping && (
               <button
                 onClick={onStartReply}
@@ -165,11 +183,13 @@ export function CommentItem({
                     className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-[10px] text-muted-foreground hover:text-violet-600"
                   >
                     <IconRobot className="h-3 w-3" />
-                    IA
+                    {comment.aiSkipped ? "Forcer l'IA" : "IA"}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent className="text-xs">
-                  Déclencher une réponse IA
+                  {comment.aiSkipped
+                    ? "Forcer une réponse IA malgré le filtre anti-spam"
+                    : "Déclencher une réponse IA"}
                 </TooltipContent>
               </Tooltip>
             )}

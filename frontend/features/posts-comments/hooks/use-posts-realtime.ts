@@ -39,12 +39,30 @@ interface ReplyData {
   repliedByAi: boolean;
 }
 
+/** Payload for the new `comment:ai_skipped` event (see PostsEventEmitter). */
+interface AiSkippedInfo {
+  reason: string;
+  spamScore?: number;
+  message?: string;
+}
+
 export interface PostsRealtimeHandlers {
   onCommentAdded?: (comment: ApiComment) => void;
   onCommentReplied?: (
     postId: string,
     commentId: string,
     reply: ReplyData,
+  ) => void;
+  /**
+   * Fired when the backend evaluated a comment and deliberately chose NOT
+   * to reply (e.g. it scored below the spam threshold). Without this,
+   * users have no way to distinguish "AI hasn't processed this yet" from
+   * "AI looked and chose not to reply" — the feature looked broken.
+   */
+  onCommentAiSkipped?: (
+    postId: string,
+    commentId: string,
+    info: AiSkippedInfo,
   ) => void;
   onPostUpdated?: (postId: string, updates: Record<string, unknown>) => void;
   onSyncCompleted?: () => void;
@@ -112,6 +130,18 @@ export function usePostsRealtime(
                 payload.data.commentId as string,
                 payload.data.reply as ReplyData,
               );
+            }
+            break;
+
+          case "comment:ai_skipped":
+            if (payload.postId) {
+              const { commentId, ...info } = payload.data as {
+                commentId: string;
+                reason: string;
+                spamScore?: number;
+                message?: string;
+              };
+              handlersRef.current.onCommentAiSkipped?.(payload.postId, commentId, info);
             }
             break;
 

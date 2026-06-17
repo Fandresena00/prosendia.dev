@@ -19,13 +19,14 @@ import { CommentPromptBuilderService } from './services/comment-prompt-builder.s
 import { FacebookPostsService } from './services/facebook-posts.service.js';
 import { PostCommentAiService } from './services/post-comment-ai.service.js';
 import { PostsSyncSchedulerService } from './services/posts-sync-scheduler.service.js';
+import { CommentAiReplyWorker } from './workers/comment-ai-reply.worker.js';
 
 @Module({
   imports: [
     PrismaModule,
     QueueModule,
     PostsEventsModule,
-    BillingModule,                     // ← NEW: pour CreditService dans PostCommentAiService
+    BillingModule,                     // ← pour CreditService dans PostCommentAiService
     forwardRef(() => FacebookModule),
     forwardRef(() => AiModule),
   ],
@@ -35,6 +36,7 @@ import { PostsSyncSchedulerService } from './services/posts-sync-scheduler.servi
     FacebookPostsService,
     PostCommentAiService,
     PostsSyncSchedulerService,
+    CommentAiReplyWorker,              // ← NEW: real-time + 10-min recheck consumer
     OpenRouterClient,
   ],
   exports: [

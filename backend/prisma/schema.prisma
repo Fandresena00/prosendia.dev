@@ -103,6 +103,7 @@ enum CreditTransactionType {
   SUBSCRIPTION_GRANT
   AI_REPLY_CONSUME
   COMMENT_AI_CONSUME
+  AI_SUGGESTION_CONSUME
   ADMIN_ADJUST
 }
 
@@ -326,7 +327,7 @@ model AiModelConfig {
   businessProfileId String          @unique
   businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
 
-  // ── Reply AI (customer-facing responses)
+  // ── Reply AI (customer-facing responses — Messenger inbox)
   /// OpenRouter model ID, e.g. "anthropic/claude-3.5-haiku"
   replyModelId     String  @default("anthropic/claude-3.5-haiku")
   /// Human-readable name shown in UI
@@ -335,6 +336,18 @@ model AiModelConfig {
   replyMaxTokens   Int     @default(400)
   /// Temperature for reply generation (0 = deterministic, 1 = creative)
   replyTemperature Float   @default(0.7)
+
+  // ── Comment AI (public/private Facebook post comment replies)
+  // Distinct from Reply AI (Messenger) so cost/latency/quality can be tuned
+  // independently — see features/ai/config/ai-models.config.ts COMMENT_AI_MODEL.
+  /// OpenRouter model ID for comment replies. Null = use COMMENT_AI_MODEL default.
+  commentModelId      String?
+  /// Human-readable name shown in UI. Null = use COMMENT_AI_MODEL default.
+  commentModelName    String?
+  /// Max tokens for a comment/DM reply. Null = use COMMENT_AI_MODEL default (150).
+  commentMaxTokens    Int?
+  /// Temperature for comment replies. Null = use COMMENT_AI_MODEL default (0.6).
+  commentTemperature  Float?
 
   // ── Data AI (conversation summarisation — runs in background)
   /// OpenRouter model ID, e.g. "meta-llama/llama-3.1-8b-instruct"
@@ -601,6 +614,16 @@ model PostComment {
   repliedAt    DateTime?
   repliedByAi  Boolean?
 
+  // ── AI evaluation outcome ────────────────────────────────────────────────
+  /// Heuristic spam/relevance score (0-100) from the last AI evaluation.
+  aiSpamScore  Int?
+  /// True if PostCommentAiService evaluated this comment and chose NOT to
+  /// reply (e.g. spam-filtered). Cleared back to false once a reply is sent
+  /// (AI-generated, rule-based, or manual).
+  aiSkipped    Boolean   @default(false)
+  /// Machine-readable reason when aiSkipped=true (e.g. "spam_filtered").
+  aiSkipReason String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -626,6 +649,20 @@ model PostAiConfig {
   privateReplyEnabled Boolean @default(false)
   /// Optional fixed message for the private reply. If null, AI generates it.
   privateReplyMessage String?
+
+  // ── Flexible, instruction-driven reply rules ────────────────────────────────
+  /// "Répondre à tous les commentaires": bypasses the spam-score filter for
+  /// EVERY comment on this post. AI replies still consume credits per call —
+  /// use with care on high-traffic posts. See CommentPromptBuilderService.
+  replyToAllComments Boolean @default(false)
+  /// Deterministic, non-AI keyword reply rules (KeywordRule[] as JSON),
+  /// evaluated BEFORE the spam filter:
+  ///   replyText set  → fixed reply posted directly, 0 AI calls/credits.
+  ///   replyText null → bypasses the spam filter, AI replies as usual
+  ///                    (credits consumed).
+  /// Shape: { id, keyword, matchType: 'contains'|'exact', replyText: string|null,
+  ///          sendPrivateReply: boolean, privateReplyText: string|null }[]
+  keywordRules Json @default("[]")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

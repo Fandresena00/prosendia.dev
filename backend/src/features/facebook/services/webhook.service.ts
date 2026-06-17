@@ -35,6 +35,7 @@ import {
 import { MediaDownloadService } from '../../inbox/services/media-download.service.js';
 import { InboxEventEmitter } from '../../inbox/gateways/inbox-sse.gateway.js';
 import { AiQueueProducer } from '../../queue/producers/ai-queue.producer.js';
+import { PostsEventEmitter } from '../facebook-posts/posts-events/posts-event-emitter.js';
 import { FacebookGraphClient } from '../clients/facebook-graph.client.js';
 import { FacebookAccountService } from './facebook-account.service.js';
 import { TokenService } from './token.service.js';
@@ -99,6 +100,7 @@ export class WebhookService {
     private readonly facebookGraph: FacebookGraphClient,
     private readonly aiJobQueue: AiQueueProducer,
     private readonly mediaDownload: MediaDownloadService,
+    private readonly postsEvents: PostsEventEmitter,
   ) {}
 
   // ─── Entry point ──────────────────────────────────────────────────────────
@@ -508,6 +510,10 @@ export class WebhookService {
 
     const parentPost = await this.prisma.facebookPost.findUnique({
       where: { externalId: feedValue.post_id },
+      include: {
+        businessProfile: { select: { userId: true } },
+        postAiConfig:     { select: { autoReply: true } },
+      },
     });
     if (!parentPost) {
       await this.markWebhookEventFailed(
@@ -581,6 +587,57 @@ export class WebhookService {
       WebhookEventType.FEED_COMMENT,
       savedComment.id,
     );
+
+    // ─────────────────────────────────────────────────────────────────────
+    // FIX (root cause #1) — REAL-TIME AI TRIGGER
+    //
+    // Previously, handleFeedChange() only upserted the PostComment row and
+    // stopped here. NOTHING notified the frontend (no `comment:new` SSE
+    // event) and NOTHING triggered an AI reply — the comment sat in the DB
+    // until the 5-minute PostsSyncSchedulerService cron eventually found it
+    // (and even then, only if it passed the spam filter).
+    //
+    // Now: for a genuinely NEW comment (not an edit of an existing one) on
+    // a post with autoReply enabled, we:
+    //   1. Emit `comment:new` immediately so the frontend shows it in
+    //      real-time (previously only the 5-min sync's SSE emit covered this).
+    //   2. Enqueue a COMMENT_AI_REPLY job. pg-boss polls every few seconds
+    //      (see CommentAiReplyWorker — pollingIntervalSeconds is set low for
+    //      this queue specifically), so the AI reply now arrives within
+    //      seconds instead of up to 5 minutes (or longer, if the cron
+    //      iteration was skipped/slow) — this is the "3 hours for one
+    //      comment" issue reported in production.
+    //
+    // `force: false` — the normal spam-score filter (and the new keyword
+    // rules / replyToAllComments switch) still apply; this is the
+    // REAL-TIME path, not a manual override.
+    // ─────────────────────────────────────────────────────────────────────
+    const isNewComment = !existingComment;
+    if (isNewComment && parentPost.postAiConfig?.autoReply === true) {
+      this.postsEvents.commentAdded(parentPost.businessProfile.userId, parentPost.id, {
+        id:              savedComment.id,
+        postId:          savedComment.postId,
+        externalId:      savedComment.externalId,
+        authorId:        savedComment.authorId,
+        authorName:      savedComment.authorName,
+        authorAvatarUrl: savedComment.authorAvatarUrl,
+        message:         savedComment.message,
+        commentedAt:     savedComment.commentedAt.toISOString(),
+        isReplied:       savedComment.isReplied,
+        replyContent:    savedComment.replyContent,
+        repliedAt:       savedComment.repliedAt?.toISOString() ?? null,
+        repliedByAi:     savedComment.repliedByAi,
+      });
+
+      await this.aiJobQueue.enqueueCommentAiReply({
+        commentId: savedComment.id,
+        force:     false,
+      });
+
+      this.logger.log(
+        `Real-time comment AI reply enqueued — comment=${savedComment.id} post=${parentPost.id}`,
+      );
+    }
   }
 
   private async resolvePageNameFromPost(postId: string): Promise<string | null> {

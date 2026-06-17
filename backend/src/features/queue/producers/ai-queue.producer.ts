@@ -8,6 +8,16 @@
  *   - boss.send() return type is Promise<string> in pg-boss v10 (not string | null)
  *   - Error handling: catch (err: unknown) → toErrorMessage() helper
  *   - Removed singletonSeconds (not a valid pg-boss v10 option)
+ *
+ * CHANGE — enqueueCommentAiReply()
+ * ──────────────────────────────────
+ * New producer method for the COMMENT_AI_REPLY job. Used by:
+ *   - WebhookService.handleFeedChange() → real-time AI reply on new comments
+ *   - PostsSyncSchedulerService (10-min recheck) → catch up on missed comments
+ *
+ * Deduplicated per commentId — if both the webhook and the 10-min recheck
+ * try to enqueue a reply for the same comment before either has run,
+ * pg-boss drops the duplicate (singletonKey).
  */
 
 import { Inject, Injectable, Logger } from '@nestjs/common';
@@ -18,6 +28,7 @@ import {
   buildSingletonKey,
   type AiReplyPayload,
   type AiSummarizePayload,
+  type CommentAiReplyPayload,
 } from '../queue.constants.js';
 import { PG_BOSS_TOKEN } from '../providers/pg-boss.provider.js';
 
@@ -103,6 +114,48 @@ export class AiQueueProducer {
       // Summarisation failure is non-fatal — log and continue
       this.logger.warn(
         `Failed to enqueue ai.summarize for conv=${payload.conversationId}: ${toErrorMessage(err)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Enqueue a comment AI reply job.
+   *
+   * Deduplicated per commentId — only one pending AI reply job per comment
+   * at a time, regardless of whether it was triggered by the webhook
+   * (real-time) or the 10-minute recheck cron.
+   *
+   * @param payload.force  When true (manual "IA" button), the worker bypasses
+   *                        the spam-score filter for this comment.
+   */
+  async enqueueCommentAiReply(payload: CommentAiReplyPayload): Promise<string | null> {
+    const opts = JOB_OPTIONS.COMMENT_AI_REPLY;
+
+    try {
+      const jobId = await this.boss.send(QUEUE_JOBS.COMMENT_AI_REPLY, payload, {
+        retryLimit:      opts.retryLimit,
+        retryDelay:      opts.retryDelay,
+        retryBackoff:    opts.retryBackoff,
+        expireInSeconds: opts.expireInSeconds,
+        singletonKey:    buildSingletonKey(QUEUE_JOBS.COMMENT_AI_REPLY, payload.commentId),
+        priority:        opts.priority,
+      });
+
+      if (jobId) {
+        this.logger.log(
+          `Enqueued comment.ai_reply — comment=${payload.commentId} job=${jobId} force=${payload.force ?? false}`,
+        );
+      } else {
+        this.logger.debug(
+          `comment.ai_reply deduplicated — comment=${payload.commentId} (already pending)`,
+        );
+      }
+
+      return jobId;
+    } catch (err: unknown) {
+      this.logger.error(
+        `Failed to enqueue comment.ai_reply for comment=${payload.commentId}: ${toErrorMessage(err)}`,
       );
       return null;
     }

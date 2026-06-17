@@ -165,6 +165,10 @@ export class AiConfigService {
     if (dto.replyModelName    !== undefined) data.replyModelName    = dto.replyModelName;
     if (dto.replyMaxTokens    !== undefined) data.replyMaxTokens    = dto.replyMaxTokens;
     if (dto.replyTemperature  !== undefined) data.replyTemperature  = dto.replyTemperature;
+    if (dto.commentModelId    !== undefined) data.commentModelId    = dto.commentModelId;
+    if (dto.commentModelName  !== undefined) data.commentModelName  = dto.commentModelName;
+    if (dto.commentMaxTokens  !== undefined) data.commentMaxTokens  = dto.commentMaxTokens;
+    if (dto.commentTemperature !== undefined) data.commentTemperature = dto.commentTemperature;
     if (dto.summaryModelId    !== undefined) data.summaryModelId    = dto.summaryModelId;
     if (dto.summaryModelName  !== undefined) data.summaryModelName  = dto.summaryModelName;
     if (dto.summaryMaxTokens  !== undefined) data.summaryMaxTokens  = dto.summaryMaxTokens;
@@ -182,6 +186,8 @@ export class AiConfigService {
     id: string; businessProfileId: string;
     replyModelId: string; replyModelName: string;
     replyMaxTokens: number; replyTemperature: number;
+    commentModelId: string | null; commentModelName: string | null;
+    commentMaxTokens: number | null; commentTemperature: number | null;
     summaryModelId: string; summaryModelName: string;
     summaryMaxTokens: number; updatedAt: Date;
   }): AiModelConfigResponseDto {
@@ -192,6 +198,10 @@ export class AiConfigService {
       replyModelName:   config.replyModelName,
       replyMaxTokens:   config.replyMaxTokens,
       replyTemperature: config.replyTemperature,
+      commentModelId:   config.commentModelId,
+      commentModelName: config.commentModelName,
+      commentMaxTokens: config.commentMaxTokens,
+      commentTemperature: config.commentTemperature,
       summaryModelId:   config.summaryModelId,
       summaryModelName: config.summaryModelName,
       summaryMaxTokens: config.summaryMaxTokens,

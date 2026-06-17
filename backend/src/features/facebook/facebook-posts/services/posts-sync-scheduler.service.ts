@@ -1,38 +1,55 @@
 /**
  * @file features/facebook-posts/services/posts-sync-scheduler.service.ts
  *
- * Runs a pg-boss job every 5 minutes to keep managed posts and their
- * comments in sync with Facebook and to trigger AI replies for comments
- * that weren't handled in real time by the webhook.
+ * Runs TWO pg-boss jobs:
  *
- * Per sync cycle:
- *   1. For each managed post with an active connection:
- *      a. Fetch all recent comments from the Graph API and upsert them.
- *      b. Repair any missing or fallback author names.
- *      c. Refresh the commentsCount on the post record.
- *      d. If the post has autoReply=true, process every unreplied comment.
- *   2. Emit SSE events so the frontend updates without a reload.
+ *   1. `__posts.sync.fallback__` — every 5 minutes. Full Graph API sync:
+ *      fetches comments, repairs author names, refreshes commentsCount,
+ *      and enqueues AI replies for unreplied comments on autoReply posts.
  *
- * Unlike the inbox scheduler, there is no 24-hour cutoff on comments:
- * all unreplied non-spam comments receive AI replies regardless of age.
+ *   2. `__posts.ai.recheck__` — every 10 minutes (NEW). A LIGHTWEIGHT,
+ *      DB-ONLY safety net: finds unreplied comments on autoReply posts and
+ *      (re-)enqueues a comment.ai_reply job for each. No Graph API calls —
+ *      cheap enough to run often, catches anything the real-time webhook
+ *      trigger or the 5-minute sync missed (e.g. a webhook delivery that
+ *      failed, or a comment whose config changed after being spam-filtered).
  *
- * emitNew:false is passed to processNewComment for existing comments so the
- * frontend does not receive duplicate comment:new events.
- * comment:replied is still emitted after each successful AI reply.
+ * INSTANT REPLIES — why the 5/10-minute jobs are now "safety nets", not the
+ * primary path:
+ *   WebhookService.handleFeedChange() enqueues a comment.ai_reply job
+ *   IMMEDIATELY when a new comment arrives, and CommentAiReplyWorker polls
+ *   that queue every ~2 seconds. The 5/10-minute cycles here exist purely to
+ *   catch comments the webhook missed (delivery failures, comments posted
+ *   while the app was down, config changes after a spam-skip) — NOT as the
+ *   primary AI-reply trigger. This is what turns "3 hours for one comment"
+ *   into "a few seconds" for the common case.
+ *
+ * Both jobs enqueue via AiQueueProducer.enqueueCommentAiReply() with
+ * `force: false` — the spam-score filter, keyword rules, and
+ * replyToAllComments switch are all still respected (no AI-credit abuse on
+ * comments the user hasn't asked to bypass).
+ *
+ * emitNew:false is used for the AI jobs enqueued here because the comments
+ * are already in the DB and visible (or were already emitted by the
+ * webhook/initial sync). comment:replied is still emitted by
+ * PostCommentAiService after each successful reply.
  */
 
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PgBoss } from 'pg-boss';
 import { PrismaService } from '../../../../database/prisma.service.js';
+import { AiQueueProducer } from '../../../queue/producers/ai-queue.producer.js';
 import { PG_BOSS_TOKEN } from '../../../queue/providers/pg-boss.provider.js';
 import { FacebookGraphClient } from '../../clients/facebook-graph.client.js';
 import { TokenEncryptionService } from '../../security/token-encryption.service.js';
 import { PostsEventEmitter } from '../posts-events/posts-event-emitter.js';
-import { PostCommentAiService } from './post-comment-ai.service.js';
 
 const SCHEDULER_JOB   = '__posts.sync.fallback__';
 const CRON_5MIN       = '*/5 * * * *';
-const MAX_AI_PER_POST = 20; // max AI replies per post per cycle
+const RECHECK_JOB     = '__posts.ai.recheck__';
+const CRON_10MIN      = '*/10 * * * *';
+const MAX_AI_PER_POST = 20; // max AI jobs enqueued per post per 5-min cycle
+const MAX_RECHECK     = 50; // max AI jobs enqueued per 10-min recheck cycle
 const FALLBACK_AUTHOR = 'Utilisateur Facebook';
 
 interface SyncProfile {
@@ -56,19 +73,26 @@ export class PostsSyncSchedulerService implements OnModuleInit {
 
   constructor(
     @Inject(PG_BOSS_TOKEN)
-    private readonly boss:       PgBoss,
-    private readonly prisma:     PrismaService,
-    private readonly graphClient: FacebookGraphClient,
-    private readonly encryption: TokenEncryptionService,
-    private readonly sseEmitter: PostsEventEmitter,
-    private readonly commentAi:  PostCommentAiService,
+    private readonly boss:            PgBoss,
+    private readonly prisma:          PrismaService,
+    private readonly graphClient:     FacebookGraphClient,
+    private readonly encryption:      TokenEncryptionService,
+    private readonly sseEmitter:      PostsEventEmitter,
+    private readonly aiQueueProducer: AiQueueProducer,
   ) {}
 
   async onModuleInit(): Promise<void> {
+    // Job 1 — full sync, every 5 minutes
     await this.boss.createQueue(SCHEDULER_JOB);
     await this.boss.schedule(SCHEDULER_JOB, CRON_5MIN, {});
     await this.boss.work(SCHEDULER_JOB, async () => { await this.runFallbackSync(); });
     this.logger.log(`Posts fallback sync registered (cron: ${CRON_5MIN})`);
+
+    // Job 2 — lightweight AI recheck, every 10 minutes (NEW)
+    await this.boss.createQueue(RECHECK_JOB);
+    await this.boss.schedule(RECHECK_JOB, CRON_10MIN, {});
+    await this.boss.work(RECHECK_JOB, async () => { await this.runAiRecheck(); });
+    this.logger.log(`Posts AI recheck registered (cron: ${CRON_10MIN}, DB-only)`);
   }
 
   // ─── Main loop ──────────────────────────────────────────────────────────────
@@ -271,12 +295,13 @@ export class PostsSyncSchedulerService implements OnModuleInit {
     } catch { /* non-fatal */ }
   }
 
-  // ─── Process pending (unreplied) comments ────────────────────────────────────
+  // ─── Process pending (unreplied) comments — 5-min cycle ──────────────────────
 
   /**
-   * Sends AI replies to ALL unreplied comments for the post.
-   * Uses emitNew:false because the comments are already in the DB and visible.
-   * The comment:replied event is emitted by processNewComment after each reply.
+   * Enqueues a comment.ai_reply job for unreplied comments on this post.
+   * `force: false` — spam filter / keyword rules / replyToAllComments still
+   * apply. emitNew:false — the comment was already shown to the frontend
+   * (either by the real-time webhook, or by syncPostComments() above).
    */
   private async processPendingComments(postId: string): Promise<void> {
     const pending = await this.prisma.postComment.findMany({
@@ -287,14 +312,51 @@ export class PostsSyncSchedulerService implements OnModuleInit {
     });
 
     for (const { id } of pending) {
-      void this.commentAi
-        .processNewComment(id, { emitNew: false })
-        .catch((err: unknown) =>
-          this.logger.warn(
-            `AI fallback failed for comment=${id}: ${err instanceof Error ? err.message : String(err)}`,
-          ),
-        );
+      await this.aiQueueProducer.enqueueCommentAiReply({ commentId: id, force: false });
     }
+  }
+
+  // ─── Lightweight AI recheck — 10-min cycle (NEW, DB-only) ─────────────────────
+
+  /**
+   * Safety net: re-enqueues comment.ai_reply for unreplied comments on
+   * autoReply-enabled posts, WITHOUT any Graph API calls. This is the
+   * lightweight complement to the 5-minute full sync — it exists so that:
+   *   - a webhook delivery that failed/was missed, or
+   *   - a comment that was spam-filtered BEFORE the user enabled
+   *     `replyToAllComments` or added a matching keyword rule,
+   * still gets picked up within 10 minutes, with near-zero cost (a single
+   * indexed query + enqueue — no Facebook API calls at all).
+   *
+   * Capped at MAX_RECHECK comments per cycle, oldest first, across ALL
+   * businesses — this is a global safety net, not a per-post loop.
+   */
+  private async runAiRecheck(): Promise<void> {
+    const pending = await this.prisma.postComment.findMany({
+      where: {
+        isReplied: false,
+        post: {
+          postAiConfig: { autoReply: true },
+          businessProfile: {
+            facebookConnection: { isActive: true, NOT: { tokenStatus: 'INVALID' } },
+          },
+        },
+      },
+      orderBy: { commentedAt: 'asc' },
+      take:    MAX_RECHECK,
+      select:  { id: true },
+    });
+
+    if (pending.length === 0) {
+      this.logger.debug('AI recheck — nothing pending');
+      return;
+    }
+
+    for (const { id } of pending) {
+      await this.aiQueueProducer.enqueueCommentAiReply({ commentId: id, force: false });
+    }
+
+    this.logger.debug(`AI recheck — re-enqueued ${pending.length} pending comment(s)`);
   }
 
   // ─── Data loading ────────────────────────────────────────────────────────────

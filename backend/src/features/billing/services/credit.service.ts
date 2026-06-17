@@ -138,7 +138,7 @@ export class CreditService {
   async consumeCredits(
     userId:          string,
     tokensUsed:      number,
-    type:            'AI_REPLY_CONSUME' | 'COMMENT_AI_CONSUME',
+    type:            'AI_REPLY_CONSUME' | 'COMMENT_AI_CONSUME' | 'AI_SUGGESTION_CONSUME',
     modelId:         string,
     conversationId?: string,
     commentId?:      string,
@@ -182,7 +182,9 @@ export class CreditService {
           commentId:      commentId ?? null,
           description:    type === 'AI_REPLY_CONSUME'
             ? `Réponse IA Messenger (${tokensUsed} tokens)`
-            : `Réponse IA commentaire (${tokensUsed} tokens)`,
+            : type === 'COMMENT_AI_CONSUME'
+              ? `Réponse IA commentaire (${tokensUsed} tokens)`
+              : `Suggestion IA configuration (${tokensUsed} tokens)`,
         },
       });
 

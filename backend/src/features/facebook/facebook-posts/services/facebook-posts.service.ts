@@ -19,9 +19,11 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../../../database/prisma.service.js';
 import { ResponseStyle, Tone } from '../../../../generated/prisma/enums.js';
+import { BILLING_PLANS, type PlanId } from '../../../billing/billing.constants.js';
 import { FacebookGraphClient } from '../../clients/facebook-graph.client.js';
 import { FacebookApiError } from '../../clients/facebook-graph.errors.js';
 import { TokenEncryptionService } from '../../security/token-encryption.service.js';
+import type { KeywordRule } from './comment-prompt-builder.service.js';
 
 export interface SyncPostsResult {
   synced: number;
@@ -61,6 +63,18 @@ export interface UpdatePostAiConfigData {
   maxReplyTokens?: number;
   tone?: Tone;
   responseStyle?: ResponseStyle;
+  /**
+   * When true, ALL comments on this post bypass the spam-score filter for
+   * AI replies. Every comment will consume AI credits — use with care on
+   * high-traffic posts. See CommentPromptBuilderService header.
+   */
+  replyToAllComments?: boolean;
+  /**
+   * Deterministic, non-AI reply rules evaluated before the spam filter.
+   * `replyText` set → fixed reply, 0 credits. `replyText` null → bypasses
+   * the spam filter, AI replies as usual (credits consumed).
+   */
+  keywordRules?: KeywordRule[];
 }
 
 const MAX_AUTO_REPLY_POSTS = 10;
@@ -146,9 +160,50 @@ export class FacebookPostsService {
    * Creates a FacebookPost record (or updates if already exists) and
    * creates a PostAiConfig to mark it as "managed".
    * The frontend passes all the post data (no second FB API call needed).
+   *
+   * FIX (point 6) — plan-based managed-post limit:
+   *   Previously, ANY user could add an unlimited number of managed posts,
+   *   regardless of their subscription plan. BILLING_PLANS.<plan>.maxManagedPosts
+   *   (FREE=1, STARTER=10, PRO=20, CUSTOM=unlimited) is now enforced here.
+   *   Re-adding a post that is ALREADY managed never counts against the
+   *   limit (idempotent — e.g. updating its cached stats).
    */
-  async addManagedPost(dto: AddManagedPostDto) {
+  async addManagedPost(dto: AddManagedPostDto, userId: string) {
     const { businessProfileId, externalId, publishedAt, ...rest } = dto;
+
+    const existingPost = await this.prisma.facebookPost.findUnique({
+      where: { externalId },
+      include: { postAiConfig: { select: { postId: true } } },
+    });
+    const isAlreadyManaged = !!existingPost?.postAiConfig;
+
+    if (!isAlreadyManaged) {
+      const user = await this.prisma.user.findUnique({
+        where:  { id: userId },
+        select: { activePlan: true },
+      });
+      const planId       = (user?.activePlan ?? 'FREE') as PlanId;
+      const planConfig   = BILLING_PLANS[planId];
+      const maxManaged   = planConfig?.maxManagedPosts ?? null;
+
+      if (maxManaged !== null) {
+        const managedCount = await this.prisma.facebookPost.count({
+          where: {
+            businessProfile: { userId },
+            postAiConfig:    { isNot: null },
+          },
+        });
+
+        if (managedCount >= maxManaged) {
+          throw new BadRequestException(
+            `Limite du plan ${planConfig?.name ?? planId} atteinte ` +
+            `(${maxManaged} post${maxManaged > 1 ? 's' : ''} géré${maxManaged > 1 ? 's' : ''} ` +
+            `simultanément maximum). Retirez un post existant ou passez à un ` +
+            `abonnement supérieur pour en gérer davantage.`,
+          );
+        }
+      }
+    }
 
     // Upsert the post record
     const post = await this.prisma.facebookPost.upsert({
@@ -863,14 +918,22 @@ export class FacebookPostsService {
   async getOrCreatePostAiConfig(postId: string) {
     return this.prisma.postAiConfig.upsert({
       where: { postId },
-      create: { postId, autoReply: false, privateReplyEnabled: false },
+      create: {
+        postId,
+        autoReply: false,
+        privateReplyEnabled: false,
+        replyToAllComments: false,
+        keywordRules: [],
+      },
       update: {},
     });
   }
 
   /**
    * Update PostAiConfig.
-   * Enforces a maximum of 10 posts with autoReply enabled per businessProfile.
+   * Enforces a maximum of 10 posts with autoReply enabled per businessProfile
+   * (Facebook-side rate/quality limit — separate from the plan-based
+   * maxManagedPosts limit enforced in addManagedPost).
    */
   async updatePostAiConfig(postId: string, data: UpdatePostAiConfigData) {
     // 10-post auto-reply limit
@@ -897,10 +960,18 @@ export class FacebookPostsService {
       }
     }
 
+    // keywordRules is a Prisma Json column — sanitize to plain JSON before
+    // writing (strips any accidental non-JSON values, e.g. undefined).
+    const { keywordRules, ...rest } = data;
+    const prismaData: Record<string, unknown> = { ...rest };
+    if (keywordRules !== undefined) {
+      prismaData.keywordRules = JSON.parse(JSON.stringify(keywordRules));
+    }
+
     return this.prisma.postAiConfig.upsert({
       where: { postId },
-      create: { postId, ...data },
-      update: data,
+      create: { postId, ...prismaData },
+      update: prismaData,
     });
   }
 
