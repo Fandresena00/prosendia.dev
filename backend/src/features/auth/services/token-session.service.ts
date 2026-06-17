@@ -1,6 +1,11 @@
 /**
  * @file src/features/auth/token-session.service.ts
  * @description Centralized JWT session validation and revocation helpers.
+ *
+ * CHANGE: revokeAllActiveSessions() ne fait plus de findMany inutile avant le
+ * updateMany — on lit directement le compteur retourné par Prisma. Le type de
+ * retour passe de void à number (nombre de sessions révoquées), utilisé pour
+ * le logging côté AuthService.
  */
 
 import { Injectable, UnauthorizedException } from '@nestjs/common';
@@ -84,21 +89,16 @@ export class TokenSessionService {
     });
   }
 
-  async revokeAllActiveSessions(userId: string): Promise<void> {
-    const activeSessions = await this.prisma.refreshToken.findMany({
-      where: {
-        userId,
-        revokedAt: null,
-      },
-      select: { jti: true },
-    });
-
-    await this.prisma.refreshToken.updateMany({
+  /** Révoque toutes les sessions actives de l'utilisateur. Retourne le nombre révoqué. */
+  async revokeAllActiveSessions(userId: string): Promise<number> {
+    const result = await this.prisma.refreshToken.updateMany({
       where: {
         userId,
         revokedAt: null,
       },
       data: { revokedAt: new Date() },
     });
+
+    return result.count;
   }
 }

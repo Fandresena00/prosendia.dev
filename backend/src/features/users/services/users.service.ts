@@ -1,13 +1,20 @@
 /**
  * @file src/features/users/services/users.service.ts
  *
- * CHANGES:
- *   1. findOrCreateOAuthUser() — emailVerified=true + emailVerifiedAt=now()
- *      (Google a déjà vérifié l'email)
- *   2. createVerifiedUser() — méthode ajoutée pour l'inscription locale
- *      (appelée après vérification du code email)
- *   3. toResponse() — expose emailVerified + emailVerifiedAt
- *   4. createUser() — emailVerified=false (non utilisé en prod, garde-fou)
+ * CHANGES (avatar sync) :
+ *   1. Nouveau champ avatarSource (LOCAL | GOOGLE) sur User — voir prisma/schema-changes.prisma
+ *   2. replaceAvatar() — point d'entrée UNIQUE pour changer l'avatar :
+ *        - si l'ancien avatarUrl pointait vers un fichier géré localement
+ *          (/uploads/avatars/...), il est supprimé du disque avant d'écrire le nouveau
+ *        - met à jour avatarUrl + avatarSource en une seule transaction Prisma
+ *   3. findOrCreateOAuthUser() — si le compte existe déjà ET que sa photo est
+ *      toujours "gérée par Google" (avatarSource=GOOGLE), on la resynchronise à
+ *      chaque login avec la dernière photo du profil Google. Si l'utilisateur a
+ *      uploadé une photo manuellement (avatarSource=LOCAL), on n'y touche plus —
+ *      le choix manuel est prioritaire.
+ *   4. UpdateUserDto n'accepte plus avatarUrl : tout changement d'avatar passe
+ *      désormais par replaceAvatar() (endpoint POST /users/:id/avatar), pour
+ *      garantir qu'on ne laisse jamais un fichier orphelin sur le disque.
  *
  * Fichier complet — remplace l'ancien users.service.ts.
  */
@@ -23,9 +30,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import bcrypt from 'bcrypt';
+import { unlink } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { PrismaService } from '../../../database/prisma.service.js';
 import {
   AuthProvider,
+  AvatarSource,
   Plan,
   Prisma,
 } from '../../../generated/prisma/client.js';
@@ -44,6 +54,9 @@ const SALT_ROUNDS = 12;
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
 
+  /** Doit correspondre à `destination` dans FileInterceptor (users.controller.ts) */
+  private readonly avatarDir = join(process.cwd(), 'uploads', 'avatars');
+
   constructor(
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => CreditService))
@@ -58,6 +71,7 @@ export class UsersService {
       email:           user.email,
       username:        user.username,
       avatarUrl:       user.avatarUrl ?? null,
+      avatarSource:    user.avatarSource,
       activePlan:      user.activePlan,
       provider:        user.provider,
       onboardingDone:  user.onboardingDone,
@@ -98,6 +112,80 @@ export class UsersService {
         `[USER_CREDITS_INIT_FAILED] userId=${userId} email=${email} err="${msg}". ` +
         `Run CreditService.repairBalance("${userId}") to fix manually.`,
       );
+    }
+  }
+
+  // ─── Avatar management ──────────────────────────────────────────────────────
+
+  /** True si l'URL pointe vers un fichier que NOUS gérons sur le disque local. */
+  private isManagedAvatarUrl(url: string | null | undefined): boolean {
+    return !!url && url.includes('/uploads/avatars/');
+  }
+
+  /** Supprime le fichier local correspondant à une ancienne avatarUrl. Best-effort. */
+  private async deleteLocalAvatarFile(avatarUrl: string): Promise<void> {
+    let pathname = avatarUrl;
+    try {
+      pathname = new URL(avatarUrl).pathname;
+    } catch {
+      // avatarUrl n'était pas une URL absolue valide — on retente avec la valeur brute
+    }
+
+    const filePath = join(this.avatarDir, basename(pathname));
+
+    try {
+      await unlink(filePath);
+      this.logger.log(`[AVATAR_FILE_DELETED] path=${filePath}`);
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === 'ENOENT') return; // déjà absent — rien à faire
+      this.logger.warn(
+        `[AVATAR_FILE_DELETE_FAILED] path=${filePath} ` +
+        `err="${err instanceof Error ? err.message : String(err)}"`,
+      );
+    }
+  }
+
+  /**
+   * Point d'entrée UNIQUE pour changer l'avatar d'un utilisateur.
+   *
+   * - Si l'avatar actuel est un fichier géré localement (upload manuel précédent),
+   *   il est supprimé du disque avant d'écrire le nouveau (jamais de fichier orphelin).
+   * - Si l'avatar actuel est une URL externe (photo Google), rien à supprimer du
+   *   disque : on remplace simplement la valeur en base.
+   *
+   * @param source LOCAL (upload manuel) ou GOOGLE (synchro automatique au login)
+   */
+  async replaceAvatar(
+    userId: string,
+    newAvatarUrl: string,
+    source: AvatarSource,
+  ): Promise<UserResponseDto> {
+    const current = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!current) throw new NotFoundException('Utilisateur introuvable.');
+
+    const hasOldManagedFile =
+      this.isManagedAvatarUrl(current.avatarUrl) &&
+      current.avatarUrl !== newAvatarUrl;
+
+    if (hasOldManagedFile) {
+      await this.deleteLocalAvatarFile(current.avatarUrl as string);
+    }
+
+    try {
+      const updated = await this.prisma.user.update({
+        where: { id: userId },
+        data: { avatarUrl: newAvatarUrl, avatarSource: source },
+      });
+
+      this.logger.log(
+        `[AVATAR_REPLACED] userId=${userId} source=${source} ` +
+        `previousFileDeleted=${hasOldManagedFile}`,
+      );
+
+      return this.toResponse(updated);
+    } catch (error) {
+      this.handlePrismaError(error, 'Failed to update avatar');
     }
   }
 
@@ -170,6 +258,7 @@ export class UsersService {
           activePlan:      Plan.FREE,
           provider:        AuthProvider.LOCAL,
           onboardingDone:  false,
+          avatarSource:    AvatarSource.LOCAL,
           emailVerified:   true,
           emailVerifiedAt: now,
         },
@@ -192,6 +281,12 @@ export class UsersService {
   /**
    * Trouve ou crée un utilisateur OAuth (Google, Facebook).
    * Les comptes OAuth sont considérés vérifiés d'office.
+   *
+   * Synchro avatar : si le compte existe déjà et que sa photo est toujours
+   * "gérée par Google" (avatarSource=GOOGLE, c.-à-d. jamais remplacée
+   * manuellement), on la met à jour avec la dernière photo du profil Google
+   * à chaque login. Si l'utilisateur a uploadé une photo lui-même
+   * (avatarSource=LOCAL), elle est prioritaire et n'est jamais écrasée ici.
    */
   async findOrCreateOAuthUser(data: {
     email: string;
@@ -203,15 +298,35 @@ export class UsersService {
       where: { email: data.email },
     });
 
-    if (existing) return this.toResponse(existing);
+    if (existing) {
+      const shouldSyncGoogleAvatar =
+        existing.avatarSource === AvatarSource.GOOGLE &&
+        !!data.avatarUrl &&
+        data.avatarUrl !== existing.avatarUrl;
+
+      if (shouldSyncGoogleAvatar) {
+        this.logger.log(
+          `[AVATAR_SYNCED_FROM_GOOGLE] userId=${existing.id} on login`,
+        );
+        return this.replaceAvatar(
+          existing.id,
+          data.avatarUrl as string,
+          AvatarSource.GOOGLE,
+        );
+      }
+
+      return this.toResponse(existing);
+    }
 
     const now = new Date();
+    const isGoogle = data.provider === AuthProvider.GOOGLE;
 
     const user = await this.prisma.user.create({
       data: {
         email:           data.email,
         username:        data.username,
         avatarUrl:       data.avatarUrl ?? null,
+        avatarSource:    isGoogle ? AvatarSource.GOOGLE : AvatarSource.LOCAL,
         password:        '',
         activePlan:      Plan.FREE,
         provider:        data.provider,
@@ -246,6 +361,7 @@ export class UsersService {
           activePlan:      Plan.FREE,
           provider:        AuthProvider.LOCAL,
           onboardingDone:  false,
+          avatarSource:    AvatarSource.LOCAL,
           emailVerified:   false,
           emailVerifiedAt: null,
         },
@@ -265,6 +381,11 @@ export class UsersService {
 
   // ─── Standard mutations ───────────────────────────────────────────────────
 
+  /**
+   * Met à jour les champs de profil "simples". L'avatar n'est PLUS modifiable
+   * via cette méthode — passe par replaceAvatar() (endpoint dédié) pour garantir
+   * que l'ancien fichier local est toujours nettoyé du disque.
+   */
   async updateUser(
     where: Prisma.UserWhereUniqueInput,
     data: UpdateUserDto,
@@ -275,7 +396,6 @@ export class UsersService {
         data: {
           ...(data.email        !== undefined && { email: data.email }),
           ...(data.username     !== undefined && { username: data.username }),
-          ...(data.avatarUrl    !== undefined && { avatarUrl: data.avatarUrl }),
           ...(data.activePlan   !== undefined && { activePlan: data.activePlan }),
           ...(data.onboardingDone !== undefined && {
             onboardingDone: data.onboardingDone,

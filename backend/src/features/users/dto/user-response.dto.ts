@@ -1,15 +1,22 @@
 /**
  * @file src/features/users/dto/user-response.dto.ts
- * CHANGE: Added emailVerified + emailVerifiedAt.
+ * CHANGE: Added avatarSource (LOCAL | GOOGLE) so the frontend can show
+ * whether the current photo is synced from Google or manually uploaded.
  */
 
-import type { AuthProvider, Plan } from '../../../generated/prisma/client.js';
+import type {
+  AuthProvider,
+  AvatarSource,
+  Plan,
+} from '../../../generated/prisma/client.js';
 
 export class UserResponseDto {
   id!: string;
   email!: string;
   username!: string;
   avatarUrl!: string | null;
+  /** LOCAL = uploadée manuellement, GOOGLE = synchronisée depuis le profil Google */
+  avatarSource!: AvatarSource;
   activePlan!: Plan;
   provider!: AuthProvider;
   onboardingDone!: boolean;

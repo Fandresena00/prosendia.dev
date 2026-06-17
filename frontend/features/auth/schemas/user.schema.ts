@@ -9,31 +9,32 @@ export const PlanSchema = z.enum(["FREE", "STARTER", "PRO", "CUSTOM"]);
 export const ProviderSchema = z.enum(["LOCAL", "GOOGLE", "FACEBOOK"]);
 
 export const UserSchema = z.object({
-  id:              z.string().uuid(),
-  email:           z.string().email(),
-  username:        z.string(),
-  avatarUrl:       z.string().url().nullable(),
-  activePlan:      PlanSchema,
-  provider:        ProviderSchema,
-  providerId:      z.string().nullable().default(null),
-  onboardingDone:  z.boolean(),
+  id: z.uuid(),
+  email: z.email(),
+  username: z.string(),
+  avatarUrl: z.url().nullable(),
+  avatarSource: z.enum(["LOCAL", "GOOGLE"]),
+  activePlan: PlanSchema,
+  provider: ProviderSchema,
+  providerId: z.string().nullable().default(null),
+  onboardingDone: z.boolean(),
   /** True once the user has confirmed their email address */
-  emailVerified:   z.boolean(),
+  emailVerified: z.boolean(),
   /** ISO string or null */
   emailVerifiedAt: z.string().nullable(),
-  createdAt:       z.string(),
-  updatedAt:       z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
 });
 
 export const UpdateUserSchema = z.object({
-  username:       z.string().min(3).max(30).optional(),
-  email:          z.string().email().optional(),
-  avatarUrl:      z.string().url().nullable().optional(),
-  activePlan:     PlanSchema.optional(),
+  username: z.string().min(3).max(30).optional(),
+  email: z.email().optional(),
+  avatarUrl: z.url().nullable().optional(),
+  activePlan: PlanSchema.optional(),
   onboardingDone: z.boolean().optional(),
 });
 
-export type User           = z.infer<typeof UserSchema>;
+export type User = z.infer<typeof UserSchema>;
 export type UpdateUserInput = z.infer<typeof UpdateUserSchema>;
-export type Plan           = z.infer<typeof PlanSchema>;
-export type AuthProvider   = z.infer<typeof ProviderSchema>;
+export type Plan = z.infer<typeof PlanSchema>;
+export type AuthProvider = z.infer<typeof ProviderSchema>;

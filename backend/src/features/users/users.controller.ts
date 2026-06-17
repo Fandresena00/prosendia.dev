@@ -1,3 +1,12 @@
+/**
+ * @file src/features/users/users.controller.ts
+ *
+ * CHANGE: l'upload d'avatar passe par usersService.replaceAvatar() au lieu de
+ * updateUser(), pour que l'ancien fichier local soit supprimé du disque et que
+ * avatarSource soit marqué LOCAL (l'upload manuel devient prioritaire sur une
+ * éventuelle synchro Google).
+ */
+
 import {
   Body,
   Controller,
@@ -18,6 +27,7 @@ import type { Request } from 'express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
+import { AvatarSource } from '../../generated/prisma/client.js';
 import { ChangePasswordDto } from './dto/change-password.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
 import { UserResponseDto } from './dto/user-response.dto.js';
@@ -93,6 +103,9 @@ export class UsersController {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const avatarUrl = `${baseUrl}/uploads/avatars/${file.filename}`;
 
-    return this.usersService.updateUser({ id }, { avatarUrl });
+    // replaceAvatar() supprime l'ancien fichier local (s'il y en avait un) et
+    // marque avatarSource=LOCAL : l'upload manuel devient prioritaire sur la
+    // synchro Google pour ce compte, même s'il s'est inscrit via Google.
+    return this.usersService.replaceAvatar(id, avatarUrl, AvatarSource.LOCAL);
   }
 }

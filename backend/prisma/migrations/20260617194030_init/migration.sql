@@ -2,6 +2,9 @@
 CREATE TYPE "AuthProvider" AS ENUM ('LOCAL', 'GOOGLE', 'FACEBOOK');
 
 -- CreateEnum
+CREATE TYPE "AvatarSource" AS ENUM ('LOCAL', 'GOOGLE');
+
+-- CreateEnum
 CREATE TYPE "Plan" AS ENUM ('FREE', 'STARTER', 'PRO', 'CUSTOM');
 
 -- CreateEnum
@@ -32,7 +35,7 @@ CREATE TYPE "PaymentProvider" AS ENUM ('MVOLA', 'ORANGE_MONEY', 'AIRTEL_MONEY', 
 CREATE TYPE "SubscriptionStatus" AS ENUM ('ACTIVE', 'EXPIRED', 'CANCELLED', 'PENDING');
 
 -- CreateEnum
-CREATE TYPE "CreditTransactionType" AS ENUM ('SUBSCRIPTION_GRANT', 'AI_REPLY_CONSUME', 'COMMENT_AI_CONSUME', 'ADMIN_ADJUST');
+CREATE TYPE "CreditTransactionType" AS ENUM ('SUBSCRIPTION_GRANT', 'AI_REPLY_CONSUME', 'COMMENT_AI_CONSUME', 'AI_SUGGESTION_CONSUME', 'ADMIN_ADJUST');
 
 -- CreateEnum
 CREATE TYPE "TokenStatus" AS ENUM ('VALID', 'INVALID', 'UNKNOWN');
@@ -44,6 +47,15 @@ CREATE TYPE "WebhookEventType" AS ENUM ('MESSAGE', 'FEED_COMMENT', 'FEED_REACTIO
 CREATE TYPE "WebhookEventStatus" AS ENUM ('PENDING', 'PROCESSED', 'FAILED', 'SKIPPED');
 
 -- CreateEnum
+CREATE TYPE "NotificationType" AS ENUM ('PAYMENT_CONFIRMED', 'SUBSCRIPTION_EXPIRING', 'CREDITS_LOW', 'CREDITS_CRITICAL', 'CREDITS_DEPLETED', 'FACEBOOK_TOKEN_EXPIRED', 'SYNC_FAILED', 'POST_LIMIT_REACHED', 'PAGE_CONNECTED', 'HUMAN_TAKEOVER_REQUIRED', 'ANGRY_CLIENT_DETECTED', 'AI_STUCK_LOOP', 'HOT_PROSPECT', 'UNANSWERED_HUMAN', 'MESSENGER_WINDOW_EXPIRED');
+
+-- CreateEnum
+CREATE TYPE "NotificationSeverity" AS ENUM ('INFO', 'WARNING', 'CRITICAL', 'SUCCESS');
+
+-- CreateEnum
+CREATE TYPE "NotificationChannel" AS ENUM ('IN_APP', 'WEB_PUSH', 'EMAIL');
+
+-- CreateEnum
 CREATE TYPE "AiDecision" AS ENUM ('REPLIED', 'ESCALATED', 'SKIPPED', 'ERROR');
 
 -- CreateTable
@@ -53,16 +65,33 @@ CREATE TABLE "users" (
     "username" TEXT NOT NULL,
     "password" TEXT NOT NULL,
     "avatarUrl" TEXT,
-    "activePlan" "Plan" NOT NULL DEFAULT 'FREE',
-    "provider" "AuthProvider" NOT NULL DEFAULT 'LOCAL',
+    "avatarSource" "AvatarSource" NOT NULL DEFAULT 'LOCAL',
     "providerId" TEXT,
     "onboardingDone" BOOLEAN NOT NULL DEFAULT false,
+    "emailVerified" BOOLEAN NOT NULL DEFAULT false,
+    "emailVerifiedAt" TIMESTAMP(3),
+    "activePlan" "Plan" NOT NULL DEFAULT 'FREE',
+    "provider" "AuthProvider" NOT NULL DEFAULT 'LOCAL',
     "creditBalance" INTEGER NOT NULL DEFAULT 0,
     "creditAlertSent" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "users_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "email_verifications" (
+    "id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "username" TEXT NOT NULL,
+    "codeHash" TEXT NOT NULL,
+    "passwordHash" TEXT NOT NULL,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "usedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "email_verifications_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -114,6 +143,10 @@ CREATE TABLE "ai_model_configs" (
     "replyModelName" TEXT NOT NULL DEFAULT 'Claude 3.5 Haiku',
     "replyMaxTokens" INTEGER NOT NULL DEFAULT 400,
     "replyTemperature" DOUBLE PRECISION NOT NULL DEFAULT 0.7,
+    "commentModelId" TEXT,
+    "commentModelName" TEXT,
+    "commentMaxTokens" INTEGER,
+    "commentTemperature" DOUBLE PRECISION,
     "summaryModelId" TEXT NOT NULL DEFAULT 'meta-llama/llama-3.1-8b-instruct:free',
     "summaryModelName" TEXT NOT NULL DEFAULT 'Llama 3.1 8B Instruct (free)',
     "summaryMaxTokens" INTEGER NOT NULL DEFAULT 200,
@@ -267,6 +300,9 @@ CREATE TABLE "post_comments" (
     "replyContent" TEXT,
     "repliedAt" TIMESTAMP(3),
     "repliedByAi" BOOLEAN,
+    "aiSpamScore" INTEGER,
+    "aiSkipped" BOOLEAN NOT NULL DEFAULT false,
+    "aiSkipReason" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -285,6 +321,8 @@ CREATE TABLE "post_ai_configs" (
     "maxReplyTokens" INTEGER,
     "privateReplyEnabled" BOOLEAN NOT NULL DEFAULT false,
     "privateReplyMessage" TEXT,
+    "replyToAllComments" BOOLEAN NOT NULL DEFAULT false,
+    "keywordRules" JSONB NOT NULL DEFAULT '[]',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -388,8 +426,54 @@ CREATE TABLE "refresh_tokens" (
     CONSTRAINT "refresh_tokens_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "notifications" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "type" "NotificationType" NOT NULL,
+    "severity" "NotificationSeverity" NOT NULL,
+    "title" TEXT NOT NULL,
+    "message" TEXT NOT NULL,
+    "conversationId" TEXT,
+    "postId" TEXT,
+    "commentId" TEXT,
+    "clientName" TEXT,
+    "clientFbPsid" TEXT,
+    "clientFbPageId" TEXT,
+    "dedupeKey" TEXT,
+    "isRead" BOOLEAN NOT NULL DEFAULT false,
+    "readAt" TIMESTAMP(3),
+    "actionLabel" TEXT,
+    "actionUrl" TEXT,
+    "pushSentAt" TIMESTAMP(3),
+    "emailSentAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "notifications_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "web_push_subscriptions" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "endpoint" TEXT NOT NULL,
+    "p256dh" TEXT NOT NULL,
+    "auth" TEXT NOT NULL,
+    "userAgent" TEXT,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "lastUsed" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "web_push_subscriptions_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
+
+-- CreateIndex
+CREATE INDEX "email_verifications_email_idx" ON "email_verifications"("email");
 
 -- CreateIndex
 CREATE INDEX "business_profiles_userId_idx" ON "business_profiles"("userId");
@@ -508,6 +592,24 @@ CREATE INDEX "refresh_tokens_userId_jti_idx" ON "refresh_tokens"("userId", "jti"
 -- CreateIndex
 CREATE INDEX "refresh_tokens_expiresAt_idx" ON "refresh_tokens"("expiresAt");
 
+-- CreateIndex
+CREATE INDEX "notifications_userId_isRead_idx" ON "notifications"("userId", "isRead");
+
+-- CreateIndex
+CREATE INDEX "notifications_userId_createdAt_idx" ON "notifications"("userId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "notifications_userId_type_idx" ON "notifications"("userId", "type");
+
+-- CreateIndex
+CREATE INDEX "notifications_dedupeKey_idx" ON "notifications"("dedupeKey");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "web_push_subscriptions_endpoint_key" ON "web_push_subscriptions"("endpoint");
+
+-- CreateIndex
+CREATE INDEX "web_push_subscriptions_userId_idx" ON "web_push_subscriptions"("userId");
+
 -- AddForeignKey
 ALTER TABLE "business_profiles" ADD CONSTRAINT "business_profiles_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -573,3 +675,12 @@ ALTER TABLE "credit_ledger" ADD CONSTRAINT "credit_ledger_subscriptionId_fkey" F
 
 -- AddForeignKey
 ALTER TABLE "refresh_tokens" ADD CONSTRAINT "refresh_tokens_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "notifications" ADD CONSTRAINT "notifications_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "notifications" ADD CONSTRAINT "notifications_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "conversations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "web_push_subscriptions" ADD CONSTRAINT "web_push_subscriptions_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -1,6 +1,17 @@
 /**
  * @file features/settings/components/security-tab.tsx
  * @description Security settings for password management and account protection.
+ *
+ * CHANGES (connexion au backend) :
+ *   - Le changement de mot de passe appelle réellement PATCH /users/:id/change-password
+ *     (settingsService.changePassword) au lieu de simuler un succès en local.
+ *   - La checklist de force du mot de passe reflète exactement la regex backend
+ *     de ChangePasswordDto (8+ caractères, 1 majuscule, 1 chiffre, 1 caractère
+ *     spécial parmi @$!%*?&) — évite les rejets serveur surprenants.
+ *   - "Renvoyer l'email de confirmation" appelle POST /auth/resend-verification
+ *     et n'apparaît que si le compte n'est pas encore vérifié.
+ *   - Nouvelle section "Sessions actives" : "Se déconnecter de tous les
+ *     appareils" appelle POST /auth/logout-all puis redirige vers /sign-in.
  */
 
 import {
@@ -24,17 +35,49 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { useCurrentUser } from "@/features/auth/store/auth.store";
 import {
   AlertTriangle,
-  CheckCircle,
+  Check,
+  CheckCircle2,
   Eye,
   EyeOff,
+  Loader2,
+  LogOut,
   Lock,
   Mail,
+  Monitor,
+  X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { settingsService } from "../services/settings.service";
+
+const SPECIAL_CHARS = /[@$!%*?&]/;
+const RESEND_COOLDOWN_SECONDS = 60;
+
+function RuleRow({ met, label }: { met: boolean; label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      {met ? (
+        <Check className="h-3.5 w-3.5 text-emerald-600" />
+      ) : (
+        <X className="h-3.5 w-3.5 text-muted-foreground/50" />
+      )}
+      <span
+        className={
+          met ? "text-xs text-emerald-700" : "text-xs text-muted-foreground"
+        }
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
 
 export function SecurityTab() {
+  const user = useCurrentUser();
+
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -42,46 +85,127 @@ export function SecurityTab() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [changeDialog, setChangeDialog] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+
+  const [resending, setResending] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const [logoutAllDialog, setLogoutAllDialog] = useState(false);
+  const [loggingOutAll, setLoggingOutAll] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (cooldownRef.current) clearInterval(cooldownRef.current);
+    };
+  }, []);
+
+  // ── Règles de mot de passe — alignées sur ChangePasswordDto (backend) ─────
+  const rules = {
+    length: newPassword.length >= 8,
+    uppercase: /[A-Z]/.test(newPassword),
+    digit: /\d/.test(newPassword),
+    special: SPECIAL_CHARS.test(newPassword),
+  };
+  const newPasswordValid = Object.values(rules).every(Boolean);
 
   const match = newPassword === confirmPassword && newPassword.length > 0;
   const mismatch =
     confirmPassword.length > 0 && newPassword !== confirmPassword;
-  const valid = currentPassword.length > 0 && newPassword.length >= 8 && match;
+  const valid =
+    currentPassword.length > 0 && newPasswordValid && match;
 
-  const passwordStrength =
-    newPassword.length >= 16
-      ? "Très forte"
-      : newPassword.length >= 12
-        ? "Forte"
-        : newPassword.length >= 8
-          ? "Moyenne"
-          : "Faible";
+  // ── Changement de mot de passe ─────────────────────────────────────────────
 
-  const getStrengthColor = (strength: string) => {
-    switch (strength) {
-      case "Très forte":
-        return "bg-emerald-500";
-      case "Forte":
-        return "bg-blue-500";
-      case "Moyenne":
-        return "bg-amber-500";
-      default:
-        return "bg-destructive";
+  const handleConfirmChangePassword = async () => {
+    if (!user?.id) return;
+    setSubmitting(true);
+    try {
+      await settingsService.changePassword(user.id, {
+        currentPassword,
+        newPassword,
+        confirmPassword,
+      });
+      setDone(true);
+      setChangeDialog(false);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      toast.success("Mot de passe modifié avec succès.");
+      setTimeout(() => setDone(false), 5000);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Échec du changement de mot de passe.";
+      toast.error(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ── Renvoi de l'email de vérification ──────────────────────────────────────
+
+  const startCooldown = () => {
+    setResendCooldown(RESEND_COOLDOWN_SECONDS);
+    cooldownRef.current = setInterval(() => {
+      setResendCooldown((s) => {
+        if (s <= 1) {
+          if (cooldownRef.current) clearInterval(cooldownRef.current);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+  };
+
+  const handleResendVerification = async () => {
+    if (!user?.email) return;
+    setResending(true);
+    try {
+      await settingsService.resendVerificationEmail(user.email);
+      toast.success("Email de vérification envoyé.");
+      startCooldown();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Échec de l'envoi de l'email.";
+      toast.error(message);
+    } finally {
+      setResending(false);
+    }
+  };
+
+  // ── Déconnexion de tous les appareils ──────────────────────────────────────
+
+  const handleLogoutAllDevices = async () => {
+    setLoggingOutAll(true);
+    try {
+      await settingsService.logoutAllDevices();
+      window.location.href = "/sign-in";
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Échec de la déconnexion des appareils.";
+      toast.error(message);
+      setLoggingOutAll(false);
     }
   };
 
   return (
-    <div className="space-y-5 max-w-3xl">
+    <div className="space-y-5 w-full">
       {/* Password Change */}
       <Card className="border-border/50">
         <CardHeader className="pb-4">
           <div className="flex items-center gap-2">
-            <Lock className="h-5 w-5 text-primary" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+              <Lock className="h-4 w-4 text-primary" />
+            </div>
             <div>
               <CardTitle>Changer le mot de passe</CardTitle>
               <CardDescription>
-                Minimum 8 caractères recommandés pour la sécurité
+                Minimum 8 caractères, avec majuscule, chiffre et caractère spécial
               </CardDescription>
             </div>
           </div>
@@ -89,7 +213,7 @@ export function SecurityTab() {
         <CardContent className="space-y-4">
           {done && (
             <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/8 px-4 py-3 flex items-center gap-3">
-              <CheckCircle className="h-5 w-5 text-emerald-600 shrink-0" />
+              <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
               <div>
                 <p className="text-sm font-medium text-emerald-700">
                   Mot de passe modifié avec succès
@@ -110,6 +234,7 @@ export function SecurityTab() {
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 placeholder="Entrez votre mot de passe actuel"
                 className="h-10 pr-10"
+                autoComplete="current-password"
               />
               <button
                 type="button"
@@ -139,6 +264,7 @@ export function SecurityTab() {
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Minimum 8 caractères"
                   className="h-10 pr-10"
+                  autoComplete="new-password"
                 />
                 <button
                   type="button"
@@ -165,6 +291,7 @@ export function SecurityTab() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Confirmez votre mot de passe"
                   className="h-10 pr-10"
+                  autoComplete="new-password"
                 />
                 <button
                   type="button"
@@ -182,23 +309,11 @@ export function SecurityTab() {
           </div>
 
           {newPassword.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium">Force du mot de passe</p>
-                <span
-                  className={`text-xs font-medium px-2 py-1 rounded-full text-white ${getStrengthColor(passwordStrength)}`}
-                >
-                  {passwordStrength}
-                </span>
-              </div>
-              <div className="h-1 bg-muted rounded-full overflow-hidden">
-                <div
-                  className={`h-full transition-all ${getStrengthColor(passwordStrength)}`}
-                  style={{
-                    width: `${Math.min(100, (newPassword.length / 16) * 100)}%`,
-                  }}
-                />
-              </div>
+            <div className="grid grid-cols-2 gap-y-1.5 gap-x-3 rounded-lg border border-border/50 bg-muted/30 px-3 py-2.5">
+              <RuleRow met={rules.length} label="8 caractères minimum" />
+              <RuleRow met={rules.uppercase} label="1 lettre majuscule" />
+              <RuleRow met={rules.digit} label="1 chiffre" />
+              <RuleRow met={rules.special} label="1 caractère spécial (@$!%*?&)" />
             </div>
           )}
 
@@ -214,6 +329,7 @@ export function SecurityTab() {
           <div className="flex justify-end gap-2 pt-2">
             <Button
               variant="outline"
+              disabled={submitting}
               onClick={() => {
                 setCurrentPassword("");
                 setNewPassword("");
@@ -222,39 +338,88 @@ export function SecurityTab() {
             >
               Annuler
             </Button>
-            <Button disabled={!valid} onClick={() => setChangeDialog(true)}>
+            <Button disabled={!valid || submitting} onClick={() => setChangeDialog(true)}>
               Changer le mot de passe
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Email Verification */}
+      {/* Email Verification — uniquement si pas encore vérifié */}
+      {!user?.emailVerified && (
+        <Card className="border-border/50">
+          <CardHeader className="pb-4">
+            <div className="flex items-center gap-2">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/10">
+                <Mail className="h-4 w-4 text-amber-600" />
+              </div>
+              <div>
+                <CardTitle>Vérification d&apos;email</CardTitle>
+                <CardDescription>
+                  Confirmez votre adresse e-mail pour un accès complet
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Si vous n&apos;avez pas reçu votre code de vérification ou s&apos;il
+              a expiré, vous pouvez en demander un nouveau.
+            </p>
+            <Button
+              variant="outline"
+              className="w-full"
+              disabled={resending || resendCooldown > 0}
+              onClick={handleResendVerification}
+            >
+              {resending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Envoi en cours...
+                </>
+              ) : resendCooldown > 0 ? (
+                `Renvoyer dans ${resendCooldown}s`
+              ) : (
+                "Renvoyer l'email de confirmation"
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Sessions actives */}
       <Card className="border-border/50">
         <CardHeader className="pb-4">
           <div className="flex items-center gap-2">
-            <Mail className="h-5 w-5 text-primary" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-destructive/10">
+              <Monitor className="h-4 w-4 text-destructive" />
+            </div>
             <div>
-              <CardTitle>Vérification d&apos;Email</CardTitle>
+              <CardTitle>Sessions actives</CardTitle>
               <CardDescription>
-                Confirmez votre adresse e-mail pour un accès complet
+                Déconnectez tous les appareils connectés à votre compte
               </CardDescription>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-xs text-muted-foreground">
-            Si vous n&apos;avez pas reçu votre email de confirmation ou si le
-            lien a expiré, vous pouvez demander l&apos;envoi d&apos;un nouveau
-            code de vérification.
+            Utile si vous pensez que votre compte est accessible depuis un
+            appareil que vous ne reconnaissez pas. Vous serez déconnecté ici
+            aussi et devrez vous reconnecter.
           </p>
-          <Button variant="outline" className="w-full">
-            Renvoyer l&apos;email de confirmation
+          <Button
+            variant="outline"
+            className="w-full border-destructive/30 text-destructive hover:bg-destructive/5 hover:text-destructive"
+            onClick={() => setLogoutAllDialog(true)}
+          >
+            <LogOut className="h-4 w-4 mr-2" />
+            Se déconnecter de tous les appareils
           </Button>
         </CardContent>
       </Card>
 
-      {/* Confirmation Dialog */}
+      {/* Confirmation — changement de mot de passe */}
       <AlertDialog open={changeDialog} onOpenChange={setChangeDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -265,18 +430,56 @@ export function SecurityTab() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogCancel disabled={submitting}>Annuler</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => {
-                setDone(true);
-                setChangeDialog(false);
-                setCurrentPassword("");
-                setNewPassword("");
-                setConfirmPassword("");
-                setTimeout(() => setDone(false), 5000);
+              disabled={submitting}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleConfirmChangePassword();
               }}
             >
-              Confirmer la modification
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Modification...
+                </>
+              ) : (
+                "Confirmer la modification"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirmation — déconnexion de tous les appareils */}
+      <AlertDialog open={logoutAllDialog} onOpenChange={setLogoutAllDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Déconnecter tous les appareils ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Toutes vos sessions actives seront fermées, y compris celle-ci.
+              Vous devrez vous reconnecter.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loggingOutAll}>
+              Annuler
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={loggingOutAll}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleLogoutAllDevices();
+              }}
+            >
+              {loggingOutAll ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Déconnexion...
+                </>
+              ) : (
+                "Déconnecter tous les appareils"
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

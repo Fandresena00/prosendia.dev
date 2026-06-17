@@ -1,9 +1,10 @@
 /**
  * @file src/features/auth/auth.controller.ts
  *
- * CHANGE: Ajout des endpoints Google OAuth.
- *   GET  /auth/google           → redirige vers Google consent screen
- *   GET  /auth/google/callback  → traite le retour Google, set cookies, redirige
+ * CHANGE: Ajout de POST /auth/logout-all — révoque toutes les sessions actives
+ * de l'utilisateur (tous appareils) et efface les cookies de l'appareil courant.
+ * Protégé par JwtAuthGuard (access token), pas besoin du refresh token pour
+ * déclencher cette action depuis une session déjà authentifiée.
  *
  * Fichier complet — remplace l'ancien auth.controller.ts.
  */
@@ -90,6 +91,8 @@ export class AuthController {
   private clearAuthCookies(res: Response): void {
     res.clearCookie(ACCESS_TOKEN_COOKIE, { path: '/' });
     res.clearCookie(REFRESH_TOKEN_COOKIE, { path: '/' });
+    // Cookie de présence de session lu par l'Edge Middleware Next.js
+    res.clearCookie('vendeo.session', { path: '/' });
   }
 
   // ─── Google OAuth ─────────────────────────────────────────────────────────
@@ -219,6 +222,25 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<void> {
     await this.authService.logout(payload);
+    this.clearAuthCookies(res);
+  }
+
+  // ─── Logout — tous les appareils ───────────────────────────────────────────
+
+  /**
+   * POST /auth/logout-all
+   * Déclenché depuis Paramètres > Sécurité > "Se déconnecter de tous les appareils".
+   * Protégé par le access token (JwtAuthGuard) — pas besoin du refresh token,
+   * l'utilisateur est déjà authentifié pour accéder à cette page.
+   */
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Post('logout-all')
+  async logoutAll(
+    @CurrentUser() user: AuthenticatedUser,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<void> {
+    await this.authService.revokeAllSessions(user.sub);
     this.clearAuthCookies(res);
   }
 

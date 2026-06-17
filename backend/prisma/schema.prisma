@@ -30,6 +30,13 @@ enum AuthProvider {
   FACEBOOK
 }
 
+enum AvatarSource {
+  /// Photo uploadée manuellement par l'utilisateur (fichier géré sur le disque serveur)
+  LOCAL
+  /// Photo synchronisée automatiquement depuis le profil Google à chaque login
+  GOOGLE
+}
+
 enum Plan {
   FREE
   STARTER
@@ -186,6 +193,7 @@ model User {
   username  String
   password  String
   avatarUrl String?
+  avatarSource  AvatarSource @default(LOCAL)
 
   providerId     String?
   onboardingDone  Boolean      @default(false)

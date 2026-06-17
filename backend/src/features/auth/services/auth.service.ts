@@ -1,13 +1,16 @@
 /**
  * @file src/features/auth/services/auth.service.ts
  *
- * CHANGE: Ajout de loginWithGoogle().
+ * CHANGE: Ajout de revokeAllSessions() — révoque tous les refresh tokens
+ * actifs de l'utilisateur (utilisé par POST /auth/logout-all, déclenché
+ * depuis la page Paramètres > Sécurité > "Se déconnecter de tous les appareils").
  * Fichier complet — remplace l'ancien auth.service.ts.
  */
 
 import {
   ConflictException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -41,6 +44,8 @@ export interface RegistrationInitiated {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
@@ -173,7 +178,8 @@ export class AuthService {
    * Appelé par AuthController.googleCallback() après que
    * GoogleStrategy.validate() a résolu.
    *
-   * req.user = UserResponseDto (trouvé ou créé par findOrCreateOAuthUser).
+   * req.user = UserResponseDto (trouvé ou créé par findOrCreateOAuthUser,
+   * qui gère aussi la synchro de l'avatar Google si applicable).
    * On génère juste les tokens — le compte existe déjà.
    *
    * Email de bienvenue envoyé uniquement au premier login
@@ -233,5 +239,21 @@ export class AuthService {
       throw new UnauthorizedException('Session invalide. Reconnectez-vous.');
     }
     await this.tokenSessionService.revokeSessionByJti(payload.sub, payload.jti);
+  }
+
+  // ─── Logout — tous les appareils ───────────────────────────────────────────
+
+  /**
+   * Révoque toutes les sessions (refresh tokens) actives de l'utilisateur,
+   * y compris celle de l'appareil courant. Appelé depuis Paramètres > Sécurité.
+   * Le contrôleur se charge ensuite d'effacer les cookies de l'appareil courant.
+   */
+  async revokeAllSessions(userId: string): Promise<void> {
+    const revokedCount = await this.tokenSessionService.revokeAllActiveSessions(
+      userId,
+    );
+    this.logger.log(
+      `[ALL_SESSIONS_REVOKED] userId=${userId} count=${revokedCount}`,
+    );
   }
 }

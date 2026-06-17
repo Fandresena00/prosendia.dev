@@ -1,3 +1,13 @@
+/**
+ * @file src/features/users/dto/update-user.dto.ts
+ *
+ * CHANGE: avatarUrl retiré. Le changement d'avatar passe désormais
+ * exclusivement par POST /users/:id/avatar (UsersService.replaceAvatar),
+ * qui supprime l'ancien fichier local et marque avatarSource=LOCAL.
+ * L'exposer ici permettrait de désynchroniser avatarUrl/avatarSource et de
+ * laisser des fichiers orphelins sur le disque.
+ */
+
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
@@ -5,10 +15,8 @@ import {
   IsEnum,
   IsOptional,
   IsString,
-  IsUrl,
   MaxLength,
   MinLength,
-  ValidateIf,
 } from 'class-validator';
 import { Plan } from '../../../generated/prisma/client.js';
 
@@ -26,11 +34,6 @@ export class UpdateUserDto {
   @MaxLength(30, { message: 'Username must be at most 30 characters' })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   username?: string;
-
-  @IsOptional()
-  @ValidateIf((_o, v) => v !== null)
-  @IsUrl({ require_tld: false }, { message: 'avatarUrl must be a valid URL' })
-  avatarUrl?: string | null;
 
   @IsOptional()
   @IsEnum(Plan, {
