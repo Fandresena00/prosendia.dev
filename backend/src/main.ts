@@ -32,6 +32,7 @@ async function bootstrap(): Promise<void> {
 
   const configService = app.get(ConfigService);
   const port = configService.getOrThrow<number>('port');
+  const adminUrl = configService.get<string>('adminUrl');
   const frontendUrl = configService.getOrThrow<string>('frontendUrl');
   const nodeEnv = configService.getOrThrow<string>('nodeEnv');
   const isProduction = nodeEnv === 'production';
@@ -92,8 +93,20 @@ async function bootstrap(): Promise<void> {
   // ── CORS ─────────────────────────────────────────────────────────────────────
   // credentials: true is REQUIRED for the browser to send/receive HttpOnly cookies.
   // Without this, Set-Cookie is silently ignored and cookies are never sent.
+
+  const allowedOrigins = [frontendUrl, adminUrl].filter((url): url is string =>
+    Boolean(url),
+  );
+
   app.enableCors({
-    origin: frontendUrl,
+    origin: (requestOrigin, callback) => {
+      if (!requestOrigin || allowedOrigins.includes(requestOrigin)) {
+        callback(null, true);
+        return;
+      }
+      logger.warn(`CORS rejected origin: ${requestOrigin}`);
+      callback(new Error('Not allowed by CORS'), false);
+    },
     optionsSuccessStatus: 200,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type'],
@@ -104,7 +117,7 @@ async function bootstrap(): Promise<void> {
 
   logger.log(`🚀 Server at http://localhost:${port}`);
   logger.log(`🌍 Environment: ${nodeEnv}`);
-  logger.log(`🔒 CORS origin: ${frontendUrl}`);
+  logger.log(`🔒 CORS origins: ${allowedOrigins.join(', ')}`);
   logger.log(`🍪 Cookie auth: enabled`);
 }
 

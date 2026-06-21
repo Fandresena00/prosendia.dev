@@ -53,4 +53,6 @@ export default () => ({
   adminJwtRefreshSecret: process.env.ADMIN_JWT_REFRESH_SECRET,
   superAdminEmail: process.env.SUPER_ADMIN_EMAIL,
   superAdminPassword: process.env.SUPER_ADMIN_PASSWORD,
+
+  adminUrl: process.env.ADMIN_URL,
 });

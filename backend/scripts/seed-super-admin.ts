@@ -21,7 +21,7 @@
 
 import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcrypt';
-import { PrismaClient } from '../generated/prisma/client.js';
+import { PrismaClient } from '../src/generated/prisma/client.js';
 
 const PASSWORD_HASH_ROUNDS = 12;
 

@@ -77,4 +77,6 @@ export const ValidationSchema = Joi.object({
   ADMIN_JWT_REFRESH_SECRET: Joi.string().min(32).required(),
   SUPER_ADMIN_EMAIL: Joi.string().email().required(),
   SUPER_ADMIN_PASSWORD: Joi.string().min(12).required(),
+
+  ADMIN_URL: Joi.string().uri().optional(),
 });
