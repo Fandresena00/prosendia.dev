@@ -28,8 +28,8 @@ import { EmailVerificationService } from './email-verification.service.js';
 import { TokenSessionService } from './token-session.service.js';
 
 const REGISTER_HASH_ROUNDS = 12;
-const REFRESH_HASH_ROUNDS  = 10;
-const REFRESH_TTL_MS       = 7 * 24 * 60 * 60 * 1000;
+const REFRESH_HASH_ROUNDS = 10;
+const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface AuthServiceResult {
   user: UserResponseDto;
@@ -152,8 +152,8 @@ export class AuthService {
     }
 
     const user = await this.usersService.createVerifiedUser({
-      email:        pending.email,
-      username:     pending.username,
+      email: pending.email,
+      username: pending.username,
       passwordHash: pending.passwordHash,
     });
 
@@ -186,8 +186,7 @@ export class AuthService {
    * (createdAt ≈ maintenant = nouveau compte).
    */
   async loginWithGoogle(user: UserResponseDto): Promise<AuthServiceResult> {
-    const isNewUser =
-      Date.now() - new Date(user.createdAt).getTime() < 10_000;
+    const isNewUser = Date.now() - new Date(user.createdAt).getTime() < 10_000;
 
     if (isNewUser) {
       this.emailService
@@ -249,9 +248,8 @@ export class AuthService {
    * Le contrôleur se charge ensuite d'effacer les cookies de l'appareil courant.
    */
   async revokeAllSessions(userId: string): Promise<void> {
-    const revokedCount = await this.tokenSessionService.revokeAllActiveSessions(
-      userId,
-    );
+    const revokedCount =
+      await this.tokenSessionService.revokeAllActiveSessions(userId);
     this.logger.log(
       `[ALL_SESSIONS_REVOKED] userId=${userId} count=${revokedCount}`,
     );

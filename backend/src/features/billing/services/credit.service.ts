@@ -19,8 +19,12 @@
  * 5. repairBalance() — méthode admin qui recalcule le solde depuis le ledger
  *    et corrige les incohérences.
  */
-
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
 import {
   BILLING_PLANS,
@@ -35,6 +39,69 @@ export class CreditService {
   private readonly logger = new Logger(CreditService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  // ─── Admin: ajustement manuel du solde ─────────────────────────────────────
+
+  /**
+   * Ajuste manuellement le solde d'un utilisateur (action admin).
+   * Contrairement à grantCredits() (qui FIXE le solde à une valeur, utilisé
+   * pour les attributions d'abonnement), cette méthode INCRÉMENTE/DÉCRÉMENTE
+   * le solde existant — adaptée à un ajustement ponctuel ("+50 crédits offerts").
+   *
+   * @param amount  Positif = créditer, négatif = débiter.
+   *                Le solde ne descend jamais sous 0.
+   */ async adminAdjustCredits(
+    userId: string,
+    amount: number,
+    reason: string,
+  ): Promise<{ previousBalance: number; newBalance: number; applied: number }> {
+    if (amount === 0) {
+      throw new BadRequestException('Le montant ajusté ne peut pas être 0.');
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { creditBalance: true },
+      });
+      if (!user) throw new NotFoundException(`User ${userId} not found`);
+
+      const previousBalance = user.creditBalance;
+      const newBalance = Math.max(0, previousBalance + amount);
+      const applied = newBalance - previousBalance; // peut différer de `amount` si clampé à 0
+
+      await tx.user.update({
+        where: { id: userId },
+        data: { creditBalance: newBalance },
+      });
+
+      const activeSub = await tx.subscription.findFirst({
+        where: { userId, status: 'ACTIVE' },
+        select: { id: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      await tx.creditLedger.create({
+        data: {
+          userId,
+          subscriptionId: activeSub?.id ?? null,
+          type: 'ADMIN_ADJUST', // ← corrigé (était 'ADMIN_ADJUSTMENT')
+          amount: applied,
+          description: `[Admin] ${reason}`,
+        },
+      });
+
+      return { previousBalance, newBalance, applied };
+    });
+
+    this.logger.log(
+      `[CREDITS_ADMIN_ADJUSTED] user=${userId} amount=${amount} applied=${result.applied} ` +
+        `${result.previousBalance} → ${result.newBalance} — reason="${reason}"`,
+    );
+
+    await this.checkAndAlert(userId, result.newBalance);
+
+    return result;
+  }
 
   // ─── Initialize FREE user (appelé à l'inscription) ────────────────────────
 
@@ -54,7 +121,7 @@ export class CreditService {
    */
   async initializeFreeUser(userId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({
-      where:  { id: userId },
+      where: { id: userId },
       select: { creditBalance: true, activePlan: true },
     });
 
@@ -75,7 +142,7 @@ export class CreditService {
 
     this.logger.log(
       `[CREDITS_INITIALIZING] New user ${userId} — plan=FREE ` +
-      `credits=${BILLING_PLANS.FREE.credits}`,
+        `credits=${BILLING_PLANS.FREE.credits}`,
     );
 
     const now = new Date();
@@ -86,19 +153,19 @@ export class CreditService {
     const sub = await this.prisma.subscription.create({
       data: {
         userId,
-        plan:           'FREE',
-        status:         'ACTIVE',
+        plan: 'FREE',
+        status: 'ACTIVE',
         creditsGranted: BILLING_PLANS.FREE.credits,
-        periodStart:    now,
-        periodEnd:      end,
+        periodStart: now,
+        periodEnd: end,
       },
       select: { id: true },
     });
 
     this.logger.log(
       `[SUBSCRIPTION_CREATED] FREE ACTIVE — ` +
-      `subscriptionId=${sub.id} user=${userId} ` +
-      `periodEnd=${end.toISOString()}`,
+        `subscriptionId=${sub.id} user=${userId} ` +
+        `periodEnd=${end.toISOString()}`,
     );
 
     // Attribuer les crédits
@@ -111,7 +178,7 @@ export class CreditService {
 
     this.logger.log(
       `[CREDITS_INITIALIZED] user=${userId} credits=${BILLING_PLANS.FREE.credits} ` +
-      `subscriptionId=${sub.id}`,
+        `subscriptionId=${sub.id}`,
     );
   }
 
@@ -119,7 +186,7 @@ export class CreditService {
 
   async hasCredits(userId: string): Promise<boolean> {
     const user = await this.prisma.user.findUnique({
-      where:  { id: userId },
+      where: { id: userId },
       select: { creditBalance: true },
     });
     const has = (user?.creditBalance ?? 0) > 0;
@@ -136,12 +203,12 @@ export class CreditService {
   // ─── Consume credits ───────────────────────────────────────────────────────
 
   async consumeCredits(
-    userId:          string,
-    tokensUsed:      number,
-    type:            'AI_REPLY_CONSUME' | 'COMMENT_AI_CONSUME' | 'AI_SUGGESTION_CONSUME',
-    modelId:         string,
+    userId: string,
+    tokensUsed: number,
+    type: 'AI_REPLY_CONSUME' | 'COMMENT_AI_CONSUME' | 'AI_SUGGESTION_CONSUME',
+    modelId: string,
     conversationId?: string,
-    commentId?:      string,
+    commentId?: string,
   ): Promise<{ creditsDeducted: number; newBalance: number }> {
     const creditsToDeduct = tokensToCredits(tokensUsed);
 
@@ -151,22 +218,22 @@ export class CreditService {
 
     const result = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({
-        where:  { id: userId },
+        where: { id: userId },
         select: { creditBalance: true },
       });
       if (!user) throw new Error(`User ${userId} not found`);
 
-      const actual     = Math.min(creditsToDeduct, user.creditBalance);
+      const actual = Math.min(creditsToDeduct, user.creditBalance);
       const newBalance = user.creditBalance - actual;
 
       await tx.user.update({
         where: { id: userId },
-        data:  { creditBalance: newBalance },
+        data: { creditBalance: newBalance },
       });
 
       const activeSub = await tx.subscription.findFirst({
-        where:   { userId, status: 'ACTIVE' },
-        select:  { id: true },
+        where: { userId, status: 'ACTIVE' },
+        select: { id: true },
         orderBy: { createdAt: 'desc' },
       });
 
@@ -175,16 +242,17 @@ export class CreditService {
           userId,
           subscriptionId: activeSub?.id ?? null,
           type,
-          amount:         -actual,
+          amount: -actual,
           tokensUsed,
           modelId,
           conversationId: conversationId ?? null,
-          commentId:      commentId ?? null,
-          description:    type === 'AI_REPLY_CONSUME'
-            ? `Réponse IA Messenger (${tokensUsed} tokens)`
-            : type === 'COMMENT_AI_CONSUME'
-              ? `Réponse IA commentaire (${tokensUsed} tokens)`
-              : `Suggestion IA configuration (${tokensUsed} tokens)`,
+          commentId: commentId ?? null,
+          description:
+            type === 'AI_REPLY_CONSUME'
+              ? `Réponse IA Messenger (${tokensUsed} tokens)`
+              : type === 'COMMENT_AI_CONSUME'
+                ? `Réponse IA commentaire (${tokensUsed} tokens)`
+                : `Suggestion IA configuration (${tokensUsed} tokens)`,
         },
       });
 
@@ -193,7 +261,7 @@ export class CreditService {
 
     this.logger.debug(
       `[CREDITS_CONSUMED] user=${userId} -${result.creditsDeducted} credits ` +
-      `tokens=${tokensUsed} model=${modelId} balance=${result.newBalance}`,
+        `tokens=${tokensUsed} model=${modelId} balance=${result.newBalance}`,
     );
 
     await this.checkAndAlert(userId, result.newBalance);
@@ -204,10 +272,10 @@ export class CreditService {
   // ─── Grant credits ─────────────────────────────────────────────────────────
 
   async grantCredits(
-    userId:         string,
+    userId: string,
     subscriptionId: string,
-    credits:        number,
-    planName:       string,
+    credits: number,
+    planName: string,
   ): Promise<void> {
     if (credits <= 0) {
       this.logger.warn(
@@ -219,14 +287,14 @@ export class CreditService {
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: userId },
-        data:  { creditBalance: credits, creditAlertSent: false },
+        data: { creditBalance: credits, creditAlertSent: false },
       });
       await tx.creditLedger.create({
         data: {
           userId,
           subscriptionId,
-          type:        'SUBSCRIPTION_GRANT',
-          amount:      credits,
+          type: 'SUBSCRIPTION_GRANT',
+          amount: credits,
           description: `Attribution abonnement ${planName} — ${credits} crédits`,
         },
       });
@@ -234,7 +302,7 @@ export class CreditService {
 
     this.logger.log(
       `[CREDITS_GRANTED] user=${userId} credits=${credits} ` +
-      `plan="${planName}" subscriptionId=${subscriptionId}`,
+        `plan="${planName}" subscriptionId=${subscriptionId}`,
     );
   }
 
@@ -245,30 +313,32 @@ export class CreditService {
    * Utile pour détecter et réparer les incohérences.
    * À appeler manuellement ou depuis un endpoint admin.
    */
-  async repairBalance(userId: string): Promise<{ before: number; after: number; ledgerSum: number }> {
+  async repairBalance(
+    userId: string,
+  ): Promise<{ before: number; after: number; ledgerSum: number }> {
     const user = await this.prisma.user.findUnique({
-      where:  { id: userId },
+      where: { id: userId },
       select: { creditBalance: true },
     });
     if (!user) throw new Error(`User ${userId} not found`);
 
     const ledgerEntries = await this.prisma.creditLedger.findMany({
-      where:  { userId },
+      where: { userId },
       select: { amount: true },
     });
 
     const ledgerSum = ledgerEntries.reduce((sum, e) => sum + e.amount, 0);
-    const before    = user.creditBalance;
+    const before = user.creditBalance;
 
     if (ledgerSum !== before) {
       this.logger.warn(
         `[CREDITS_REPAIR] Inconsistency detected for user=${userId} — ` +
-        `user.creditBalance=${before} ledgerSum=${ledgerSum}. Repairing…`,
+          `user.creditBalance=${before} ledgerSum=${ledgerSum}. Repairing…`,
       );
 
       await this.prisma.user.update({
         where: { id: userId },
-        data:  { creditBalance: Math.max(0, ledgerSum) },
+        data: { creditBalance: Math.max(0, ledgerSum) },
       });
 
       this.logger.log(
@@ -287,42 +357,48 @@ export class CreditService {
 
   async getCreditStatus(userId: string): Promise<CreditStatusDto> {
     const user = await this.prisma.user.findUnique({
-      where:  { id: userId },
+      where: { id: userId },
       select: { creditBalance: true, activePlan: true },
     });
     if (!user) throw new Error(`User ${userId} not found`);
 
     const activeSub = await this.prisma.subscription.findFirst({
-      where:   { userId, status: 'ACTIVE' },
-      select:  { creditsGranted: true, periodEnd: true },
+      where: { userId, status: 'ACTIVE' },
+      select: { creditsGranted: true, periodEnd: true },
       orderBy: { createdAt: 'desc' },
     });
 
-    const planConfig      = BILLING_PLANS[user.activePlan as keyof typeof BILLING_PLANS];
-    const creditsGranted  = activeSub?.creditsGranted ?? planConfig?.credits ?? null;
-    const creditBalance   = user.creditBalance;
+    const planConfig =
+      BILLING_PLANS[user.activePlan as keyof typeof BILLING_PLANS];
+    const creditsGranted =
+      activeSub?.creditsGranted ?? planConfig?.credits ?? null;
+    const creditBalance = user.creditBalance;
 
-    const usagePercent    = creditsGranted
+    const usagePercent = creditsGranted
       ? Math.round(((creditsGranted - creditBalance) / creditsGranted) * 100)
       : 0;
     const remainingPercent = Math.max(0, 100 - usagePercent);
 
-    const now           = new Date();
-    const periodEnd     = activeSub?.periodEnd ?? null;
-    const isExpired     = periodEnd ? periodEnd < now : false;
+    const now = new Date();
+    const periodEnd = activeSub?.periodEnd ?? null;
+    const isExpired = periodEnd ? periodEnd < now : false;
     const daysRemaining = periodEnd
-      ? Math.max(0, Math.ceil((periodEnd.getTime() - now.getTime()) / 86_400_000))
+      ? Math.max(
+          0,
+          Math.ceil((periodEnd.getTime() - now.getTime()) / 86_400_000),
+        )
       : null;
 
-    const isLow      = creditsGranted
+    const isLow = creditsGranted
       ? remainingPercent <= CREDIT_ALERT_THRESHOLD_PCT
       : false;
-    const isCritical = creditBalance < CREDIT_CRITICAL_THRESHOLD && creditBalance > 0;
+    const isCritical =
+      creditBalance < CREDIT_CRITICAL_THRESHOLD && creditBalance > 0;
     const isDepleted = creditBalance <= 0;
 
     return {
-      plan:              user.activePlan,
-      planName:          planConfig?.name ?? user.activePlan,
+      plan: user.activePlan,
+      planName: planConfig?.name ?? user.activePlan,
       creditBalance,
       creditsGranted,
       usagePercent,
@@ -333,15 +409,15 @@ export class CreditService {
       isDepleted,
       periodEnd,
       daysRemaining,
-      maxPages:           planConfig?.maxPages ?? null,
-      maxManagedPosts:    planConfig?.maxManagedPosts ?? null,
+      maxPages: planConfig?.maxPages ?? null,
+      maxManagedPosts: planConfig?.maxManagedPosts ?? null,
       maxReferenceImages: planConfig?.maxReferenceImages ?? null,
     };
   }
 
   async getBalance(userId: string): Promise<number> {
     const user = await this.prisma.user.findUnique({
-      where:  { id: userId },
+      where: { id: userId },
       select: { creditBalance: true },
     });
     return user?.creditBalance ?? 0;
@@ -350,27 +426,36 @@ export class CreditService {
   async getLedgerHistory(userId: string, page = 1, pageSize = 20) {
     const [entries, total] = await Promise.all([
       this.prisma.creditLedger.findMany({
-        where:   { userId },
+        where: { userId },
         orderBy: { createdAt: 'desc' },
-        skip:    (page - 1) * pageSize,
-        take:    pageSize,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
         select: {
-          id: true, type: true, amount: true,
-          tokensUsed: true, modelId: true,
-          description: true, createdAt: true,
+          id: true,
+          type: true,
+          amount: true,
+          tokensUsed: true,
+          modelId: true,
+          description: true,
+          createdAt: true,
         },
       }),
       this.prisma.creditLedger.count({ where: { userId } }),
     ]);
     return {
       data: entries,
-      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
     };
   }
 
   async downgradeToFreeOnDepletion(userId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({
-      where:  { id: userId },
+      where: { id: userId },
       select: { creditBalance: true, activePlan: true },
     });
     if (!user || user.creditBalance > 0 || user.activePlan === 'FREE') return;
@@ -386,11 +471,11 @@ export class CreditService {
     const freeSub = await this.prisma.subscription.create({
       data: {
         userId,
-        plan:           'FREE',
-        status:         'ACTIVE',
+        plan: 'FREE',
+        status: 'ACTIVE',
         creditsGranted: BILLING_PLANS.FREE.credits,
-        periodStart:    now,
-        periodEnd:      end,
+        periodStart: now,
+        periodEnd: end,
       },
       select: { id: true },
     });
@@ -398,11 +483,11 @@ export class CreditService {
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: userId },
-        data:  { activePlan: 'FREE' },
+        data: { activePlan: 'FREE' },
       });
       await tx.subscription.updateMany({
         where: { userId, status: 'ACTIVE', id: { not: freeSub.id } },
-        data:  { status: 'EXPIRED' },
+        data: { status: 'EXPIRED' },
       });
     });
 
@@ -415,7 +500,7 @@ export class CreditService {
 
     this.logger.warn(
       `[SUBSCRIPTION_RENEWED_FREE] user=${userId} downgraded to FREE ` +
-      `credits=${BILLING_PLANS.FREE.credits}`,
+        `credits=${BILLING_PLANS.FREE.credits}`,
     );
   }
 
@@ -423,12 +508,13 @@ export class CreditService {
 
   private async checkAndAlert(userId: string, balance: number): Promise<void> {
     const user = await this.prisma.user.findUnique({
-      where:  { id: userId },
+      where: { id: userId },
       select: { creditAlertSent: true, activePlan: true },
     });
     if (!user) return;
 
-    const planConfig     = BILLING_PLANS[user.activePlan as keyof typeof BILLING_PLANS];
+    const planConfig =
+      BILLING_PLANS[user.activePlan as keyof typeof BILLING_PLANS];
     const creditsGranted = planConfig?.credits ?? null;
 
     if (
@@ -438,11 +524,11 @@ export class CreditService {
     ) {
       await this.prisma.user.update({
         where: { id: userId },
-        data:  { creditAlertSent: true },
+        data: { creditAlertSent: true },
       });
       this.logger.warn(
         `[CREDITS_ALERT_20PCT] user=${userId} balance=${balance}/${creditsGranted} ` +
-        `(${Math.round((balance / creditsGranted) * 100)}%)`,
+          `(${Math.round((balance / creditsGranted) * 100)}%)`,
       );
     }
 

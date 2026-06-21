@@ -24,6 +24,25 @@ datasource db {
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
+enum AdminRole {
+  SUPER_ADMIN
+  ADMIN
+}
+
+enum AdminAuditAction {
+  LOGIN
+  CREATE_ADMIN
+  DELETE_ADMIN
+  SUSPEND_USER
+  REACTIVATE_USER
+  DELETE_USER
+  CHANGE_PLAN
+  ADD_CREDITS
+  REMOVE_CREDITS
+  REVOKE_SUBSCRIPTION
+  ACTIVATE_SUBSCRIPTION
+}
+
 enum AuthProvider {
   LOCAL
   GOOGLE
@@ -182,6 +201,40 @@ enum AiDecision {
   ERROR
 }
 
+
+
+model Admin {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         AdminRole @default(ADMIN)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  auditLogs AdminAuditLog[]
+
+  @@map("admins")
+}
+
+model AdminAuditLog {
+  id         String           @id @default(uuid())
+  adminId    String
+  admin      Admin            @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  action     AdminAuditAction
+  targetType String           // "USER" | "ADMIN" | "SUBSCRIPTION"
+  targetId   String?
+  metadata   Json?
+  createdAt  DateTime         @default(now())
+
+  @@index([adminId])
+  @@index([targetType, targetId])
+  @@map("admin_audit_logs")
+}
+
+
+
 // =============================================================================
 // ── Auth & Users
 // =============================================================================
@@ -215,6 +268,10 @@ emailVerifiedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+    isSuspended   Boolean   @default(false)
+  suspendedAt   DateTime?
+  suspendedReason String?
 
   @@map("users")
   webPushSubscriptions WebPushSubscription[]
