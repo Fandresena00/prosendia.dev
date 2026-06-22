@@ -1,6 +1,6 @@
 // lib/admin-api.ts
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+const API_BASE = `${process.env.NEXT_PUBLIC_API_URL}/admin`;
 
 export class AdminApiError extends Error {
   constructor(
