@@ -905,9 +905,12 @@ export class FacebookPostsService {
         this.logger.warn(
           `Failed private reply comment=${commentId}: ${err.message}`,
         );
-        throw new BadGatewayException(
-          `Facebook a refusé la réponse privée: ${err.message}`,
-        );
+        // #10901 = Facebook's 24-hour private reply window has expired.
+        // Surface a clear, actionable message instead of the raw API error.
+        const userMessage = err.message.includes('10901') || err.message.includes('replying time expired')
+          ? 'Facebook interdit les réponses privées après 24h. Répondez publiquement au commentaire à la place.'
+          : `Facebook a refusé la réponse privée: ${err.message}`;
+        throw new BadGatewayException(userMessage);
       }
       throw err;
     }

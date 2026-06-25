@@ -47,7 +47,7 @@
  *    (type 'AI_SUGGESTION_CONSUME').
  */
 
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../../../../database/prisma.service.js';
 import { OpenRouterClient } from '../../../ai/clients/openrouter.client.js';
 import {
@@ -503,7 +503,7 @@ export class PostCommentAiService {
     // ⭐ CREDIT CHECK — suggestions consomment aussi des crédits
     const hasCredits = await this.creditService.hasCredits(userId);
     if (!hasCredits) {
-      throw new NotFoundException(
+      throw new ServiceUnavailableException(
         'Crédits IA épuisés. Rechargez votre abonnement pour utiliser les suggestions IA.',
       );
     }
@@ -537,8 +537,8 @@ export class PostCommentAiService {
     );
 
     if (!result) {
-      throw new NotFoundException(
-        "L'IA n'a pas pu générer de suggestion (tous les modèles ont échoué). Réessayez.",
+      throw new ServiceUnavailableException(
+        "L'IA n'a pas pu générer de suggestion (tous les modèles sont indisponibles). Réessayez dans quelques instants.",
       );
     }
 
