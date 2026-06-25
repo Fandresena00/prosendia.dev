@@ -5,6 +5,13 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -19,184 +26,299 @@ import {
   type AdminUserListItem,
   type PaginatedResult,
 } from "@/lib/admin-api";
-import { ChevronLeft, ChevronRight, Search } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import type { ComponentProps } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-const PLAN_LABELS: Record<string, { label: string; className: string }> = {
-  FREE: {
-    label: "Gratuit",
-    className: "border-zinc-700 bg-zinc-800/60 text-zinc-400",
-  },
-  STARTER: {
-    label: "Starter",
-    className: "border-blue-800/40 bg-blue-950/40 text-blue-400",
-  },
-  PRO: {
-    label: "Pro",
-    className: "border-emerald-800/40 bg-emerald-950/40 text-emerald-400",
-  },
-  CUSTOM: {
-    label: "Custom",
-    className: "border-purple-800/40 bg-purple-950/40 text-purple-400",
-  },
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type BadgeVariant = ComponentProps<typeof Badge>["variant"];
+
+// ─── Constantes module-level ──────────────────────────────────────────────────
+
+const PLAN_BADGE_VARIANT: Record<string, BadgeVariant> = {
+  FREE: "secondary",
+  STARTER: "outline",
+  PRO: "default",
+  CUSTOM: "outline",
 };
 
-function PlanBadge({ plan }: { plan: string }) {
-  const cfg = PLAN_LABELS[plan] ?? {
-    label: plan,
-    className: "border-zinc-700 bg-zinc-800 text-zinc-400",
-  };
+const PLAN_DISPLAY_LABELS: Record<string, string> = {
+  FREE: "Gratuit",
+  STARTER: "Starter",
+  PRO: "Pro",
+  CUSTOM: "Custom",
+};
+
+// ─── Subcomponents ────────────────────────────────────────────────────────────
+
+function UserStatusBadge({ isSuspended }: { isSuspended: boolean }) {
+  if (isSuspended) {
+    return <Badge variant="destructive">Suspendu</Badge>;
+  }
   return (
     <Badge
       variant="outline"
-      className={`text-[11px] font-medium ${cfg.className}`}
+      className="border-primary/30 bg-primary/5 text-primary"
     >
-      {cfg.label}
+      Actif
     </Badge>
   );
 }
 
-function TableSkeleton() {
-  return Array.from({ length: 8 }).map((_, i) => (
-    <TableRow key={i} className="border-zinc-800/60 hover:bg-transparent">
-      {Array.from({ length: 5 }).map((_, j) => (
-        <TableCell key={j} className="py-3">
-          <Skeleton className="h-4 w-full bg-zinc-800" />
+function TableSkeletonRows() {
+  return Array.from({ length: 10 }).map((_, rowIndex) => (
+    <TableRow key={rowIndex}>
+      {Array.from({ length: 5 }).map((_, colIndex) => (
+        <TableCell key={colIndex}>
+          <Skeleton className="h-4 w-full" />
         </TableCell>
       ))}
     </TableRow>
   ));
 }
 
+// ─── Filtres ──────────────────────────────────────────────────────────────────
+
+type PlanFilter = "all" | "FREE" | "STARTER" | "PRO" | "CUSTOM";
+type StatusFilter = "all" | "active" | "suspended";
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function AdminUsersPage() {
-  const [result, setResult] =
+  const [paginatedResult, setPaginatedResult] =
     useState<PaginatedResult<AdminUserListItem> | null>(null);
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [planFilter, setPlanFilter] = useState<PlanFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  function load(p = page, q = search) {
-    setLoading(true);
-    adminUsersApi
-      .list({ page: p, pageSize: 20, search: q || undefined })
-      .then(setResult)
-      .finally(() => setLoading(false));
-  }
+  // useCallback pour stabiliser la référence et satisfaire exhaustive-deps
+  const fetchUsers = useCallback(
+    (pageToFetch: number) => {
+      let cancelled = false;
 
+      setIsLoading(true);
+
+      adminUsersApi
+        .list({
+          page: pageToFetch,
+          pageSize: 20,
+          search: searchQuery || undefined,
+          plan: planFilter !== "all" ? planFilter : undefined,
+          suspended:
+            statusFilter === "suspended"
+              ? true
+              : statusFilter === "active"
+                ? false
+                : undefined,
+        })
+        .then((data) => {
+          if (!cancelled) setPaginatedResult(data);
+        })
+        .finally(() => {
+          if (!cancelled) setIsLoading(false);
+        });
+
+      return () => {
+        cancelled = true;
+      };
+    },
+    // searchQuery et les filtres sont intentionnellement exclus ici —
+    // la recherche se déclenche via handleSearchSubmit, les filtres via leur propre effet
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentPage],
+  );
+
+  // Rechargement quand la page change
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    load();
-  }, [load, page]);
+    const cancel = fetchUsers(currentPage);
+    return cancel;
+  }, [fetchUsers, currentPage]);
 
-  function handleSearchSubmit(e: React.FormEvent) {
+  // Rechargement réactif quand les filtres changent (pas de setTimeout)
+  useEffect(() => {
+    let cancelled = false;
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsLoading(true);
+    setCurrentPage(1);
+
+    adminUsersApi
+      .list({
+        page: 1,
+        pageSize: 20,
+        search: searchQuery || undefined,
+        plan: planFilter !== "all" ? planFilter : undefined,
+        suspended:
+          statusFilter === "suspended"
+            ? true
+            : statusFilter === "active"
+              ? false
+              : undefined,
+      })
+      .then((data) => {
+        if (!cancelled) setPaginatedResult(data);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // Déclenché uniquement quand planFilter ou statusFilter changent
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planFilter, statusFilter]);
+
+  function handleSearchSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setPage(1);
-    load(1, search);
+    setCurrentPage(1);
+    fetchUsers(1);
   }
 
-  const { pagination } = result ?? {};
+  function handlePlanFilterChange(newPlan: string) {
+    setPlanFilter(newPlan as PlanFilter);
+  }
+
+  function handleStatusFilterChange(newStatus: string) {
+    setStatusFilter(newStatus as StatusFilter);
+  }
+
+  function goToPreviousPage() {
+    setCurrentPage((prevPage) => prevPage - 1);
+  }
+
+  function goToNextPage() {
+    setCurrentPage((prevPage) => prevPage + 1);
+  }
+
+  const { pagination } = paginatedResult ?? {};
 
   return (
-    <div>
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
+    <div className="flex h-full flex-col gap-4">
+      {/* ── En-tête ───────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[18px] font-semibold tracking-tight text-zinc-100">
-            Utilisateurs
-          </h1>
-          {pagination && (
-            <p className="mt-0.5 text-[13px] text-zinc-500">
-              {pagination.total.toLocaleString("fr-FR")} comptes enregistrés
-            </p>
-          )}
+          <h1 className="text-xl font-semibold">Utilisateurs</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {pagination
+              ? `${pagination.total.toLocaleString("fr-FR")} comptes enregistrés`
+              : "Chargement…"}
+          </p>
         </div>
-
-        <form onSubmit={handleSearchSubmit} className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Rechercher par email ou nom…"
-            className="h-9 w-72 border-zinc-800 bg-zinc-900 pl-8 text-[13px] text-zinc-100 placeholder:text-zinc-600 focus-visible:border-emerald-500/50 focus-visible:ring-0 focus-visible:ring-offset-0"
-          />
-        </form>
       </div>
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-zinc-800/60">
+      {/* ── Filtres ───────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Recherche */}
+        <form
+          onSubmit={handleSearchSubmit}
+          className="relative min-w-[240px] max-w-sm flex-1"
+        >
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Rechercher par email ou nom…"
+            className="pl-9"
+          />
+        </form>
+
+        {/* Filtre plan */}
+        <Select value={planFilter} onValueChange={handlePlanFilterChange}>
+          <SelectTrigger className="w-36">
+            <SlidersHorizontal className="mr-2 h-3.5 w-3.5 text-muted-foreground" />
+            <SelectValue placeholder="Plan" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous les plans</SelectItem>
+            <SelectItem value="FREE">Gratuit</SelectItem>
+            <SelectItem value="STARTER">Starter</SelectItem>
+            <SelectItem value="PRO">Pro</SelectItem>
+            <SelectItem value="CUSTOM">Custom</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Filtre statut */}
+        <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
+          <SelectTrigger className="w-36">
+            <SelectValue placeholder="Statut" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous les statuts</SelectItem>
+            <SelectItem value="active">Actifs</SelectItem>
+            <SelectItem value="suspended">Suspendus</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* ── Tableau ───────────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-hidden rounded-lg border border-border">
         <Table>
           <TableHeader>
-            <TableRow className="border-zinc-800/60 hover:bg-transparent">
-              <TableHead className="bg-zinc-900/80 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-                Utilisateur
-              </TableHead>
-              <TableHead className="bg-zinc-900/80 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-                Plan
-              </TableHead>
-              <TableHead className="bg-zinc-900/80 text-right text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-                Crédits
-              </TableHead>
-              <TableHead className="bg-zinc-900/80 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-                Inscrit le
-              </TableHead>
-              <TableHead className="bg-zinc-900/80 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-                Statut
-              </TableHead>
+            <TableRow>
+              <TableHead>Utilisateur</TableHead>
+              <TableHead>Plan</TableHead>
+              <TableHead className="text-right">Crédits</TableHead>
+              <TableHead>Inscrit le</TableHead>
+              <TableHead>Statut</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading ? (
-              <TableSkeleton />
-            ) : result?.data.length === 0 ? (
-              <TableRow className="border-zinc-800/60 hover:bg-transparent">
+            {isLoading ? (
+              <TableSkeletonRows />
+            ) : paginatedResult?.data.length === 0 ? (
+              <TableRow>
                 <TableCell
                   colSpan={5}
-                  className="py-12 text-center text-[13px] text-zinc-600"
+                  className="py-16 text-center text-muted-foreground"
                 >
                   Aucun utilisateur trouvé.
                 </TableCell>
               </TableRow>
             ) : (
-              result?.data.map((user) => (
-                <TableRow
-                  key={user.id}
-                  className="border-zinc-800/40 transition-colors hover:bg-zinc-900/40"
-                >
-                  <TableCell className="py-3">
-                    <Link href={`/users/${user.id}`} className="group">
-                      <p className="text-[13px] font-medium text-zinc-200 group-hover:text-emerald-400 transition-colors">
-                        {user.username}
+              paginatedResult?.data.map((userItem) => (
+                <TableRow key={userItem.id}>
+                  <TableCell>
+                    <Link
+                      href={`/users/${userItem.id}`}
+                      className="group block"
+                    >
+                      <p className="font-medium transition-colors group-hover:text-primary">
+                        {userItem.username}
                       </p>
-                      <p className="text-[12px] text-zinc-500">{user.email}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {userItem.email}
+                      </p>
                     </Link>
                   </TableCell>
-                  <TableCell className="py-3">
-                    <PlanBadge plan={user.activePlan} />
+                  <TableCell>
+                    <Badge
+                      variant={
+                        PLAN_BADGE_VARIANT[userItem.activePlan] ?? "outline"
+                      }
+                    >
+                      {PLAN_DISPLAY_LABELS[userItem.activePlan] ??
+                        userItem.activePlan}
+                    </Badge>
                   </TableCell>
-                  <TableCell className="py-3 text-right font-mono text-[13px] tabular-nums text-zinc-400">
-                    {user.creditBalance.toLocaleString("fr-FR")}
+                  <TableCell className="text-right font-mono text-sm tabular-nums">
+                    {userItem.creditBalance.toLocaleString("fr-FR")}
                   </TableCell>
-                  <TableCell className="py-3 text-[12px] text-zinc-500">
-                    {new Date(user.createdAt).toLocaleDateString("fr-FR")}
+                  <TableCell className="text-sm text-muted-foreground">
+                    {new Date(userItem.createdAt).toLocaleDateString("fr-FR")}
                   </TableCell>
-                  <TableCell className="py-3">
-                    {user.isSuspended ? (
-                      <Badge
-                        variant="outline"
-                        className="border-red-900/50 bg-red-950/30 text-[11px] text-red-400"
-                      >
-                        Suspendu
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="border-emerald-900/50 bg-emerald-950/30 text-[11px] text-emerald-400"
-                      >
-                        Actif
-                      </Badge>
-                    )}
+                  <TableCell>
+                    <UserStatusBadge isSuspended={userItem.isSuspended} />
                   </TableCell>
                 </TableRow>
               ))
@@ -205,33 +327,32 @@ export default function AdminUsersPage() {
         </Table>
       </div>
 
-      {/* Pagination */}
+      {/* ── Pagination ────────────────────────────────────────────────── */}
       {pagination && pagination.totalPages > 1 && (
-        <div className="mt-4 flex items-center justify-between">
-          <p className="text-[12px] text-zinc-500">
-            Page {pagination.page} / {pagination.totalPages} —{" "}
+        <div className="flex items-center justify-between text-sm">
+          <p className="text-muted-foreground">
+            Page {pagination.page} / {pagination.totalPages}
+            {" · "}
             {pagination.total.toLocaleString("fr-FR")} utilisateurs
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <Button
               variant="outline"
-              size="sm"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => p - 1)}
-              className="h-8 border-zinc-800 bg-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 disabled:opacity-30"
+              size="icon"
+              disabled={currentPage <= 1}
+              onClick={goToPreviousPage}
+              aria-label="Page précédente"
             >
-              <ChevronLeft className="h-3.5 w-3.5" />
-              Précédent
+              <ChevronLeft className="h-4 w-4" />
             </Button>
             <Button
               variant="outline"
-              size="sm"
-              disabled={page >= pagination.totalPages}
-              onClick={() => setPage((p) => p + 1)}
-              className="h-8 border-zinc-800 bg-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 disabled:opacity-30"
+              size="icon"
+              disabled={currentPage >= pagination.totalPages}
+              onClick={goToNextPage}
+              aria-label="Page suivante"
             >
-              Suivant
-              <ChevronRight className="h-3.5 w-3.5" />
+              <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
         </div>

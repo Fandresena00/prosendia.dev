@@ -1,4 +1,7 @@
 // src/features/admin/admin.module.ts
+//
+// CHANGE: Ajout de AdminUserStatsService dans providers.
+// Le module reste totalement indépendant — aucun import externe ajouté.
 
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -12,17 +15,18 @@ import { AdminManagementController } from './controllers/admin-management.contro
 import { AdminUsersController } from './controllers/admin-users.controller.js';
 import { AdminAuthService } from './services/admin-auth.service.js';
 import { AdminManagementService } from './services/admin-management.service.js';
+import { AdminUserStatsService } from './services/admin-user-stats.service.js'; // ← NEW
 import { AdminUsersService } from './services/admin-users.service.js';
 import { AdminJwtStrategy } from './strategies/admin-jwt.strategy.js';
 
 @Module({
   imports: [
     PrismaModule,
-    BillingModule,
+    BillingModule,                           // pour CreditService (AdminUsersService)
     PassportModule.register({ defaultStrategy: 'admin-jwt' }),
     JwtModule.registerAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
+      imports:    [ConfigModule],
+      inject:     [ConfigService],
       useFactory: () => ({ signOptions: { issuer: 'vendeoai-admin' } }),
     }),
   ],
@@ -36,6 +40,7 @@ import { AdminJwtStrategy } from './strategies/admin-jwt.strategy.js';
     AdminAuthService,
     AdminUsersService,
     AdminManagementService,
+    AdminUserStatsService,   // ← NEW — pas de dépendance externe ajoutée
     AdminJwtStrategy,
   ],
 })

@@ -16,7 +16,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,294 +48,318 @@ import {
   Plus,
   ShieldCheck,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+
+// ─── Subcomponents ────────────────────────────────────────────────────────────
+
+function AdminTableSkeletonRows() {
+  return Array.from({ length: 3 }).map((_, rowIndex) => (
+    <TableRow key={rowIndex}>
+      {Array.from({ length: 5 }).map((_, colIndex) => (
+        <TableCell key={colIndex}>
+          <Skeleton className="h-4 w-full" />
+        </TableCell>
+      ))}
+    </TableRow>
+  ));
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AdminAdminsPage() {
-  const [admins, setAdmins] = useState<AdminAccount[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPwd, setShowPwd] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [emailInput, setEmailInput] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isActionBusy, setIsActionBusy] = useState(false);
 
-  function load() {
+  const fetchAdmins = useCallback(() => {
+    let cancelled = false;
+
     adminManagementApi
       .list()
-      .then(setAdmins)
-      .finally(() => setLoading(false));
-  }
-  useEffect(() => {
-    load();
+      .then((data) => {
+        if (!cancelled) setAdminAccounts(data);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  async function handleCreate(e: React.FormEvent) {
+  useEffect(() => {
+    const cancel = fetchAdmins();
+    return cancel;
+  }, [fetchAdmins]);
+
+  async function handleCreateAdmin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setError(null);
-    setBusy(true);
+    setErrorMessage(null);
+    setIsActionBusy(true);
     try {
-      await adminManagementApi.create(email, password);
-      setEmail("");
-      setPassword("");
-      load();
+      await adminManagementApi.create(emailInput, passwordInput);
+      setEmailInput("");
+      setPasswordInput("");
+      fetchAdmins();
     } catch (err) {
-      setError(
+      setErrorMessage(
         err instanceof AdminApiError
           ? err.message
           : "Erreur lors de la création.",
       );
     } finally {
-      setBusy(false);
+      setIsActionBusy(false);
     }
   }
 
-  async function handleDelete(id: string) {
-    setBusy(true);
+  async function handleDeleteAdmin(adminId: string) {
+    setIsActionBusy(true);
     try {
-      await adminManagementApi.remove(id);
-      load();
+      await adminManagementApi.remove(adminId);
+      fetchAdmins();
     } catch (err) {
-      setError(
+      setErrorMessage(
         err instanceof AdminApiError ? err.message : "Suppression impossible.",
       );
     } finally {
-      setBusy(false);
+      setIsActionBusy(false);
     }
   }
 
-  async function handleToggle(admin: AdminAccount) {
-    setBusy(true);
+  async function handleToggleAdminActive(adminAccount: AdminAccount) {
+    setIsActionBusy(true);
     try {
-      if (admin.isActive) await adminManagementApi.deactivate(admin.id);
-      else await adminManagementApi.activate(admin.id);
-      load();
+      if (adminAccount.isActive) {
+        await adminManagementApi.deactivate(adminAccount.id);
+      } else {
+        await adminManagementApi.activate(adminAccount.id);
+      }
+      fetchAdmins();
     } finally {
-      setBusy(false);
+      setIsActionBusy(false);
     }
   }
 
   return (
-    <div className="max-w-3xl">
-      <div className="mb-8">
-        <h1 className="text-[18px] font-semibold tracking-tight text-zinc-100">
-          Administrateurs
-        </h1>
-        <p className="mt-0.5 text-[13px] text-zinc-500">
+    <div className="max-w-3xl space-y-6">
+      {/* ── En-tête ────────────────────────────────────────────────── */}
+      <div>
+        <h1 className="text-xl font-semibold">Administrateurs</h1>
+        <p className="mt-0.5 text-sm text-muted-foreground">
           Gestion des comptes administrateurs de la plateforme.
         </p>
       </div>
 
-      {/* Create form */}
-      <Card className="mb-6 border-zinc-800/60 bg-zinc-900/50">
-        <CardHeader className="pb-0 pt-4">
-          <CardTitle className="flex items-center gap-2 text-[13px] font-semibold text-zinc-300">
-            <Plus className="h-3.5 w-3.5 text-zinc-500" />
+      {/* ── Formulaire de création ─────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <Plus className="h-4 w-4" />
             Ajouter un administrateur
           </CardTitle>
+          <CardDescription>
+            Le compte créé aura le rôle Admin. Seul le super admin peut créer
+            d&apos;autres super admins.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="px-5 pb-5">
-          {error && (
-            <Alert className="mb-4 border-red-900/50 bg-red-950/30 text-red-400 [&>svg]:text-red-400">
+        <CardContent className="space-y-4">
+          {errorMessage && (
+            <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription className="text-[13px]">
-                {error}
-              </AlertDescription>
+              <AlertDescription>{errorMessage}</AlertDescription>
             </Alert>
           )}
-          <form onSubmit={handleCreate} className="flex items-end gap-3">
+
+          <form onSubmit={handleCreateAdmin} className="flex items-end gap-3">
             <div className="flex-1 space-y-1.5">
-              <Label className="text-[11px] font-medium text-zinc-500">
-                Email
-              </Label>
+              <Label htmlFor="admin-email">Email</Label>
               <Input
+                id="admin-email"
                 type="email"
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
                 placeholder="admin@vendeoai.com"
-                className="h-9 border-zinc-800 bg-zinc-950 text-[13px] text-zinc-100 placeholder:text-zinc-600 focus-visible:border-emerald-500/50 focus-visible:ring-0 focus-visible:ring-offset-0"
               />
             </div>
+
             <div className="flex-1 space-y-1.5">
-              <Label className="text-[11px] font-medium text-zinc-500">
-                Mot de passe
-              </Label>
+              <Label htmlFor="admin-password">Mot de passe</Label>
               <div className="relative">
                 <Input
-                  type={showPwd ? "text" : "password"}
+                  id="admin-password"
+                  type={showPassword ? "text" : "password"}
                   required
                   minLength={10}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="new-password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
                   placeholder="Min. 10 caractères"
-                  className="h-9 border-zinc-800 bg-zinc-950 pr-9 text-[13px] text-zinc-100 placeholder:text-zinc-600 focus-visible:border-emerald-500/50 focus-visible:ring-0 focus-visible:ring-offset-0"
+                  className="pr-10"
                 />
                 <button
                   type="button"
-                  onClick={() => setShowPwd(!showPwd)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                  aria-label={
+                    showPassword
+                      ? "Masquer le mot de passe"
+                      : "Afficher le mot de passe"
+                  }
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
                 >
-                  {showPwd ? (
-                    <EyeOff className="h-3.5 w-3.5" />
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" />
                   ) : (
-                    <Eye className="h-3.5 w-3.5" />
+                    <Eye className="h-4 w-4" />
                   )}
                 </button>
               </div>
             </div>
-            <Button
-              type="submit"
-              disabled={busy}
-              size="sm"
-              className="h-9 shrink-0 bg-emerald-600 text-[12px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
-            >
-              {busy ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+
+            <Button type="submit" disabled={isActionBusy} className="shrink-0">
+              {isActionBusy ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
-                "Créer"
+                <Plus className="mr-2 h-4 w-4" />
               )}
+              Créer
             </Button>
           </form>
         </CardContent>
       </Card>
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-zinc-800/60">
+      {/* ── Tableau des administrateurs ────────────────────────────── */}
+      <div className="overflow-hidden rounded-lg border border-border">
         <Table>
           <TableHeader>
-            <TableRow className="border-zinc-800/60 hover:bg-transparent">
-              {[
-                "Administrateur",
-                "Rôle",
-                "Statut",
-                "Dernière connexion",
-                "",
-              ].map((h) => (
-                <TableHead
-                  key={h}
-                  className="bg-zinc-900/80 text-[11px] font-medium uppercase tracking-wider text-zinc-500"
-                >
-                  {h}
-                </TableHead>
-              ))}
+            <TableRow>
+              <TableHead>Administrateur</TableHead>
+              <TableHead>Rôle</TableHead>
+              <TableHead>Statut</TableHead>
+              <TableHead>Dernière connexion</TableHead>
+              <TableHead className="w-[120px]" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <TableRow
-                  key={i}
-                  className="border-zinc-800/60 hover:bg-transparent"
-                >
-                  {Array.from({ length: 5 }).map((_, j) => (
-                    <TableCell key={j} className="py-3">
-                      <Skeleton className="h-4 w-full bg-zinc-800" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : admins.length === 0 ? (
-              <TableRow className="border-zinc-800/60 hover:bg-transparent">
+            {isLoading ? (
+              <AdminTableSkeletonRows />
+            ) : adminAccounts.length === 0 ? (
+              <TableRow>
                 <TableCell
                   colSpan={5}
-                  className="py-10 text-center text-[13px] text-zinc-600"
+                  className="py-12 text-center text-muted-foreground"
                 >
                   Aucun administrateur.
                 </TableCell>
               </TableRow>
             ) : (
-              admins.map((admin) => (
-                <TableRow
-                  key={admin.id}
-                  className="border-zinc-800/40 transition-colors hover:bg-zinc-900/40"
-                >
-                  <TableCell className="py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[11px] font-semibold text-zinc-300">
-                        {admin.email[0].toUpperCase()}
+              adminAccounts.map((adminAccount) => (
+                <TableRow key={adminAccount.id}>
+                  {/* Email + avatar */}
+                  <TableCell>
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">
+                        {adminAccount.email[0].toUpperCase()}
                       </div>
-                      <span className="text-[13px] text-zinc-200">
-                        {admin.email}
+                      <span className="text-sm font-medium">
+                        {adminAccount.email}
                       </span>
                     </div>
                   </TableCell>
-                  <TableCell className="py-3">
-                    {admin.role === "SUPER_ADMIN" ? (
+
+                  {/* Rôle */}
+                  <TableCell>
+                    {adminAccount.role === "SUPER_ADMIN" ? (
                       <Badge
                         variant="outline"
-                        className="gap-1 border-amber-800/40 bg-amber-950/30 text-[11px] text-amber-400"
+                        className="gap-1.5 border-yellow-500/30 bg-yellow-500/5 text-yellow-500"
                       >
-                        <Crown className="h-2.5 w-2.5" />
+                        <Crown className="h-3 w-3" />
                         Super admin
                       </Badge>
                     ) : (
-                      <Badge
-                        variant="outline"
-                        className="gap-1 border-zinc-700 bg-zinc-800/40 text-[11px] text-zinc-400"
-                      >
-                        <ShieldCheck className="h-2.5 w-2.5" />
+                      <Badge variant="secondary" className="gap-1.5">
+                        <ShieldCheck className="h-3 w-3" />
                         Admin
                       </Badge>
                     )}
                   </TableCell>
-                  <TableCell className="py-3">
-                    {admin.isActive ? (
+
+                  {/* Statut */}
+                  <TableCell>
+                    {adminAccount.isActive ? (
                       <Badge
                         variant="outline"
-                        className="border-emerald-900/50 bg-emerald-950/30 text-[11px] text-emerald-400"
+                        className="border-primary/30 bg-primary/5 text-primary"
                       >
                         Actif
                       </Badge>
                     ) : (
                       <Badge
                         variant="outline"
-                        className="border-zinc-700 bg-zinc-800/40 text-[11px] text-zinc-500"
+                        className="text-muted-foreground"
                       >
                         Désactivé
                       </Badge>
                     )}
                   </TableCell>
-                  <TableCell className="py-3 text-[12px] text-zinc-500">
-                    {admin.lastLoginAt
-                      ? new Date(admin.lastLoginAt).toLocaleDateString("fr-FR")
+
+                  {/* Dernière connexion */}
+                  <TableCell className="text-sm tabular-nums text-muted-foreground">
+                    {adminAccount.lastLoginAt
+                      ? new Date(adminAccount.lastLoginAt).toLocaleDateString(
+                          "fr-FR",
+                        )
                       : "—"}
                   </TableCell>
-                  <TableCell className="py-3 text-right">
-                    {admin.role !== "SUPER_ADMIN" && (
+
+                  {/* Actions — masquées pour SUPER_ADMIN */}
+                  <TableCell>
+                    {adminAccount.role !== "SUPER_ADMIN" && (
                       <div className="flex items-center justify-end gap-3">
-                        <button
-                          onClick={() => handleToggle(admin)}
-                          disabled={busy}
-                          className="text-[12px] text-zinc-400 transition-colors hover:text-zinc-100 disabled:opacity-40"
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={isActionBusy}
+                          onClick={() => handleToggleAdminActive(adminAccount)}
+                          className="h-7 text-xs"
                         >
-                          {admin.isActive ? "Désactiver" : "Activer"}
-                        </button>
+                          {adminAccount.isActive ? "Désactiver" : "Activer"}
+                        </Button>
 
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
-                            <button
-                              disabled={busy}
-                              className="text-[12px] text-red-500/70 transition-colors hover:text-red-400 disabled:opacity-40"
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={isActionBusy}
+                              className="h-7 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
                             >
                               Supprimer
-                            </button>
+                            </Button>
                           </AlertDialogTrigger>
-                          <AlertDialogContent className="border-zinc-800 bg-zinc-900 text-zinc-100">
+                          <AlertDialogContent>
                             <AlertDialogHeader>
-                              <AlertDialogTitle className="text-[15px]">
-                                Supprimer {admin.email} ?
+                              <AlertDialogTitle>
+                                Supprimer {adminAccount.email} ?
                               </AlertDialogTitle>
-                              <AlertDialogDescription className="text-[13px] text-zinc-500">
+                              <AlertDialogDescription>
                                 Cette action est irréversible.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
-                              <AlertDialogCancel className="border-zinc-800 bg-transparent text-zinc-400 hover:bg-zinc-900">
-                                Annuler
-                              </AlertDialogCancel>
+                              <AlertDialogCancel>Annuler</AlertDialogCancel>
                               <AlertDialogAction
-                                onClick={() => handleDelete(admin.id)}
-                                className="bg-red-600 hover:bg-red-500 text-[12px]"
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() =>
+                                  handleDeleteAdmin(adminAccount.id)
+                                }
                               >
                                 Supprimer
                               </AlertDialogAction>

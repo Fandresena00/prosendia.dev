@@ -51,7 +51,7 @@ export const adminAuthApi = {
   logout: () => adminFetch<void>("/auth/logout", { method: "POST" }),
 };
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
+// ─── Dashboard global ─────────────────────────────────────────────────────────
 
 export interface AdminDashboardStats {
   totalUsers: number;
@@ -61,11 +61,27 @@ export interface AdminDashboardStats {
   totalRevenue: number;
 }
 
+export interface ChartDataPoint {
+  date: string;
+  value: number;
+}
+
+export interface AdminDashboardCharts {
+  newUsers: ChartDataPoint[];
+  revenue: ChartDataPoint[];
+  creditConsumption: ChartDataPoint[];
+  planDistribution: { plan: string; count: number; pct: number }[];
+}
+
+export type ChartPeriod = "7d" | "30d" | "90d";
+
 export const adminDashboardApi = {
-  getStats: () => adminFetch<AdminDashboardStats>("/dashboard"),
+  getStats:  () => adminFetch<AdminDashboardStats>("/dashboard"),
+  getCharts: (period: ChartPeriod = "30d") =>
+    adminFetch<AdminDashboardCharts>(`/dashboard/charts?period=${period}`),
 };
 
-// ─── Users ────────────────────────────────────────────────────────────────────
+// ─── Users — liste & détail ───────────────────────────────────────────────────
 
 export interface AdminUserListItem {
   id: string;
@@ -125,6 +141,83 @@ export interface AdminUserDetail {
   }[];
 }
 
+// ─── Users — stats dashboard ──────────────────────────────────────────────────
+//
+// Miroir des DTOs backend (admin-user-stats.dto.ts).
+// GET /admin/users/:id/stats
+
+export interface AdminUserSubscriptionStats {
+  planId: string;
+  planName: string;
+  creditBalance: number;
+  creditsGranted: number;
+  creditRemainingPct: number;
+  periodEnd: string | null;
+  daysRemaining: number | null;
+  pagesUsed: number;
+  pagesLimit: number | null;
+  postsManaged: number;
+  postsLimit: number | null;
+  referenceImages: number;
+  imagesLimit: number | null;
+}
+
+export interface AdminUserAiStats {
+  repliesToday: number;
+  repliesThisMonth: number;
+  repliesTotal: number;
+  conversationsHandled: number;
+  commentsHandled: number;
+}
+
+export interface AdminUserResponseRate {
+  totalConversations: number;
+  globalRate: number;
+  aiRate: number;
+  humanRate: number;
+  unansweredCount: number;
+}
+
+export interface AdminUserActivityToday {
+  messagesReceived: number;
+  commentsReceived: number;
+  aiRepliesSent: number;
+  humanInterventions: number;
+}
+
+export interface AdminUserDailyActivity {
+  date: string;
+  day: string;
+  messages: number;
+  aiReplies: number;
+  humanReplies: number;
+  comments: number;
+}
+
+export interface AdminUserCreditDataPoint {
+  date: string;
+  day: string;
+  creditsConsumed: number;
+  aiReplies: number;
+}
+
+export interface AdminUserStatsResponse {
+  subscription: AdminUserSubscriptionStats;
+  aiStats: AdminUserAiStats;
+  responseRate: AdminUserResponseRate;
+  activityToday: AdminUserActivityToday;
+  weeklyChart: AdminUserDailyActivity[];
+  creditChart: AdminUserCreditDataPoint[];
+  generatedAt: string;
+}
+
+// Ancienne interface gardée pour rétrocompatibilité avec le fallback démo
+export interface UserConsumptionCharts {
+  creditUsage: ChartDataPoint[];
+  aiReplies: ChartDataPoint[];
+  period: ChartPeriod;
+}
+
 export const adminUsersApi = {
   list: (params: {
     page?: number;
@@ -134,30 +227,42 @@ export const adminUsersApi = {
     suspended?: boolean;
   }) => {
     const qs = new URLSearchParams();
-    if (params.page) qs.set("page", String(params.page));
-    if (params.pageSize) qs.set("pageSize", String(params.pageSize));
-    if (params.search) qs.set("search", params.search);
-    if (params.plan) qs.set("plan", params.plan);
+    if (params.page)     qs.set("page",      String(params.page));
+    if (params.pageSize) qs.set("pageSize",   String(params.pageSize));
+    if (params.search)   qs.set("search",     params.search);
+    if (params.plan)     qs.set("plan",       params.plan);
     if (params.suspended !== undefined)
       qs.set("suspended", String(params.suspended));
     return adminFetch<PaginatedResult<AdminUserListItem>>(
       `/users?${qs.toString()}`,
     );
   },
-  detail: (id: string) => adminFetch<AdminUserDetail>(`/users/${id}`),
+
+  detail: (id: string) =>
+    adminFetch<AdminUserDetail>(`/users/${id}`),
+
+  // Endpoint principal — remplace getConsumptionCharts
+  getUserStats: (id: string) =>
+    adminFetch<AdminUserStatsResponse>(`/users/${id}/stats`),
+
   suspend: (id: string, reason?: string) =>
     adminFetch(`/users/${id}/suspend`, {
       method: "POST",
       body: JSON.stringify({ reason }),
     }),
+
   reactivate: (id: string) =>
     adminFetch(`/users/${id}/reactivate`, { method: "POST" }),
-  remove: (id: string) => adminFetch(`/users/${id}`, { method: "DELETE" }),
+
+  remove: (id: string) =>
+    adminFetch(`/users/${id}`, { method: "DELETE" }),
+
   changePlan: (id: string, plan: string) =>
     adminFetch(`/users/${id}/plan`, {
       method: "PATCH",
       body: JSON.stringify({ plan }),
     }),
+
   adjustCredits: (id: string, amount: number, reason: string) =>
     adminFetch<{
       previousBalance: number;
@@ -167,9 +272,26 @@ export const adminUsersApi = {
       method: "POST",
       body: JSON.stringify({ amount, reason }),
     }),
+
+  createCustomSubscription: (
+    id: string,
+    data: {
+      credits: number;
+      durationDays: number;
+      priceAriary: number;
+      maxPages: number;
+      maxManagedPosts: number;
+      maxReferenceImages: number;
+      note?: string;
+    },
+  ) =>
+    adminFetch(`/users/${id}/subscription/custom`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 };
 
-// ─── Admins ───────────────────────────────────────────────────────────────────
+// ─── Admins management ────────────────────────────────────────────────────────
 
 export interface AdminAccount {
   id: string;
@@ -187,27 +309,7 @@ export const adminManagementApi = {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
-  remove: (id: string) => adminFetch(`/admins/${id}`, { method: "DELETE" }),
-  activate: (id: string) =>
-    adminFetch(`/admins/${id}/activate`, { method: "PATCH" }),
-  deactivate: (id: string) =>
-    adminFetch(`/admins/${id}/deactivate`, { method: "PATCH" }),
-};
-
-// ─── Plans (lecture seule — source = BILLING_PLANS backend) ───────────────────
-
-export interface AdminPlan {
-  id: string;
-  name: string;
-  priceAriary: number | null;
-  durationDays: number;
-  credits: number | null;
-  maxPages: number | null;
-  maxManagedPosts: number | null;
-  maxReferenceImages: number | null;
-  features: string[];
-}
-
-export const adminPlansApi = {
-  list: () => adminFetch<AdminPlan[]>("/billing/plans"),
+  remove:     (id: string) => adminFetch(`/admins/${id}`, { method: "DELETE" }),
+  activate:   (id: string) => adminFetch(`/admins/${id}/activate`,   { method: "PATCH" }),
+  deactivate: (id: string) => adminFetch(`/admins/${id}/deactivate`, { method: "PATCH" }),
 };

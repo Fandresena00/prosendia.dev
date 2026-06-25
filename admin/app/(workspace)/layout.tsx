@@ -1,6 +1,12 @@
 "use client";
 
 // app/(workspace)/layout.tsx
+//
+// Principes :
+// • Sidebar fixe 240px, main occupe tout le reste — pas de max-width
+// • On utilise les variants natifs de shadcn (Button ghost, Badge outline, Separator)
+//   sans surcharger leurs classes de couleur
+// • Les tokens CSS (--primary, --muted-foreground, --border…) font le travail
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,14 +19,7 @@ import {
 } from "@/components/ui/tooltip";
 import { adminAuthApi, type AdminMe } from "@/lib/admin-api";
 import { cn } from "@/lib/utils";
-import {
-  BarChart3,
-  Crown,
-  LayoutDashboard,
-  LogOut,
-  Settings,
-  Users,
-} from "lucide-react";
+import { Crown, LayoutDashboard, LogOut, Settings, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -28,7 +27,6 @@ import { useEffect, useState } from "react";
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/users", label: "Utilisateurs", icon: Users },
-  { href: "/plans", label: "Plans", icon: BarChart3 },
   {
     href: "/admins",
     label: "Administrateurs",
@@ -38,32 +36,34 @@ const NAV_ITEMS = [
 ];
 
 function NavItem({
-  item,
+  href,
+  label,
+  icon: Icon,
   active,
 }: {
-  item: (typeof NAV_ITEMS)[number];
+  href: string;
+  label: string;
+  icon: React.ElementType;
   active: boolean;
 }) {
-  const Icon = item.icon;
   return (
     <Link
-      href={item.href}
+      href={href}
       className={cn(
-        "group flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-all",
+        // On part du style shadcn Button ghost et on ajuste uniquement ce qui change
+        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
         active
-          ? "bg-zinc-800 text-zinc-100"
-          : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200",
+          ? "bg-accent text-accent-foreground"
+          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
       )}
     >
       <Icon
         className={cn(
-          "h-4 w-4 shrink-0 transition-colors",
-          active
-            ? "text-emerald-400"
-            : "text-zinc-600 group-hover:text-zinc-400",
+          "h-4 w-4 shrink-0",
+          active ? "text-primary" : "text-muted-foreground/60",
         )}
       />
-      {item.label}
+      {label}
     </Link>
   );
 }
@@ -94,79 +94,75 @@ export default function AdminLayout({
   if (pathname === "/") return <>{children}</>;
   if (!checked || !admin) return null;
 
-  async function handleLogout() {
-    await adminAuthApi.logout();
-    router.push("/");
-  }
-
   const visibleNav = NAV_ITEMS.filter(
-    (item) => !item.superAdminOnly || admin!.role === "SUPER_ADMIN",
+    (item) => !item.superAdminOnly || admin.role === "SUPER_ADMIN",
   );
 
   return (
-    <TooltipProvider delayDuration={0}>
-      <div className="flex min-h-screen bg-zinc-950">
-        {/* Sidebar */}
-        <aside className="flex w-55 shrink-0 flex-col border-r border-zinc-800/60 bg-zinc-950 px-3 py-5">
+    <TooltipProvider delayDuration={200}>
+      {/* Root : plein écran, pas de max-width */}
+      <div className="flex h-screen overflow-hidden bg-background">
+        {/* ── Sidebar ───────────────────────────────────────────────── */}
+        <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-card">
           {/* Brand */}
-          <div className="mb-6 flex items-center gap-2.5 px-3">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/10 ring-1 ring-emerald-500/20">
+          <div className="flex h-14 items-center gap-3 border-b border-border px-4">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 ring-1 ring-primary/20">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                 <path
                   d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-                  stroke="#10b981"
+                  stroke="hsl(var(--primary))"
                   strokeWidth="2.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
               </svg>
             </div>
-            <div>
-              <p className="text-[13px] font-semibold text-zinc-100">
-                VendeoAI
+            <div className="leading-tight">
+              <p className="text-sm font-semibold">VendeoAI</p>
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground/50">
+                Admin
               </p>
-              <p className="text-[10px] tracking-wide text-zinc-600">ADMIN</p>
             </div>
           </div>
 
-          {/* Navigation */}
-          <nav className="flex-1 space-y-0.5">
+          {/* Nav */}
+          <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
+            <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">
+              Navigation
+            </p>
             {visibleNav.map((item) => (
               <NavItem
                 key={item.href}
-                item={item}
+                {...item}
                 active={pathname.startsWith(item.href)}
               />
             ))}
           </nav>
 
-          <Separator className="my-3 bg-zinc-800/60" />
+          <Separator />
 
           {/* User footer */}
-          <div className="space-y-2 px-1">
-            <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[11px] font-semibold text-zinc-300">
+          <div className="p-3">
+            <div className="mb-2 flex items-center gap-2.5 rounded-md px-2 py-2">
+              {/* Avatar initiale */}
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
                 {admin.email[0].toUpperCase()}
               </div>
-              <div className="min-w-0">
-                <p className="truncate text-[12px] font-medium text-zinc-300">
-                  {admin.email}
-                </p>
-                <div className="mt-0.5">
-                  {admin.role === "SUPER_ADMIN" ? (
-                    <Badge
-                      variant="outline"
-                      className="h-4 gap-1 border-amber-700/40 bg-amber-950/30 px-1.5 py-0 text-[10px] text-amber-400"
-                    >
-                      <Crown className="h-2.5 w-2.5" />
-                      Super admin
-                    </Badge>
-                  ) : (
-                    <span className="text-[10px] tracking-wide text-zinc-600">
-                      Admin
-                    </span>
-                  )}
-                </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium">{admin.email}</p>
+                {admin.role === "SUPER_ADMIN" ? (
+                  <Badge
+                    variant="outline"
+                    className="mt-0.5 h-4 gap-1 px-1.5 text-[10px]"
+                  >
+                    <Crown className="h-2.5 w-2.5" />
+                    Super admin
+                  </Badge>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground">
+                    Administrateur
+                  </p>
+                )}
               </div>
             </div>
 
@@ -175,24 +171,37 @@ export default function AdminLayout({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={handleLogout}
-                  className="h-8 w-full justify-start gap-2 px-3 text-[12px] text-zinc-500 hover:bg-zinc-900 hover:text-red-400"
+                  className="w-full justify-start gap-2 text-muted-foreground hover:text-destructive"
+                  onClick={async () => {
+                    await adminAuthApi.logout();
+                    router.push("/");
+                  }}
                 >
-                  <LogOut className="h-3.5 w-3.5" />
+                  <LogOut className="h-4 w-4" />
                   Se déconnecter
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="right" className="text-xs">
-                Terminer la session
-              </TooltipContent>
+              <TooltipContent side="right">Terminer la session</TooltipContent>
             </Tooltip>
           </div>
         </aside>
 
-        {/* Main content */}
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-6xl px-8 py-8">{children}</div>
-        </main>
+        {/* ── Main content — plein écran, scroll vertical ────────────── */}
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {/* Top bar */}
+          <header className="flex h-14 shrink-0 items-center border-b border-border bg-card/50 px-6">
+            <p className="text-sm text-muted-foreground">
+              {/* Breadcrumb minimal */}
+              {visibleNav.find((n) => pathname.startsWith(n.href))?.label ??
+                "Admin"}
+            </p>
+          </header>
+
+          {/* Page area — overflow scroll, pas de max-width */}
+          <main className="flex-1 overflow-y-auto">
+            <div className="page-content">{children}</div>
+          </main>
+        </div>
       </div>
     </TooltipProvider>
   );
