@@ -1,14 +1,25 @@
 // src/features/admin/controllers/admin-dashboard.controller.ts
+//
+// CHANGE: Ajout de GET /admin/dashboard/charts avec AdminDashboardChartsService.
+// AdminDashboardChartsService doit être ajouté aux providers de AdminModule.
 
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { AdminJwtAuthGuard } from '../../../common/guards/admin-jwt-auth.guard.js';
 import { PrismaService } from '../../../database/prisma.service.js';
+import {
+  AdminDashboardChartsService,
+  type ChartPeriod,
+} from '../services/admin-dashboard-charts.service.js';
 
 @UseGuards(AdminJwtAuthGuard)
 @Controller('admin/dashboard')
 export class AdminDashboardController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly chartsService: AdminDashboardChartsService,
+  ) {}
 
+  // GET /admin/dashboard — Métriques globales
   @Get()
   async getStats() {
     const startOfDay = new Date();
@@ -33,5 +44,16 @@ export class AdminDashboardController {
       newUsersToday: newToday,
       totalRevenue: revenueAgg._sum.amount ?? 0,
     };
+  }
+
+  // GET /admin/dashboard/charts?period=7d|30d|90d
+  @Get('charts')
+  async getCharts(@Query('period') period: string = '30d') {
+    const validPeriods: ChartPeriod[] = ['7d', '30d', '90d'];
+    const safePeriod: ChartPeriod = validPeriods.includes(period as ChartPeriod)
+      ? (period as ChartPeriod)
+      : '30d';
+
+    return this.chartsService.getCharts(safePeriod);
   }
 }

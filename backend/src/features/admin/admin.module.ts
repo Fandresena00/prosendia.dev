@@ -1,7 +1,6 @@
 // src/features/admin/admin.module.ts
 //
-// CHANGE: Ajout de AdminUserStatsService dans providers.
-// Le module reste totalement indépendant — aucun import externe ajouté.
+// CHANGE: Ajout de AdminDashboardChartsService dans providers.
 
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -14,19 +13,21 @@ import { AdminDashboardController } from './controllers/admin-dashboard.controll
 import { AdminManagementController } from './controllers/admin-management.controller.js';
 import { AdminUsersController } from './controllers/admin-users.controller.js';
 import { AdminAuthService } from './services/admin-auth.service.js';
+
+import { AdminDashboardChartsService } from './services/admin-dashboard-charts.service.js';
 import { AdminManagementService } from './services/admin-management.service.js';
-import { AdminUserStatsService } from './services/admin-user-stats.service.js'; // ← NEW
+import { AdminUserStatsService } from './services/admin-user-stats.service.js';
 import { AdminUsersService } from './services/admin-users.service.js';
 import { AdminJwtStrategy } from './strategies/admin-jwt.strategy.js';
 
 @Module({
   imports: [
     PrismaModule,
-    BillingModule,                           // pour CreditService (AdminUsersService)
+    BillingModule,
     PassportModule.register({ defaultStrategy: 'admin-jwt' }),
     JwtModule.registerAsync({
-      imports:    [ConfigModule],
-      inject:     [ConfigService],
+      imports: [ConfigModule],
+      inject: [ConfigService],
       useFactory: () => ({ signOptions: { issuer: 'vendeoai-admin' } }),
     }),
   ],
@@ -40,7 +41,8 @@ import { AdminJwtStrategy } from './strategies/admin-jwt.strategy.js';
     AdminAuthService,
     AdminUsersService,
     AdminManagementService,
-    AdminUserStatsService,   // ← NEW — pas de dépendance externe ajoutée
+    AdminUserStatsService,
+    AdminDashboardChartsService,
     AdminJwtStrategy,
   ],
 })

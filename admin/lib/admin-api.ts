@@ -1,4 +1,5 @@
 // lib/admin-api.ts
+// Client API complet — toutes les fonctions correspondent à des endpoints réels
 
 const API_BASE = `${process.env.NEXT_PUBLIC_API_URL}/admin`;
 
@@ -47,11 +48,11 @@ export const adminAuthApi = {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
-  me: () => adminFetch<{ admin: AdminMe }>("/auth/me"),
+  me:     () => adminFetch<{ admin: AdminMe }>("/auth/me"),
   logout: () => adminFetch<void>("/auth/logout", { method: "POST" }),
 };
 
-// ─── Dashboard global ─────────────────────────────────────────────────────────
+// ─── Dashboard ────────────────────────────────────────────────────────────────
 
 export interface AdminDashboardStats {
   totalUsers: number;
@@ -63,6 +64,7 @@ export interface AdminDashboardStats {
 
 export interface ChartDataPoint {
   date: string;
+  label: string;
   value: number;
 }
 
@@ -71,6 +73,8 @@ export interface AdminDashboardCharts {
   revenue: ChartDataPoint[];
   creditConsumption: ChartDataPoint[];
   planDistribution: { plan: string; count: number; pct: number }[];
+  period: ChartPeriod;
+  generatedAt: string;
 }
 
 export type ChartPeriod = "7d" | "30d" | "90d";
@@ -81,7 +85,7 @@ export const adminDashboardApi = {
     adminFetch<AdminDashboardCharts>(`/dashboard/charts?period=${period}`),
 };
 
-// ─── Users — liste & détail ───────────────────────────────────────────────────
+// ─── Users ────────────────────────────────────────────────────────────────────
 
 export interface AdminUserListItem {
   id: string;
@@ -141,10 +145,7 @@ export interface AdminUserDetail {
   }[];
 }
 
-// ─── Users — stats dashboard ──────────────────────────────────────────────────
-//
-// Miroir des DTOs backend (admin-user-stats.dto.ts).
-// GET /admin/users/:id/stats
+// ─── User stats ───────────────────────────────────────────────────────────────
 
 export interface AdminUserSubscriptionStats {
   planId: string;
@@ -211,13 +212,6 @@ export interface AdminUserStatsResponse {
   generatedAt: string;
 }
 
-// Ancienne interface gardée pour rétrocompatibilité avec le fallback démo
-export interface UserConsumptionCharts {
-  creditUsage: ChartDataPoint[];
-  aiReplies: ChartDataPoint[];
-  period: ChartPeriod;
-}
-
 export const adminUsersApi = {
   list: (params: {
     page?: number;
@@ -233,36 +227,26 @@ export const adminUsersApi = {
     if (params.plan)     qs.set("plan",       params.plan);
     if (params.suspended !== undefined)
       qs.set("suspended", String(params.suspended));
-    return adminFetch<PaginatedResult<AdminUserListItem>>(
-      `/users?${qs.toString()}`,
-    );
+    return adminFetch<PaginatedResult<AdminUserListItem>>(`/users?${qs.toString()}`);
   },
 
-  detail: (id: string) =>
-    adminFetch<AdminUserDetail>(`/users/${id}`),
+  detail:       (id: string) => adminFetch<AdminUserDetail>(`/users/${id}`),
+  getUserStats: (id: string) => adminFetch<AdminUserStatsResponse>(`/users/${id}/stats`),
 
-  // Endpoint principal — remplace getConsumptionCharts
-  getUserStats: (id: string) =>
-    adminFetch<AdminUserStatsResponse>(`/users/${id}/stats`),
-
-  suspend: (id: string, reason?: string) =>
+  suspend:    (id: string, reason?: string) =>
     adminFetch(`/users/${id}/suspend`, {
       method: "POST",
       body: JSON.stringify({ reason }),
     }),
-
   reactivate: (id: string) =>
     adminFetch(`/users/${id}/reactivate`, { method: "POST" }),
-
-  remove: (id: string) =>
+  remove:     (id: string) =>
     adminFetch(`/users/${id}`, { method: "DELETE" }),
-
   changePlan: (id: string, plan: string) =>
     adminFetch(`/users/${id}/plan`, {
       method: "PATCH",
       body: JSON.stringify({ plan }),
     }),
-
   adjustCredits: (id: string, amount: number, reason: string) =>
     adminFetch<{
       previousBalance: number;
@@ -271,23 +255,6 @@ export const adminUsersApi = {
     }>(`/users/${id}/credits/adjust`, {
       method: "POST",
       body: JSON.stringify({ amount, reason }),
-    }),
-
-  createCustomSubscription: (
-    id: string,
-    data: {
-      credits: number;
-      durationDays: number;
-      priceAriary: number;
-      maxPages: number;
-      maxManagedPosts: number;
-      maxReferenceImages: number;
-      note?: string;
-    },
-  ) =>
-    adminFetch(`/users/${id}/subscription/custom`, {
-      method: "POST",
-      body: JSON.stringify(data),
     }),
 };
 
@@ -303,8 +270,8 @@ export interface AdminAccount {
 }
 
 export const adminManagementApi = {
-  list: () => adminFetch<AdminAccount[]>("/admins"),
-  create: (email: string, password: string) =>
+  list:       () => adminFetch<AdminAccount[]>("/admins"),
+  create:     (email: string, password: string) =>
     adminFetch<AdminAccount>("/admins", {
       method: "POST",
       body: JSON.stringify({ email, password }),

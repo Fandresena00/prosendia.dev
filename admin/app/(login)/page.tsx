@@ -1,16 +1,14 @@
 "use client";
 
-// app/login/page.tsx
-//
-// • Utilise les tokens shadcn natifs via globals.css — zéro override inline
-// • Layout centré plein écran, dot-grid via before: pseudo
+// app/login/page.tsx — ou app/page.tsx selon structure
+// Design : centré, dot-grid, card épurée, typographie soignée
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AdminApiError, adminAuthApi } from "@/lib/admin-api";
-import { AlertCircle, Eye, EyeOff, Loader2 } from "lucide-react";
+import { AlertCircle, Eye, EyeOff, Layers, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -22,7 +20,7 @@ export default function AdminLoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
     setLoading(true);
@@ -39,103 +37,126 @@ export default function AdminLoginPage() {
   }
 
   return (
-    /*
-     * bg-background + dot grid décoratif via inline style.
-     * On n'override pas les tokens — background est défini dans globals.css.
-     */
     <div
       className="relative flex min-h-screen items-center justify-center bg-background px-4"
       style={{
         backgroundImage:
           "radial-gradient(hsl(var(--border)) 1px, transparent 1px)",
-        backgroundSize: "24px 24px",
+        backgroundSize: "28px 28px",
       }}
     >
-      {/* Vignette qui fade les bords du dot grid */}
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_50%,transparent_40%,hsl(var(--background))_100%)]" />
+      {/* Vignette radiale */}
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_70%_70%_at_50%_50%,transparent_30%,hsl(var(--background))_100%)]" />
 
-      <div className="relative z-10 w-full max-w-sm">
+      <div className="relative z-10 w-full max-w-90">
         {/* Brand */}
-        <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-                stroke="hsl(var(--primary))"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+        <div className="mb-10 flex flex-col items-center gap-4 text-center">
+          <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/25 shadow-sm">
+            <Layers className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-base font-semibold">VendeoAI Admin</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">
+            <h1 className="text-xl font-semibold tracking-tight">
+              VendeoAI Admin
+            </h1>
+            <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
               Accès réservé aux administrateurs
             </p>
           </div>
         </div>
 
-        {/* Form card */}
-        <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
+        {/* Card */}
+        <div className="rounded-2xl border border-border bg-card shadow-xl shadow-black/5 dark:shadow-black/30">
+          <div className="p-6">
+            <form onSubmit={handleSubmit} className="space-y-5">
+              {error && (
+                <Alert variant="destructive" className="py-3">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription className="text-sm">
+                    {error}
+                  </AlertDescription>
+                </Alert>
+              )}
 
-            <div className="space-y-1.5">
-              <Label htmlFor="email">Adresse email</Label>
-              <Input
-                id="email"
-                type="email"
-                required
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@vendeoai.com"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="password">Mot de passe</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPwd ? "text" : "password"}
-                  required
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••"
-                  className="pr-10"
-                />
-                <button
-                  type="button"
-                  aria-label={showPwd ? "Masquer" : "Afficher"}
-                  onClick={() => setShowPwd(!showPwd)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+              <div className="space-y-2">
+                <Label
+                  htmlFor="email"
+                  className="text-xs font-medium text-muted-foreground uppercase tracking-wide"
                 >
-                  {showPwd ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </button>
+                  Adresse email
+                </Label>
+                <Input
+                  id="email"
+                  type="email"
+                  required
+                  autoComplete="email"
+                  autoFocus
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="admin@vendeoai.com"
+                  className="h-10 bg-background/50"
+                />
               </div>
-            </div>
 
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {loading ? "Connexion…" : "Se connecter"}
-            </Button>
-          </form>
+              <div className="space-y-2">
+                <Label
+                  htmlFor="password"
+                  className="text-xs font-medium text-muted-foreground uppercase tracking-wide"
+                >
+                  Mot de passe
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPwd ? "text" : "password"}
+                    required
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••••"
+                    className="h-10 bg-background/50 pr-10"
+                  />
+                  <button
+                    type="button"
+                    aria-label={showPwd ? "Masquer" : "Afficher"}
+                    onClick={() => setShowPwd(!showPwd)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/60 transition-colors hover:text-foreground"
+                  >
+                    {showPwd ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                className="h-10 w-full font-medium"
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Connexion en cours…
+                  </>
+                ) : (
+                  "Se connecter"
+                )}
+              </Button>
+            </form>
+          </div>
+
+          {/* Card footer */}
+          <div className="border-t border-border px-6 py-3">
+            <p className="text-center text-xs text-muted-foreground/50">
+              Session sécurisée · Accès limité aux admins
+            </p>
+          </div>
         </div>
 
-        <p className="mt-5 text-center text-xs text-muted-foreground/40">
-          VendeoAI · Panneau d&apos;administration
+        <p className="mt-6 text-center text-xs text-muted-foreground/30">
+          VendeoAI © {new Date().getFullYear()}
         </p>
       </div>
     </div>
