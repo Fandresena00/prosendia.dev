@@ -1,8 +1,14 @@
 /**
  * @file features/billing/components/payment-dialog.tsx
  *
- * Dialog de paiement connecté à Papi.
- * Flow: choix provider → saisie numéro → clic Payer → redirect Papi
+ * FIXES (batch courant)
+ * ─────────────────────
+ * 1. Wording "offre" au lieu d'"abonnement".
+ * 2. Prop onSuccess optionnelle : appelée avant la redirection Papi pour
+ *    permettre au parent de déclencher un refetchStatus() immédiat.
+ *    En pratique, le solde sera mis à jour par le webhook Papi quelques
+ *    secondes après la confirmation du paiement — mais refetchStatus()
+ *    sur la page /billing/success garantit l'affichage immédiat du nouveau solde.
  */
 
 "use client";
@@ -31,7 +37,9 @@ interface PaymentDialogProps {
   open: boolean;
   onClose: () => void;
   plan: Plan | null;
-  payerName?: string; // Nom de l'utilisateur pré-rempli
+  payerName?: string;
+  /** Appelé juste avant la redirection Papi — permet un refetch du statut */
+  onSuccess?: () => void;
 }
 
 export function PaymentDialog({
@@ -39,6 +47,7 @@ export function PaymentDialog({
   onClose,
   plan,
   payerName = "",
+  onSuccess,
 }: PaymentDialogProps) {
   const [provider, setProvider] = useState<PaymentProvider>("MVOLA");
   const [selectedPrefix, setSelectedPrefix] = useState(
@@ -63,7 +72,7 @@ export function PaymentDialog({
   const handlePay = async () => {
     if (!plan || !phoneLocal.trim() || !nameInput.trim()) return;
     const fullPhone = `${selectedPrefix}${phoneLocal.replace(/\D/g, "")}`;
-    await pay(plan.id, provider, fullPhone, nameInput.trim());
+    await pay(plan.id, provider, fullPhone, nameInput.trim(), onSuccess);
   };
 
   const isValid =
@@ -76,7 +85,7 @@ export function PaymentDialog({
           <AlertDialogTitle>
             {isRedirecting
               ? "Redirection vers le paiement…"
-              : `Souscrire au plan ${plan?.name}`}
+              : `Souscrire à l'offre ${plan?.name}`}
           </AlertDialogTitle>
         </AlertDialogHeader>
 
@@ -185,7 +194,7 @@ export function PaymentDialog({
             {/* Récapitulatif */}
             <div className="rounded-md border border-border/40 bg-secondary/30 p-3 space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Plan</span>
+                <span className="text-muted-foreground">Offre</span>
                 <span className="font-medium">{plan?.name}</span>
               </div>
               {plan?.credits && (

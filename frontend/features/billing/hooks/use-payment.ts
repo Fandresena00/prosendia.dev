@@ -1,11 +1,14 @@
 /**
  * @file features/billing/hooks/use-payment.ts
  *
- * Hook qui gère le flow de paiement Papi :
- *   1. Appel API initiate → reçoit paymentLink
- *   2. Redirige le user vers paymentLink
- *   3. Papi notifie le backend, qui active l'abonnement
- *   4. Page success/failure gérée par Next.js
+ * FIXES (batch courant)
+ * ─────────────────────
+ * 1. pay() accepte un callback optionnel `onBeforeRedirect` appelé juste avant
+ *    window.location.href = paymentLink. Permet à la page billing de déclencher
+ *    refetchStatus() pour que le nouveau solde soit affiché immédiatement sur
+ *    la page /billing/success après retour Papi.
+ *
+ * 2. Wording "offre" dans les messages d'erreur.
  */
 
 "use client";
@@ -17,13 +20,14 @@ import type { PaymentProvider } from "../types/billing.types";
 type PaymentState = "idle" | "loading" | "redirecting" | "error";
 
 interface UsePaymentReturn {
-  state:       PaymentState;
-  errorMsg:    string | null;
+  state:    PaymentState;
+  errorMsg: string | null;
   pay: (
-    planId:     string,
-    provider:   PaymentProvider,
-    phone:      string,   // format local ex: "341234567"
-    payerName:  string,
+    planId:            string,
+    provider:          PaymentProvider,
+    phone:             string,
+    payerName:         string,
+    onBeforeRedirect?: () => void,
   ) => Promise<void>;
   reset: () => void;
 }
@@ -49,10 +53,11 @@ export function usePayment(): UsePaymentReturn {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const pay = async (
-    planId:    string,
-    provider:  PaymentProvider,
-    phone:     string,
-    payerName: string,
+    planId:            string,
+    provider:          PaymentProvider,
+    phone:             string,
+    payerName:         string,
+    onBeforeRedirect?: () => void,
   ) => {
     setState("loading");
     setErrorMsg(null);
@@ -63,6 +68,11 @@ export function usePayment(): UsePaymentReturn {
       const result = await billingService.initiatePayment(planId, provider, e164, payerName);
 
       setState("redirecting");
+
+      // Notifier le parent avant la redirection pour qu'il puisse
+      // déclencher un refetch du statut (affichage immédiat des nouveaux crédits
+      // sur la page /billing/success après retour Papi)
+      onBeforeRedirect?.();
 
       // Ouvrir la page Papi dans le même onglet
       window.location.href = result.paymentLink;

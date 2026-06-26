@@ -1,23 +1,23 @@
 /**
  * @file features/billing/services/credit.service.ts
  *
- * FIXES + AMÉLIORATIONS
+ * FIXES (batch courant)
  * ─────────────────────
- * 1. Source unique de vérité : user.creditBalance est LA source.
- *    Le CreditLedger est un registre d'audit, pas le calcul principal.
- *    Toute modification du solde passe par cette classe.
+ * 1. grantCredits() — SET intentionnel du solde (reset complet à l'activation
+ *    d'une nouvelle offre). C'est le comportement correct : quand l'user souscrit
+ *    à une offre, il repart avec son quota complet, qu'il lui reste des crédits
+ *    ou non. Le ledger enregistre le montant réel accordé.
  *
- * 2. grantCredits() — log structuré [CREDITS_GRANTED] à chaque attribution.
+ * 2. initializeFreeUser() — La garde idempotente `creditBalance > 0` bloquait
+ *    le rachat de la même offre (FREE → FREE) ou tout achat après avoir épuisé
+ *    ses crédits. Supprimée : la méthode vérifie désormais l'existence d'une
+ *    subscription FREE ACTIVE récente plutôt que le solde.
  *
- * 3. consumeCredits() — log [CREDITS_CONSUMED] + [CREDITS_INSUFFICIENT] si 0.
+ * 3. Tous les wording "abonnement" → "offre" dans les descriptions ledger
+ *    et les logs user-facing.
  *
- * 4. initializeFreeUser() — méthode publique appelée lors de la création d'un
- *    utilisateur pour garantir 500 crédits FREE dès l'inscription.
- *    BUG FIX : l'ancienne version ne créait pas de subscription ni de ledger
- *    pour les users FREE → creditBalance restait à 0.
- *
- * 5. repairBalance() — méthode admin qui recalcule le solde depuis le ledger
- *    et corrige les incohérences.
+ * 4. downgradeToFreeOnDepletion() — n'appelle plus initializeFreeUser() mais
+ *    grantCredits() directement pour éviter la garde idempotente.
  */
 import {
   BadRequestException,
@@ -44,13 +44,12 @@ export class CreditService {
 
   /**
    * Ajuste manuellement le solde d'un utilisateur (action admin).
-   * Contrairement à grantCredits() (qui FIXE le solde à une valeur, utilisé
-   * pour les attributions d'abonnement), cette méthode INCRÉMENTE/DÉCRÉMENTE
-   * le solde existant — adaptée à un ajustement ponctuel ("+50 crédits offerts").
+   * INCRÉMENTE/DÉCRÉMENTE le solde existant — différent de grantCredits() qui SET.
    *
    * @param amount  Positif = créditer, négatif = débiter.
    *                Le solde ne descend jamais sous 0.
-   */ async adminAdjustCredits(
+   */
+  async adminAdjustCredits(
     userId: string,
     amount: number,
     reason: string,
@@ -68,7 +67,7 @@ export class CreditService {
 
       const previousBalance = user.creditBalance;
       const newBalance = Math.max(0, previousBalance + amount);
-      const applied = newBalance - previousBalance; // peut différer de `amount` si clampé à 0
+      const applied = newBalance - previousBalance;
 
       await tx.user.update({
         where: { id: userId },
@@ -84,7 +83,7 @@ export class CreditService {
         data: {
           userId,
           subscriptionId: activeSub?.id ?? null,
-          type: 'ADMIN_ADJUST', // ← corrigé (était 'ADMIN_ADJUSTMENT')
+          type: 'ADMIN_ADJUST',
           amount: applied,
           description: `[Admin] ${reason}`,
         },
@@ -108,16 +107,14 @@ export class CreditService {
   /**
    * Initialise les crédits d'un nouvel utilisateur FREE.
    *
-   * BUG FIX : Sans cet appel lors de la création du compte, user.creditBalance
-   * reste à 0 (valeur par défaut Prisma) et l'IA est bloquée dès le départ.
+   * FIX : L'ancienne garde `creditBalance > 0` bloquait le rachat de la même
+   * offre FREE ou tout re-achat après épuisement des crédits. On vérifie
+   * maintenant l'existence d'une subscription FREE ACTIVE créée dans les
+   * dernières 60 secondes (bootstrap de compte) pour rester idempotent
+   * uniquement au démarrage, pas sur les re-souscriptions.
    *
-   * À appeler dans UsersService.createUser() ou AuthService.register().
-   *
-   * Ce que fait cette méthode :
-   *   1. Vérifie que le solde est bien à 0 (idempotent)
-   *   2. Crée un abonnement FREE ACTIVE avec période de 30 jours
-   *   3. Attribue 500 crédits via grantCredits()
-   *   4. Log [CREDITS_INITIALIZED]
+   * Cette méthode est réservée à l'inscription initiale.
+   * Pour les re-souscriptions FREE, passer par SubscriptionService.
    */
   async initializeFreeUser(userId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({
@@ -132,10 +129,21 @@ export class CreditService {
       return;
     }
 
-    // Idempotent : ne pas re-initialiser si déjà fait
-    if (user.creditBalance > 0) {
+    // Idempotent uniquement au bootstrap : vérifier si une sub FREE vient d'être créée
+    // (dans les 60 dernières secondes) pour éviter la double-initialisation à l'inscription
+    const recentFreeSub = await this.prisma.subscription.findFirst({
+      where: {
+        userId,
+        plan: 'FREE',
+        status: 'ACTIVE',
+        createdAt: { gte: new Date(Date.now() - 60_000) },
+      },
+      select: { id: true },
+    });
+
+    if (recentFreeSub) {
       this.logger.debug(
-        `[CREDITS_INIT_SKIP] User ${userId} already has ${user.creditBalance} credits`,
+        `[CREDITS_INIT_SKIP] User ${userId} free subscription just created (id=${recentFreeSub.id}), skipping`,
       );
       return;
     }
@@ -149,7 +157,6 @@ export class CreditService {
     const end = new Date(now);
     end.setDate(end.getDate() + BILLING_PLANS.FREE.durationDays);
 
-    // Créer l'abonnement FREE ACTIVE
     const sub = await this.prisma.subscription.create({
       data: {
         userId,
@@ -168,7 +175,6 @@ export class CreditService {
         `periodEnd=${end.toISOString()}`,
     );
 
-    // Attribuer les crédits
     await this.grantCredits(
       userId,
       sub.id,
@@ -271,6 +277,21 @@ export class CreditService {
 
   // ─── Grant credits ─────────────────────────────────────────────────────────
 
+  /**
+   * Attribue les crédits d'une offre à un utilisateur.
+   *
+   * COMPORTEMENT : SET intentionnel du solde (reset complet).
+   * Quand un user active une nouvelle offre, son quota repart de zéro,
+   * indépendamment du solde restant. Le ledger enregistre le montant accordé
+   * (positif) pour l'audit — pas le delta.
+   *
+   * Ce comportement est voulu pour :
+   *   - Changement d'offre (FREE → PRO, PRO → STARTER, etc.)
+   *   - Renouvellement de la même offre
+   *   - Attribution après expiration
+   *
+   * Le creditAlertSent est remis à false pour permettre les nouvelles alertes.
+   */
   async grantCredits(
     userId: string,
     subscriptionId: string,
@@ -285,6 +306,7 @@ export class CreditService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      // SET intentionnel : reset complet du quota à l'activation d'une offre
       await tx.user.update({
         where: { id: userId },
         data: { creditBalance: credits, creditAlertSent: false },
@@ -295,7 +317,7 @@ export class CreditService {
           subscriptionId,
           type: 'SUBSCRIPTION_GRANT',
           amount: credits,
-          description: `Attribution abonnement ${planName} — ${credits} crédits`,
+          description: `Attribution offre ${planName} — ${credits} crédits`,
         },
       });
     });
@@ -311,7 +333,6 @@ export class CreditService {
   /**
    * Recalcule le solde depuis le ledger et corrige user.creditBalance.
    * Utile pour détecter et réparer les incohérences.
-   * À appeler manuellement ou depuis un endpoint admin.
    */
   async repairBalance(
     userId: string,
@@ -468,29 +489,30 @@ export class CreditService {
     const end = new Date(now);
     end.setDate(end.getDate() + BILLING_PLANS.FREE.durationDays);
 
-    const freeSub = await this.prisma.subscription.create({
-      data: {
-        userId,
-        plan: 'FREE',
-        status: 'ACTIVE',
-        creditsGranted: BILLING_PLANS.FREE.credits,
-        periodStart: now,
-        periodEnd: end,
-      },
-      select: { id: true },
-    });
-
-    await this.prisma.$transaction(async (tx) => {
+    // Transaction : expirer les subs actives + créer FREE + mettre à jour activePlan
+    const freeSub = await this.prisma.$transaction(async (tx) => {
+      await tx.subscription.updateMany({
+        where: { userId, status: 'ACTIVE' },
+        data: { status: 'EXPIRED' },
+      });
       await tx.user.update({
         where: { id: userId },
         data: { activePlan: 'FREE' },
       });
-      await tx.subscription.updateMany({
-        where: { userId, status: 'ACTIVE', id: { not: freeSub.id } },
-        data: { status: 'EXPIRED' },
+      return tx.subscription.create({
+        data: {
+          userId,
+          plan: 'FREE',
+          status: 'ACTIVE',
+          creditsGranted: BILLING_PLANS.FREE.credits,
+          periodStart: now,
+          periodEnd: end,
+        },
+        select: { id: true },
       });
     });
 
+    // grantCredits() directement — pas initializeFreeUser() pour éviter la garde idempotente
     await this.grantCredits(
       userId,
       freeSub.id,

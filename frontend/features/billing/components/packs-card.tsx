@@ -1,8 +1,13 @@
 /**
  * @file features/billing/components/packs-card.tsx
  *
- * Affiche un plan tel que retourné par GET /billing/plans.
- * Aucune valeur hardcodée — tout vient des props `plan`.
+ * FIXES (batch courant)
+ * ─────────────────────
+ * 1. Le bouton d'achat n'est plus désactivé si l'offre est l'offre actuelle.
+ *    Un user peut renouveler son offre actuelle à tout moment.
+ *    Le badge "Offre actuelle" reste affiché à titre informatif sous le bouton.
+ *
+ * 2. Wording "offre" au lieu d'"abonnement".
  */
 
 "use client";
@@ -10,7 +15,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { IconCheck } from "@tabler/icons-react";
-import { ArrowRight, CheckCircle, Mail } from "lucide-react";
+import { ArrowRight, CheckCircle, Mail, RefreshCw } from "lucide-react";
 import type { CreditStatus, Plan } from "../types/billing.types";
 
 interface PackCardProps {
@@ -43,7 +48,7 @@ export function PackCard({
       )}
 
       <div className="p-5 flex-1">
-        {/* Nom du plan */}
+        {/* Nom de l'offre */}
         <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">
           {plan.name}
         </p>
@@ -64,21 +69,21 @@ export function PackCard({
           )}
         </div>
 
-        {/* Mention spécifique pour le plan Entreprise / Custom */}
+        {/* Mention spécifique pour l'offre Entreprise / Custom */}
         {plan.id === "CUSTOM" && (
           <p className="text-xs text-primary font-medium mb-3">
-            Plan sur mesure réservé aux entreprises.
+            Offre sur mesure réservée aux entreprises.
           </p>
         )}
 
-        {/* Crédits — affichés seulement si le backend les fournit */}
+        {/* Crédits */}
         {plan.credits !== null && (
           <p className="text-xs text-primary font-medium mb-3">
             {plan.credits.toLocaleString("fr-FR")} crédits IA / mois
           </p>
         )}
 
-        {/* Features — telles que retournées par le backend */}
+        {/* Features */}
         <ul className="space-y-2 mb-5">
           {plan.features.map((f) => (
             <li key={f} className="flex items-start gap-2 text-sm">
@@ -92,19 +97,14 @@ export function PackCard({
       </div>
 
       {/* CTA */}
-      <div className="p-5 pt-0">
-        {isCurrent ? (
-          <div className="flex items-center justify-center gap-2 rounded-md border border-border/50 bg-muted/40 py-2 text-sm text-muted-foreground">
-            <CheckCircle className="h-4 w-4 text-emerald-500" />
-            Plan actuel
-          </div>
-        ) : plan.id === "CUSTOM" ? (
+      <div className="p-5 pt-0 space-y-2">
+        {plan.id === "CUSTOM" ? (
           <Button
             className="w-full h-9 text-sm gap-2"
             variant="outline"
             onClick={() =>
               window.open(
-                "mailto:contact@vendeoai.com?subject=Plan%20Custom%20VendeoAI",
+                "mailto:contact@vendeoai.com?subject=Offre%20Custom%20VendeoAI",
                 "_blank",
               )
             }
@@ -113,14 +113,33 @@ export function PackCard({
             Nous contacter
           </Button>
         ) : (
-          <Button
-            className="w-full h-9 text-sm gap-2"
-            variant={plan.popular ? "default" : "outline"}
-            onClick={() => onSelect(plan)}
-          >
-            Choisir ce plan
-            <ArrowRight className="h-4 w-4" />
-          </Button>
+          <>
+            <Button
+              className="w-full h-9 text-sm gap-2"
+              variant={plan.popular ? "default" : "outline"}
+              onClick={() => onSelect(plan)}
+            >
+              {isCurrent ? (
+                <>
+                  <RefreshCw className="h-4 w-4" />
+                  Renouveler cette offre
+                </>
+              ) : (
+                <>
+                  Choisir cette offre
+                  <ArrowRight className="h-4 w-4" />
+                </>
+              )}
+            </Button>
+
+            {/* Badge informatif — offre actuelle, mais toujours achetable */}
+            {isCurrent && (
+              <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+                <CheckCircle className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                Offre actuelle
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

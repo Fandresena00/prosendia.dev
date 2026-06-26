@@ -1,23 +1,17 @@
 /**
  * @file features/billing/services/billing.service.ts
  *
- * FIX — Webhook paymentReference lookup
- * ──────────────────────────────────────
- * D'après la documentation Papi :
+ * FIXES (batch courant)
+ * ─────────────────────
+ * 1. initiatePayment() — suppression du bloc "reuse existing PENDING payment".
+ *    Ce mécanisme de réutilisation empêchait le rachat de la même offre :
+ *    si un user avait initié un paiement PRO (même expiré ou annulé dans les 60min),
+ *    le système réutilisait l'ancien lien au lieu d'en créer un nouveau.
+ *    Désormais chaque appel crée une nouvelle subscription PENDING + un nouveau
+ *    lien Papi. L'ancien paiement PENDING sera annulé par le cron horaire si
+ *    non payé dans les 60 minutes.
  *
- *   paymentReference         = la référence que VOUS avez envoyée (champ `reference`)
- *                              → c'est notre "VENDEO-XXXXXXXX"
- *   merchantPaymentReference = référence interne du prestataire de paiement Papi
- *
- * Notre code cherchait par `merchantPaymentReference` en premier, ce qui ne
- * correspondait jamais à notre référence stockée en DB.
- *
- * FIX : chercher d'abord par `paymentReference` (= notre ref VENDEO-xxx),
- * puis fallback sur `merchantPaymentReference`.
- *
- * Confirmé par la doc Papi, section "Explication des champs de notification" :
- *   `paymentReference` → "Votre référence unique pour ce paiement
- *                          (depuis le champ `reference`)"
+ * 2. Wording "offre" au lieu d'"abonnement" dans les logs user-facing.
  */
 
 import {
@@ -78,6 +72,16 @@ export class BillingService {
 
   // ─── Initiate payment ─────────────────────────────────────────────────────
 
+  /**
+   * Initie un paiement Papi pour une offre donnée.
+   *
+   * FIX : Le mécanisme de réutilisation d'un paiement PENDING existant a été
+   * supprimé. Il empêchait le rachat de la même offre (ex: PRO → PRO).
+   *
+   * Chaque appel crée une nouvelle subscription PENDING + un nouveau lien Papi.
+   * Les anciens paiements PENDING non payés sont nettoyés par le cron horaire
+   * `cancelExpiredPending()` (SubscriptionService).
+   */
   async initiatePayment(
     userId: string,
     dto:    InitiatePaymentDto,
@@ -89,43 +93,17 @@ export class BillingService {
     }
     if (!planConfig.priceAriary) {
       throw new BadRequestException(
-        `Le plan "${planConfig.name}" est gratuit, aucun paiement requis`,
+        `L'offre "${planConfig.name}" est gratuite, aucun paiement requis`,
       );
     }
     if (dto.plan === 'CUSTOM') {
-      throw new BadRequestException('Le plan Custom nécessite un contact commercial');
+      throw new BadRequestException("L'offre Custom nécessite un contact commercial");
     }
 
     this.logger.log(
       `[PAYMENT_INITIATE] user=${userId} plan=${dto.plan} ` +
       `amount=${planConfig.priceAriary}MGA provider=${dto.provider}`,
     );
-
-    // Réutiliser un paiement PENDING non expiré si existant
-    const existing = await this.prisma.payment.findFirst({
-      where: {
-        userId,
-        status:       'PENDING',
-        expiresAt:    { gt: new Date() },
-        subscription: { plan: dto.plan as any },
-      },
-      select: { id: true, papiPaymentLink: true, expiresAt: true, papiReference: true },
-    });
-
-    if (existing?.papiPaymentLink) {
-      this.logger.log(
-        `[PAYMENT_INITIATE] Reusing existing pending payment=${existing.id} ` +
-        `ref=${existing.papiReference} for user=${userId} plan=${dto.plan}`,
-      );
-      return {
-        paymentId:   existing.id,
-        paymentLink: existing.papiPaymentLink,
-        amount:      planConfig.priceAriary,
-        expiresAt:   existing.expiresAt!,
-        plan:        dto.plan,
-        provider:    dto.provider,
-      };
-    }
 
     const user = await this.prisma.user.findUnique({
       where:  { id: userId },
@@ -223,8 +201,6 @@ export class BillingService {
 
     this.logger.log(
       `[WEBHOOK_RECEIVED] Papi notification — ` +
-      // paymentReference = notre référence (VENDEO-xxx) d'après la doc Papi
-      // merchantPaymentReference = référence interne Papi
       `paymentReference="${payload.paymentReference}" ` +
       `merchantPaymentReference="${payload.merchantPaymentReference}" ` +
       `status="${paymentStatus}" amount=${amount}MGA ` +
@@ -232,14 +208,6 @@ export class BillingService {
     );
 
     // ── 1. Lookup par notre référence ────────────────────────────────────
-    //
-    // D'après la doc Papi :
-    //   `paymentReference` = la référence que NOUS avons envoyée (VENDEO-xxx)
-    //   `merchantPaymentReference` = référence interne du prestataire Papi
-    //
-    // AVANT (bug) : cherchait d'abord par merchantPaymentReference → ne trouvait jamais
-    // APRÈS (fix)  : cherche d'abord par paymentReference (= notre VENDEO-xxx)
-    //
     let payment = await this.prisma.payment.findFirst({
       where: { papiReference: payload.paymentReference },
       select: {
@@ -276,12 +244,11 @@ export class BillingService {
     }
 
     if (!payment) {
-      // Log tous les paiements PENDING pour aider au debug
       const pendingPayments = await this.prisma.payment.findMany({
-        where:  { status: 'PENDING' },
-        select: { id: true, papiReference: true, userId: true, createdAt: true },
+        where:   { status: 'PENDING' },
+        select:  { id: true, papiReference: true, userId: true, createdAt: true },
         orderBy: { createdAt: 'desc' },
-        take:   10,
+        take:    10,
       });
 
       this.logger.error(

@@ -1,11 +1,16 @@
 /**
  * @file features/billing/services/subscription.service.ts
  *
- * CHANGE: Intégration NotificationService.
- *   - notifySubscriptionActivated() après activation réussie
- *   - notifyPaymentFailed() après échec (appelé depuis billing.service)
- *   - forwardRef() pour éviter la dépendance circulaire
- *     BillingModule → DashboardModule → InboxEventsModule → (pas de retour)
+ * FIXES (batch courant)
+ * ─────────────────────
+ * 1. createPendingSubscription() — suppression de la garde qui bloquait le rachat
+ *    de la même offre ("plan déjà actif"). Un user doit pouvoir renouveler son
+ *    offre actuelle à tout moment (ex: PRO → PRO pour repartir avec 20 000 crédits).
+ *
+ * 2. activateSubscription() — log et description ledger avec "offre" au lieu de
+ *    "abonnement".
+ *
+ * 3. Tous les wording user-facing : "abonnement" → "offre".
  */
 
 import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common';
@@ -15,8 +20,6 @@ import { BILLING_PLANS } from '../billing.constants.js';
 import type { SubscriptionStatusDto } from '../dto/billing.dto.js';
 import { CreditService } from './credit.service.js';
 
-// Import optionnel pour éviter la dépendance circulaire au bootstrap
-// NotificationService est injecté via forwardRef si disponible
 type NotificationServiceLike = {
   notifySubscriptionActivated(
     userId: string, planName: string, credits: number,
@@ -36,7 +39,6 @@ export class SubscriptionService {
   constructor(
     private readonly prisma:  PrismaService,
     private readonly credits: CreditService,
-    // Optional pour éviter le crash si DashboardModule n'est pas importé
     @Optional()
     @Inject(NOTIFICATION_SERVICE_TOKEN)
     private readonly notifService?: NotificationServiceLike,
@@ -67,7 +69,7 @@ export class SubscriptionService {
       return null;
     }
 
-    const user       = await this.prisma.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where:  { id: userId },
       select: { creditBalance: true },
     });
@@ -88,6 +90,18 @@ export class SubscriptionService {
 
   // ─── Create PENDING ───────────────────────────────────────────────────────
 
+  /**
+   * Crée une subscription PENDING pour le plan demandé.
+   *
+   * FIX : Suppression de la garde "plan déjà actif".
+   * Un user peut racheter la même offre à tout moment :
+   *   - Renouvellement anticipé (ex: PRO → PRO pour repartir avec 20 000 crédits)
+   *   - Rachat après avoir consommé tous ses crédits
+   *   - Changement d'offre (FREE → PRO, PRO → STARTER, etc.)
+   *
+   * La subscription existante active sera expirée dans activateSubscription()
+   * au moment où le paiement est confirmé par Papi.
+   */
   async createPendingSubscription(userId: string, planId: string): Promise<string> {
     const planConfig = BILLING_PLANS[planId as keyof typeof BILLING_PLANS];
     if (!planConfig || planConfig.priceAriary === null) {
@@ -121,6 +135,16 @@ export class SubscriptionService {
 
   // ─── Activate ─────────────────────────────────────────────────────────────
 
+  /**
+   * Active une subscription après confirmation du paiement Papi.
+   *
+   * Séquence :
+   *   1. Expire toutes les subscriptions ACTIVE précédentes de l'user
+   *   2. Passe la subscription cible en ACTIVE
+   *   3. Met à jour user.activePlan
+   *   4. grantCredits() → SET du solde au quota complet de la nouvelle offre
+   *   5. Notifie l'user (fire-and-forget)
+   */
   async activateSubscription(subscriptionId: string): Promise<void> {
     const sub = await this.prisma.subscription.findUnique({
       where:  { id: subscriptionId },
@@ -154,7 +178,7 @@ export class SubscriptionService {
       `plan=${sub.plan} credits=${sub.creditsGranted}`,
     );
 
-    // Transaction : expirer anciens + activer + mettre à jour user
+    // Transaction : expirer toutes les subs actives + activer + mettre à jour user
     await this.prisma.$transaction(async (tx) => {
       const previousActive = await tx.subscription.findMany({
         where:  { userId: sub.userId, status: 'ACTIVE', id: { not: subscriptionId } },
@@ -189,6 +213,8 @@ export class SubscriptionService {
     );
 
     // Attribuer les crédits — CRITIQUE
+    // grantCredits() SET le solde au quota complet : comportement voulu pour
+    // tout changement ou renouvellement d'offre.
     try {
       await this.credits.grantCredits(
         sub.userId,
@@ -211,11 +237,11 @@ export class SubscriptionService {
       throw creditErr;
     }
 
-    // Notification in-app + Web Push — fire-and-forget
+    // Notification in-app — fire-and-forget
     if (this.notifService) {
       const payment = await this.prisma.payment.findFirst({
-        where:  { subscriptionId, status: 'SUCCESS' },
-        select: { amount: true },
+        where:   { subscriptionId, status: 'SUCCESS' },
+        select:  { amount: true },
         orderBy: { paidAt: 'desc' },
       });
 
@@ -267,7 +293,7 @@ export class SubscriptionService {
         );
 
         await this.credits.grantCredits(
-          sub.userId, sub.id, BILLING_PLANS.FREE.credits, 'Gratuit (abonnement expiré)',
+          sub.userId, sub.id, BILLING_PLANS.FREE.credits, 'Gratuit (offre expirée)',
         );
 
         this.logger.log(
@@ -298,7 +324,6 @@ export class SubscriptionService {
 
     for (const sub of expiringSubs) {
       const daysLeft = Math.ceil((sub.periodEnd.getTime() - now.getTime()) / 86_400_000);
-      // Notifier seulement à J-7, J-3, J-1
       if (![7, 3, 1].includes(daysLeft)) continue;
 
       const planConfig = BILLING_PLANS[sub.plan as keyof typeof BILLING_PLANS];

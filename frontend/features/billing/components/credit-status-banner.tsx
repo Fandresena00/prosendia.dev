@@ -1,9 +1,12 @@
 /**
  * @file features/billing/components/credit-status-banner.tsx
  *
- * Bannière de statut des crédits.
- * Toutes les valeurs (seuils, balance, pourcentage) viennent du backend via props.
- * Le frontend ne calcule rien — il affiche ce que /billing/status retourne.
+ * FIXES (batch courant)
+ * ─────────────────────
+ * 1. Wording "offre" au lieu d'"abonnement" dans tous les textes.
+ * 2. Affichage du nouveau solde immédiatement après changement d'offre :
+ *    le composant reçoit les données fraîches via props (pas de state local).
+ *    C'est le hook use-billing.ts qui pilote le refetch via refetchStatus().
  */
 
 "use client";
@@ -31,7 +34,6 @@ export function CreditStatusBanner({ status }: CreditStatusBannerProps) {
     periodEnd,
   } = status;
 
-  // Couleur de la barre — déterminée par les flags booléens du backend
   const barColor = isDepleted
     ? "bg-red-500"
     : isCritical
@@ -85,7 +87,7 @@ export function CreditStatusBanner({ status }: CreditStatusBannerProps) {
 
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <p className="text-sm font-bold">Plan {planName}</p>
+              <p className="text-sm font-bold">Offre {planName}</p>
               {isDepleted ? (
                 <Badge className="h-5 text-xs bg-red-500/15 text-red-700 border-red-500/25 hover:bg-red-500/15">
                   Épuisé
@@ -99,7 +101,6 @@ export function CreditStatusBanner({ status }: CreditStatusBannerProps) {
             </div>
 
             <p className="text-xs text-muted-foreground mt-0.5">
-              {/* Valeurs viennent directement du backend */}
               {creditsGranted !== null
                 ? `${creditBalance.toLocaleString("fr-FR")} / ${creditsGranted.toLocaleString("fr-FR")} crédits restants`
                 : `${creditBalance.toLocaleString("fr-FR")} crédits`}
@@ -122,7 +123,7 @@ export function CreditStatusBanner({ status }: CreditStatusBannerProps) {
           </div>
         </div>
 
-        {/* Barre de progression — remainingPercent vient du backend */}
+        {/* Barre de progression */}
         {creditsGranted !== null && (
           <div className="flex items-center gap-3 shrink-0">
             <div className="w-32 h-1.5 rounded-full bg-border/60">
@@ -150,7 +151,7 @@ export function CreditStatusBanner({ status }: CreditStatusBannerProps) {
         )}
       </div>
 
-      {/* Alertes — affichées selon les flags booléens retournés par le backend */}
+      {/* Alertes */}
       {isDepleted && (
         <div className="flex items-start gap-3 rounded-md border border-red-500/25 bg-red-500/5 px-4 py-3">
           <XCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
@@ -159,8 +160,8 @@ export function CreditStatusBanner({ status }: CreditStatusBannerProps) {
               Crédits épuisés — IA désactivée
             </p>
             <p className="text-xs text-red-600/80 mt-0.5">
-              Votre compte a été repassé en plan Gratuit. Souscrivez à un
-              abonnement pour réactiver les réponses IA.
+              Votre compte a été repassé sur l&apos;offre Gratuite. Souscrivez
+              à une offre pour réactiver les réponses IA.
             </p>
           </div>
         </div>
@@ -175,7 +176,7 @@ export function CreditStatusBanner({ status }: CreditStatusBannerProps) {
             </p>
             <p className="text-xs text-orange-600/80 mt-0.5">
               L&apos;IA s&apos;arrêtera automatiquement à 0 crédit. Renouvelez
-              votre abonnement pour continuer.
+              votre offre pour continuer.
             </p>
           </div>
         </div>
@@ -190,7 +191,7 @@ export function CreditStatusBanner({ status }: CreditStatusBannerProps) {
             </p>
             <p className="text-xs text-amber-600/80 mt-0.5">
               Il vous reste {Math.round(remainingPercent)}% de vos crédits IA.
-              Pensez à renouveler votre abonnement.
+              Pensez à renouveler votre offre.
             </p>
           </div>
         </div>
