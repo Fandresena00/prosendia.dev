@@ -1,18 +1,16 @@
 "use client";
 
-// app/login/page.tsx — ou app/page.tsx selon structure
-// Design : centré, dot-grid, card épurée, typographie soignée
+// app/(login)/page.tsx — Login page, Linear dark style
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { AdminApiError, adminAuthApi } from "@/lib/admin-api";
-import { AlertCircle, Eye, EyeOff, Layers, Loader2 } from "lucide-react";
+import { AlertCircle, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-export default function AdminLoginPage() {
+export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,7 +18,7 @@ export default function AdminLoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.SubmitEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.SubmitEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
@@ -37,53 +35,61 @@ export default function AdminLoginPage() {
   }
 
   return (
-    <div
-      className="relative flex min-h-screen items-center justify-center bg-background px-4"
-      style={{
-        backgroundImage:
-          "radial-gradient(hsl(var(--border)) 1px, transparent 1px)",
-        backgroundSize: "28px 28px",
-      }}
-    >
-      {/* Vignette radiale */}
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_70%_70%_at_50%_50%,transparent_30%,hsl(var(--background))_100%)]" />
+    <div className="relative flex min-h-screen items-center justify-center bg-background px-4">
+      {/* Grid texture */}
+      <div
+        className="pointer-events-none fixed inset-0 opacity-[0.03]"
+        style={{
+          backgroundImage:
+            "linear-gradient(hsl(var(--foreground)) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--foreground)) 1px, transparent 1px)",
+          backgroundSize: "40px 40px",
+        }}
+      />
+      {/* Gradient overlay */}
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_60%_60%_at_50%_40%,transparent_30%,hsl(var(--background))_100%)]" />
+      {/* Purple glow */}
+      <div className="pointer-events-none fixed left-1/2 top-1/3 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/8 blur-3xl" />
 
-      <div className="relative z-10 w-full max-w-90">
-        {/* Brand */}
-        <div className="mb-10 flex flex-col items-center gap-4 text-center">
-          <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/25 shadow-sm">
-            <Layers className="h-5 w-5 text-primary" />
+      <div className="relative z-10 w-full max-w-85">
+        {/* Logo */}
+        <div className="mb-10 flex flex-col items-center">
+          <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-xl border border-primary/20 bg-primary/10">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
+                stroke="hsl(var(--primary))"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </div>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">
-              VendeoAI Admin
-            </h1>
-            <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-              Accès réservé aux administrateurs
-            </p>
-          </div>
+          <h1 className="text-[22px] font-semibold tracking-tight">
+            VendeoAI Admin
+          </h1>
+          <p className="mt-1.5 text-[13px] text-muted-foreground">
+            Accès réservé aux administrateurs
+          </p>
         </div>
 
-        {/* Card */}
-        <div className="rounded-2xl border border-border bg-card shadow-xl shadow-black/5 dark:shadow-black/30">
-          <div className="p-6">
-            <form onSubmit={handleSubmit} className="space-y-5">
+        {/* Form */}
+        <div className="rounded-xl border border-border bg-card/80 backdrop-blur-sm">
+          <div className="p-5">
+            <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
-                <Alert variant="destructive" className="py-3">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription className="text-sm">
-                    {error}
-                  </AlertDescription>
+                <Alert variant="destructive" className="py-2.5 text-xs">
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
 
-              <div className="space-y-2">
-                <Label
+              <div className="space-y-1.5">
+                <label
                   htmlFor="email"
-                  className="text-xs font-medium text-muted-foreground uppercase tracking-wide"
+                  className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
                 >
-                  Adresse email
-                </Label>
+                  Email
+                </label>
                 <Input
                   id="email"
                   type="email"
@@ -93,17 +99,17 @@ export default function AdminLoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="admin@vendeoai.com"
-                  className="h-10 bg-background/50"
+                  className="h-9 bg-background/60 text-sm"
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label
+              <div className="space-y-1.5">
+                <label
                   htmlFor="password"
-                  className="text-xs font-medium text-muted-foreground uppercase tracking-wide"
+                  className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
                 >
                   Mot de passe
-                </Label>
+                </label>
                 <div className="relative">
                   <Input
                     id="password"
@@ -113,18 +119,17 @@ export default function AdminLoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••••"
-                    className="h-10 bg-background/50 pr-10"
+                    className="h-9 bg-background/60 pr-9 text-sm"
                   />
                   <button
                     type="button"
-                    aria-label={showPwd ? "Masquer" : "Afficher"}
                     onClick={() => setShowPwd(!showPwd)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/60 transition-colors hover:text-foreground"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/40 hover:text-muted-foreground transition-colors"
                   >
                     {showPwd ? (
-                      <EyeOff className="h-4 w-4" />
+                      <EyeOff className="h-3.5 w-3.5" />
                     ) : (
-                      <Eye className="h-4 w-4" />
+                      <Eye className="h-3.5 w-3.5" />
                     )}
                   </button>
                 </div>
@@ -132,13 +137,13 @@ export default function AdminLoginPage() {
 
               <Button
                 type="submit"
-                className="h-10 w-full font-medium"
+                className="h-9 w-full text-sm font-medium"
                 disabled={loading}
               >
                 {loading ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Connexion en cours…
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    Connexion…
                   </>
                 ) : (
                   "Se connecter"
@@ -146,16 +151,14 @@ export default function AdminLoginPage() {
               </Button>
             </form>
           </div>
-
-          {/* Card footer */}
-          <div className="border-t border-border px-6 py-3">
-            <p className="text-center text-xs text-muted-foreground/50">
-              Session sécurisée · Accès limité aux admins
+          <div className="border-t border-border/50 px-5 py-3 text-center">
+            <p className="text-[11px] text-muted-foreground/30">
+              Session chiffrée · Accès restreint
             </p>
           </div>
         </div>
 
-        <p className="mt-6 text-center text-xs text-muted-foreground/30">
+        <p className="mt-6 text-center text-[11px] text-muted-foreground/20">
           VendeoAI © {new Date().getFullYear()}
         </p>
       </div>

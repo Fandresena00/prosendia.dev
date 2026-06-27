@@ -256,6 +256,29 @@ export const adminUsersApi = {
       method: "POST",
       body: JSON.stringify({ amount, reason }),
     }),
+
+  createCustomSubscription: (
+    id: string,
+    data: {
+      credits: number;
+      durationDays: number;
+      priceAriary: number;
+      maxPages: number;
+      maxManagedPosts: number;
+      maxReferenceImages: number;
+      note?: string;
+    },
+  ) =>
+    adminFetch<{
+      subscriptionId: string;
+      plan: string;
+      credits: number;
+      periodEnd: string;
+      userId: string;
+    }>(`/users/${id}/subscription/custom`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 };
 
 // ─── Admins management ────────────────────────────────────────────────────────
@@ -279,4 +302,42 @@ export const adminManagementApi = {
   remove:     (id: string) => adminFetch(`/admins/${id}`, { method: "DELETE" }),
   activate:   (id: string) => adminFetch(`/admins/${id}/activate`,   { method: "PATCH" }),
   deactivate: (id: string) => adminFetch(`/admins/${id}/deactivate`, { method: "PATCH" }),
+};
+
+// ─── Admin audit logs ─────────────────────────────────────────────────────────
+
+export interface AdminAuditLog {
+  id: string;
+  adminId: string;
+  adminEmail: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AdminLogsQuery {
+  page?: number;
+  pageSize?: number;
+  adminId?: string;
+  action?: string;
+  targetType?: string;
+  from?: string;
+  to?: string;
+}
+
+export const adminLogsApi = {
+  list: (params: AdminLogsQuery = {}) => {
+    const qs = new URLSearchParams();
+    if (params.page)       qs.set("page",       String(params.page));
+    if (params.pageSize)   qs.set("pageSize",    String(params.pageSize));
+    if (params.adminId)    qs.set("adminId",     params.adminId);
+    if (params.action)     qs.set("action",      params.action);
+    if (params.targetType) qs.set("targetType",  params.targetType);
+    if (params.from)       qs.set("from",        params.from);
+    if (params.to)         qs.set("to",          params.to);
+    return adminFetch<PaginatedResult<AdminAuditLog>>(`/logs?${qs.toString()}`);
+  },
+  listAdmins: () => adminFetch<{ id: string; email: string }[]>("/logs/admins"),
 };

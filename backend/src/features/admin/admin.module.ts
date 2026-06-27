@@ -1,6 +1,4 @@
 // src/features/admin/admin.module.ts
-//
-// CHANGE: Ajout de AdminCustomSubscriptionService dans providers.
 
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -10,11 +8,13 @@ import { PrismaModule } from '../../database/prisma.module.js';
 import { BillingModule } from '../billing/billing.module.js';
 import { AdminAuthController } from './controllers/admin-auth.controller.js';
 import { AdminDashboardController } from './controllers/admin-dashboard.controller.js';
+import { AdminLogsController } from './controllers/admin-logs.controller.js';
 import { AdminManagementController } from './controllers/admin-management.controller.js';
 import { AdminUsersController } from './controllers/admin-users.controller.js';
 import { AdminAuthService } from './services/admin-auth.service.js';
 import { AdminCustomSubscriptionService } from './services/admin-custom-subscription.service.js';
 import { AdminDashboardChartsService } from './services/admin-dashboard-charts.service.js';
+import { AdminLogsService } from './services/admin-logs.service.js';
 import { AdminManagementService } from './services/admin-management.service.js';
 import { AdminUserStatsService } from './services/admin-user-stats.service.js';
 import { AdminUsersService } from './services/admin-users.service.js';
@@ -36,6 +36,7 @@ import { AdminJwtStrategy } from './strategies/admin-jwt.strategy.js';
     AdminUsersController,
     AdminManagementController,
     AdminDashboardController,
+    AdminLogsController,
   ],
   providers: [
     AdminAuthService,
@@ -44,6 +45,7 @@ import { AdminJwtStrategy } from './strategies/admin-jwt.strategy.js';
     AdminUserStatsService,
     AdminDashboardChartsService,
     AdminCustomSubscriptionService,
+    AdminLogsService,
     AdminJwtStrategy,
   ],
 })

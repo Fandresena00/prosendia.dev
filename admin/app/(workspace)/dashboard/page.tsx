@@ -1,100 +1,118 @@
 "use client";
 
 // app/(workspace)/dashboard/page.tsx
-// Données réelles — stats + graphiques recharts (newUsers, revenue, credits, plans)
+// Linear dark style — données réelles — auto-refresh 30s
 
-import { useCallback, useEffect, useState } from "react";
-import {
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Button } from "@/components/ui/button";
 import {
   adminDashboardApi,
-  type AdminDashboardStats,
   type AdminDashboardCharts,
+  type AdminDashboardStats,
   type ChartPeriod,
 } from "@/lib/admin-api";
 import {
-  Users,
-  TrendingUp,
   CreditCard,
   ShieldAlert,
+  TrendingUp,
   UserPlus,
-  Zap,
+  Users,
 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from "recharts";
 
-// ─── Stat card ───────────────────────────────────────────────────────────────
+// ─── Period tab ───────────────────────────────────────────────────────────────
 
-function StatCard({
+function PeriodTab({
+  value,
+  active,
+  onClick,
+}: {
+  value: ChartPeriod;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded px-2.5 py-1 text-[11px] font-medium transition-all ${
+        active
+          ? "bg-white/10 text-foreground"
+          : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {value === "7d" ? "7 jours" : value === "30d" ? "30 jours" : "90 jours"}
+    </button>
+  );
+}
+
+// ─── KPI Card ─────────────────────────────────────────────────────────────────
+
+function KpiCard({
   label,
   value,
   icon: Icon,
-  accent = false,
-  suffix,
+  accent,
+  sub,
 }: {
   label: string;
-  value: string | number;
+  value: React.ReactNode;
   icon: React.ElementType;
   accent?: boolean;
-  suffix?: string;
+  sub?: string;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-5">
-      <div className="flex items-start justify-between">
-        <div className="space-y-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
-            {label}
-          </p>
-          <p className="text-3xl font-semibold tracking-tight text-foreground">
-            {value}
-            {suffix && (
-              <span className="ml-1 text-lg font-normal text-muted-foreground">
-                {suffix}
-              </span>
-            )}
-          </p>
-        </div>
+    <div className="group rounded-lg border border-border bg-card p-4 transition-colors hover:border-border/80 hover:bg-card/80">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground/60">
+          {label}
+        </span>
         <div
-          className={`flex h-9 w-9 items-center justify-center rounded-lg ${
+          className={`flex h-6 w-6 items-center justify-center rounded-md ${
             accent
-              ? "bg-primary/10 text-primary"
-              : "bg-muted/60 text-muted-foreground"
+              ? "bg-primary/15 text-primary"
+              : "bg-white/5 text-muted-foreground/40"
           }`}
         >
-          <Icon className="h-4 w-4" />
+          <Icon className="h-3.5 w-3.5" />
         </div>
       </div>
+      <p className="font-mono-data text-2xl font-semibold tracking-tight text-foreground">
+        {value}
+      </p>
+      {sub && (
+        <p className="mt-1 text-[11px] text-muted-foreground/50">{sub}</p>
+      )}
     </div>
   );
 }
 
-// ─── Chart card ──────────────────────────────────────────────────────────────
+// ─── Chart wrapper ────────────────────────────────────────────────────────────
 
 function ChartCard({
   title,
-  subtitle,
+  sub,
   children,
 }: {
   title: string;
-  subtitle?: string;
+  sub?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-5">
-      <div className="mb-5">
-        <p className="text-sm font-semibold text-foreground">{title}</p>
-        {subtitle && (
-          <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="mb-4">
+        <p className="text-[13px] font-semibold text-foreground">{title}</p>
+        {sub && (
+          <p className="mt-0.5 text-[11px] text-muted-foreground/50">{sub}</p>
         )}
       </div>
       {children}
@@ -102,74 +120,34 @@ function ChartCard({
   );
 }
 
-// ─── Period selector ─────────────────────────────────────────────────────────
-
-function PeriodSelector({
-  value,
-  onChange,
-}: {
-  value: ChartPeriod;
-  onChange: (p: ChartPeriod) => void;
-}) {
-  const options: { label: string; value: ChartPeriod }[] = [
-    { label: "7j", value: "7d" },
-    { label: "30j", value: "30d" },
-    { label: "90j", value: "90d" },
-  ];
-
-  return (
-    <div className="flex items-center rounded-lg border border-border bg-muted/40 p-0.5">
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          onClick={() => onChange(opt.value)}
-          className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
-            value === opt.value
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ─── Custom tooltip ──────────────────────────────────────────────────────────
-
-function CustomTooltip({
+function ChartTip({
   active,
   payload,
   label,
-  formatter,
+  fmt,
 }: {
   active?: boolean;
   payload?: { value: number }[];
   label?: string;
-  formatter?: (v: number) => string;
+  fmt?: (v: number) => string;
 }) {
   if (!active || !payload?.length) return null;
-  const val = payload[0].value;
   return (
-    <div className="rounded-lg border border-border bg-popover px-3 py-2 shadow-lg">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-sm font-semibold text-foreground">
-        {formatter ? formatter(val) : val}
+    <div className="rounded-md border border-border/50 bg-popover px-2.5 py-2 shadow-xl text-xs">
+      <p className="mb-1 text-muted-foreground">{label}</p>
+      <p className="font-mono font-semibold text-foreground">
+        {fmt ? fmt(payload[0].value) : payload[0].value}
       </p>
     </div>
   );
 }
 
-// ─── Plan distribution mini bar ──────────────────────────────────────────────
-
 const PLAN_COLORS: Record<string, string> = {
   FREE: "hsl(var(--muted-foreground))",
-  STARTER: "hsl(var(--chart-2))",
+  STARTER: "hsl(var(--chart-3))",
   PRO: "hsl(var(--primary))",
-  CUSTOM: "hsl(var(--chart-1))",
+  CUSTOM: "hsl(var(--chart-4))",
 };
-
 const PLAN_LABELS: Record<string, string> = {
   FREE: "Gratuit",
   STARTER: "Starter",
@@ -177,7 +155,7 @@ const PLAN_LABELS: Record<string, string> = {
   CUSTOM: "Custom",
 };
 
-// ─── Page ────────────────────────────────────────────────────────────────────
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<AdminDashboardStats | null>(null);
@@ -186,177 +164,238 @@ export default function DashboardPage() {
   const [loadingStats, setLoadingStats] = useState(true);
   const [loadingCharts, setLoadingCharts] = useState(true);
 
-  // Chargement stats globales (une seule fois)
-  useEffect(() => {
+  const loadStats = useCallback(() => {
     let cancelled = false;
-    adminDashboardApi.getStats().then((data) => {
+    adminDashboardApi.getStats().then((d) => {
       if (!cancelled) {
-        setStats(data);
+        setStats(d);
         setLoadingStats(false);
       }
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Chargement charts (rechargé à chaque changement de period)
-  useEffect(() => {
+  const loadCharts = useCallback(() => {
     let cancelled = false;
     setLoadingCharts(true);
-    adminDashboardApi.getCharts(period).then((data) => {
+    adminDashboardApi.getCharts(period).then((d) => {
       if (!cancelled) {
-        setCharts(data);
+        setCharts(d);
         setLoadingCharts(false);
       }
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [period]);
 
-  const formatRevenue = (v: number) =>
-    `${v.toLocaleString("fr-FR")} Ar`;
+  // Initial load
+  useEffect(() => loadStats(), [loadStats]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => loadCharts(), [loadCharts]);
+
+  // Auto-refresh toutes les 30s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadStats();
+      loadCharts();
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [loadStats, loadCharts]);
+
+  const fmtRevenue = (v: number) => `${v.toLocaleString("fr-FR")} Ar`;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Vue d&apos;ensemble de la plateforme en temps réel
+          <h1 className="text-[18px] font-semibold tracking-tight">
+            Dashboard
+          </h1>
+          <p className="mt-0.5 text-[12px] text-muted-foreground/60">
+            Vue d&apos;ensemble · Actualisation auto 30s
           </p>
         </div>
-        <PeriodSelector value={period} onChange={setPeriod} />
+        <div className="flex items-center gap-1 rounded-md border border-border bg-card p-1">
+          {(["7d", "30d", "90d"] as ChartPeriod[]).map((p) => (
+            <PeriodTab
+              key={p}
+              value={p}
+              active={period === p}
+              onClick={() => setPeriod(p)}
+            />
+          ))}
+        </div>
       </div>
 
-      {/* ── Stats cards ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+      {/* KPIs */}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
         {loadingStats ? (
           Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="rounded-xl border border-border bg-card p-5">
-              <Skeleton className="mb-3 h-3 w-24" />
-              <Skeleton className="h-8 w-16" />
+            <div
+              key={i}
+              className="rounded-lg border border-border bg-card p-4"
+            >
+              <Skeleton className="mb-3 h-3 w-20" />
+              <Skeleton className="h-7 w-14" />
             </div>
           ))
         ) : stats ? (
           <>
-            <StatCard
+            <KpiCard
               label="Utilisateurs"
               value={stats.totalUsers.toLocaleString("fr-FR")}
               icon={Users}
               accent
             />
-            <StatCard
+            <KpiCard
               label="Abonnements actifs"
               value={stats.activeSubscriptions.toLocaleString("fr-FR")}
               icon={CreditCard}
             />
-            <StatCard
+            <KpiCard
               label="Nouveaux aujourd'hui"
               value={stats.newUsersToday}
               icon={UserPlus}
               accent={stats.newUsersToday > 0}
             />
-            <StatCard
-              label="Comptes suspendus"
+            <KpiCard
+              label="Suspendus"
               value={stats.suspendedUsers}
               icon={ShieldAlert}
             />
-            <StatCard
+            <KpiCard
               label="Revenus totaux"
               value={stats.totalRevenue.toLocaleString("fr-FR")}
-              suffix="Ar"
+              sub="Ariary"
               icon={TrendingUp}
             />
           </>
         ) : null}
       </div>
 
-      {/* ── Charts row 1 ────────────────────────────────────────────── */}
+      {/* Charts row 1 */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Nouveaux utilisateurs */}
-        <ChartCard
-          title="Nouveaux utilisateurs"
-          subtitle={`Inscriptions par jour — ${period === "7d" ? "7 derniers jours" : period === "30d" ? "30 derniers jours" : "90 derniers jours"}`}
-        >
+        <ChartCard title="Nouveaux utilisateurs" sub="Inscriptions par jour">
           {loadingCharts ? (
-            <Skeleton className="h-48 w-full rounded-lg" />
+            <Skeleton className="h-44 w-full rounded" />
           ) : (
-            <ResponsiveContainer width="100%" height={192}>
+            <ResponsiveContainer width="100%" height={176}>
               <AreaChart data={charts?.newUsers ?? []}>
                 <defs>
-                  <linearGradient id="gradUsers" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                  <linearGradient id="gu" x1="0" y1="0" x2="0" y2="1">
+                    <stop
+                      offset="5%"
+                      stopColor="hsl(var(--primary))"
+                      stopOpacity={0.2}
+                    />
+                    <stop
+                      offset="95%"
+                      stopColor="hsl(var(--primary))"
+                      stopOpacity={0}
+                    />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                <CartesianGrid
+                  stroke="hsl(var(--border))"
+                  strokeDasharray="2 4"
+                  vertical={false}
+                />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{
+                    fontSize: 10,
+                    fill: "hsl(var(--muted-foreground))",
+                    opacity: 0.5,
+                  }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{
+                    fontSize: 10,
+                    fill: "hsl(var(--muted-foreground))",
+                    opacity: 0.5,
+                  }}
                   axisLine={false}
                   tickLine={false}
-                  width={28}
+                  width={24}
                 />
                 <RechartsTooltip
-                  content={<CustomTooltip />}
-                  cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}
+                  content={<ChartTip />}
+                  cursor={{ stroke: "hsl(var(--border))" }}
                 />
                 <Area
                   type="monotone"
                   dataKey="value"
                   stroke="hsl(var(--primary))"
-                  strokeWidth={2}
-                  fill="url(#gradUsers)"
+                  strokeWidth={1.5}
+                  fill="url(#gu)"
                 />
               </AreaChart>
             </ResponsiveContainer>
           )}
         </ChartCard>
 
-        {/* Revenus */}
-        <ChartCard
-          title="Revenus"
-          subtitle="Paiements réussis (Ariary)"
-        >
+        <ChartCard title="Revenus" sub="Paiements réussis (Ar)">
           {loadingCharts ? (
-            <Skeleton className="h-48 w-full rounded-lg" />
+            <Skeleton className="h-44 w-full rounded" />
           ) : (
-            <ResponsiveContainer width="100%" height={192}>
+            <ResponsiveContainer width="100%" height={176}>
               <AreaChart data={charts?.revenue ?? []}>
                 <defs>
-                  <linearGradient id="gradRevenue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
+                  <linearGradient id="gr" x1="0" y1="0" x2="0" y2="1">
+                    <stop
+                      offset="5%"
+                      stopColor="hsl(var(--chart-2))"
+                      stopOpacity={0.2}
+                    />
+                    <stop
+                      offset="95%"
+                      stopColor="hsl(var(--chart-2))"
+                      stopOpacity={0}
+                    />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                <CartesianGrid
+                  stroke="hsl(var(--border))"
+                  strokeDasharray="2 4"
+                  vertical={false}
+                />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{
+                    fontSize: 10,
+                    fill: "hsl(var(--muted-foreground))",
+                    opacity: 0.5,
+                  }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{
+                    fontSize: 10,
+                    fill: "hsl(var(--muted-foreground))",
+                    opacity: 0.5,
+                  }}
                   axisLine={false}
                   tickLine={false}
-                  width={40}
+                  width={38}
                   tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
                 />
                 <RechartsTooltip
-                  content={<CustomTooltip formatter={formatRevenue} />}
-                  cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}
+                  content={<ChartTip fmt={fmtRevenue} />}
+                  cursor={{ stroke: "hsl(var(--border))" }}
                 />
                 <Area
                   type="monotone"
                   dataKey="value"
-                  stroke="hsl(var(--chart-1))"
-                  strokeWidth={2}
-                  fill="url(#gradRevenue)"
+                  stroke="hsl(var(--chart-2))"
+                  strokeWidth={1.5}
+                  fill="url(#gr)"
                 />
               </AreaChart>
             </ResponsiveContainer>
@@ -364,77 +403,93 @@ export default function DashboardPage() {
         </ChartCard>
       </div>
 
-      {/* ── Charts row 2 ────────────────────────────────────────────── */}
+      {/* Charts row 2 */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Consommation crédits */}
         <div className="lg:col-span-2">
-          <ChartCard
-            title="Consommation de crédits"
-            subtitle="Débits IA agrégés par jour"
-          >
+          <ChartCard title="Consommation de crédits" sub="Débits IA agrégés">
             {loadingCharts ? (
-              <Skeleton className="h-48 w-full rounded-lg" />
+              <Skeleton className="h-44 w-full rounded" />
             ) : (
-              <ResponsiveContainer width="100%" height={192}>
-                <BarChart data={charts?.creditConsumption ?? []} barSize={period === "90d" ? 4 : 8}>
-                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+              <ResponsiveContainer width="100%" height={176}>
+                <BarChart
+                  data={charts?.creditConsumption ?? []}
+                  barSize={period === "90d" ? 3 : 7}
+                >
+                  <CartesianGrid
+                    stroke="hsl(var(--border))"
+                    strokeDasharray="2 4"
+                    vertical={false}
+                  />
                   <XAxis
                     dataKey="label"
-                    tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                    tick={{
+                      fontSize: 10,
+                      fill: "hsl(var(--muted-foreground))",
+                      opacity: 0.5,
+                    }}
                     axisLine={false}
                     tickLine={false}
                   />
                   <YAxis
-                    tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                    tick={{
+                      fontSize: 10,
+                      fill: "hsl(var(--muted-foreground))",
+                      opacity: 0.5,
+                    }}
                     axisLine={false}
                     tickLine={false}
-                    width={36}
+                    width={32}
                   />
                   <RechartsTooltip
-                    content={<CustomTooltip />}
-                    cursor={{ fill: "hsl(var(--border))", opacity: 0.4 }}
+                    content={<ChartTip />}
+                    cursor={{ fill: "hsl(var(--border))", opacity: 0.3 }}
                   />
-                  <Bar dataKey="value" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} />
+                  <Bar
+                    dataKey="value"
+                    fill="hsl(var(--primary))"
+                    radius={[2, 2, 0, 0]}
+                    fillOpacity={0.8}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             )}
           </ChartCard>
         </div>
 
-        {/* Distribution des plans */}
-        <ChartCard title="Distribution des plans" subtitle="Répartition actuelle">
+        <ChartCard title="Plans" sub="Distribution actuelle">
           {loadingCharts ? (
-            <Skeleton className="h-48 w-full rounded-lg" />
+            <Skeleton className="h-44 w-full rounded" />
           ) : (
             <div className="space-y-3 pt-1">
               {(charts?.planDistribution ?? []).map((item) => (
-                <div key={item.plan} className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-foreground">
+                <div key={item.plan}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[12px] font-medium text-foreground">
                       {PLAN_LABELS[item.plan] ?? item.plan}
                     </span>
                     <div className="flex items-baseline gap-1.5">
-                      <span className="text-xs font-semibold text-foreground tabular-nums">
+                      <span className="font-mono text-[12px] font-semibold text-foreground">
                         {item.count.toLocaleString("fr-FR")}
                       </span>
-                      <span className="text-[11px] text-muted-foreground tabular-nums">
+                      <span className="font-mono text-[10px] text-muted-foreground/50">
                         {item.pct}%
                       </span>
                     </div>
                   </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-white/5">
                     <div
-                      className="h-full rounded-full transition-all duration-500"
+                      className="h-full rounded-full transition-all duration-700"
                       style={{
                         width: `${item.pct}%`,
-                        backgroundColor: PLAN_COLORS[item.plan] ?? "hsl(var(--primary))",
+                        backgroundColor:
+                          PLAN_COLORS[item.plan] ?? "hsl(var(--primary))",
                       }}
                     />
                   </div>
                 </div>
               ))}
               {(charts?.planDistribution ?? []).length === 0 && (
-                <p className="py-8 text-center text-sm text-muted-foreground">
+                <p className="py-8 text-center text-xs text-muted-foreground/40">
                   Aucune donnée
                 </p>
               )}

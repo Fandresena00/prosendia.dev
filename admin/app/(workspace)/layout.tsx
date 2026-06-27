@@ -1,27 +1,18 @@
 "use client";
 
 import { ThemeToggle } from "@/components/shared/theme-toggle";
-// app/(workspace)/layout.tsx
-//
-// Sidebar 240px fixe. Tokens shadcn natifs + next-themes.
-// ThemeToggle intégré dans le footer de la sidebar.
+// app/(workspace)/layout.tsx — Linear/GitHub dark aesthetic
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { adminAuthApi, type AdminMe } from "@/lib/admin-api";
 import { cn } from "@/lib/utils";
 import {
-  Activity,
-  Crown,
+  ChevronRight,
   LayoutDashboard,
   LogOut,
+  ScrollText,
   Settings,
   Users,
 } from "lucide-react";
@@ -29,9 +20,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-// ─── Navigation items ─────────────────────────────────────────────────────────
-
-const NAV_ITEMS = [
+const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/users", label: "Utilisateurs", icon: Users },
   {
@@ -40,11 +29,15 @@ const NAV_ITEMS = [
     icon: Settings,
     superAdminOnly: true,
   },
+  {
+    href: "/logs",
+    label: "Audit logs",
+    icon: ScrollText,
+    superAdminOnly: true,
+  },
 ];
 
-// ─── NavItem ──────────────────────────────────────────────────────────────────
-
-function NavItem({
+function NavLink({
   href,
   label,
   icon: Icon,
@@ -59,42 +52,25 @@ function NavItem({
     <Link
       href={href}
       className={cn(
-        "group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150",
+        "group flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-all duration-100",
         active
-          ? "bg-primary/10 text-primary"
-          : "text-muted-foreground hover:bg-accent hover:text-foreground",
+          ? "bg-primary/15 text-primary"
+          : "text-muted-foreground hover:bg-white/5 hover:text-foreground",
       )}
     >
       <Icon
         className={cn(
-          "h-4 w-4 shrink-0 transition-colors",
+          "h-3.75 w-3.75 shrink-0 transition-colors",
           active
             ? "text-primary"
-            : "text-muted-foreground/50 group-hover:text-foreground",
+            : "text-muted-foreground/40 group-hover:text-muted-foreground",
         )}
       />
       {label}
+      {active && <ChevronRight className="ml-auto h-3 w-3 text-primary/50" />}
     </Link>
   );
 }
-
-// ─── Logo ─────────────────────────────────────────────────────────────────────
-
-function VendeoLogo({ size = 14 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <path
-        d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-        stroke="hsl(var(--primary))"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-// ─── Layout ───────────────────────────────────────────────────────────────────
 
 export default function AdminLayout({
   children,
@@ -122,37 +98,44 @@ export default function AdminLayout({
   if (pathname === "/") return <>{children}</>;
   if (!checked || !admin) return null;
 
-  const visibleNav = NAV_ITEMS.filter(
-    (item) => !item.superAdminOnly || admin.role === "SUPER_ADMIN",
+  const visibleNav = NAV.filter(
+    (n) => !n.superAdminOnly || admin.role === "SUPER_ADMIN",
   );
-
   const currentNav = visibleNav.find((n) => pathname.startsWith(n.href));
 
   return (
-    <TooltipProvider delayDuration={150}>
+    <TooltipProvider delayDuration={100}>
       <div className="flex h-screen overflow-hidden bg-background">
-        {/* ── Sidebar ─────────────────────────────────────────────────── */}
-        <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-card/50 backdrop-blur-sm">
+        {/* ── Sidebar ──────────────────────────────────────────────── */}
+        <aside className="flex w-55 shrink-0 flex-col border-r border-border">
           {/* Brand */}
-          <div className="flex h-14 items-center gap-3 border-b border-border px-4">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 ring-1 ring-primary/20">
-              <VendeoLogo size={14} />
+          <div className="flex h-13 items-center gap-2.5 border-b border-border px-4">
+            <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/20">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
+                  stroke="hsl(var(--primary))"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </div>
-            <div className="leading-tight">
-              <p className="text-sm font-semibold tracking-tight">VendeoAI</p>
-              <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/50">
-                Admin
-              </p>
-            </div>
+            <span className="text-[13px] font-semibold tracking-tight">
+              VendeoAI
+            </span>
+            <span className="ml-auto rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+              ADMIN
+            </span>
           </div>
 
           {/* Nav */}
-          <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-4">
-            <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/40">
-              Navigation
+          <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
+            <p className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/30">
+              Menu
             </p>
             {visibleNav.map((item) => (
-              <NavItem
+              <NavLink
                 key={item.href}
                 {...item}
                 active={pathname.startsWith(item.href)}
@@ -163,84 +146,60 @@ export default function AdminLayout({
           <Separator />
 
           {/* Footer */}
-          <div className="p-3 space-y-1">
-            {/* User info */}
-            <div className="flex items-center gap-2.5 rounded-md px-2 py-2">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary ring-1 ring-primary/20">
+          <div className="p-2 space-y-1">
+            <div className="flex items-center gap-2 rounded-md px-2 py-1.5">
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/20 text-[10px] font-bold text-primary">
                 {admin.email[0].toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium leading-tight">
+                <p className="truncate text-[11px] font-medium leading-tight">
                   {admin.email}
                 </p>
                 {admin.role === "SUPER_ADMIN" ? (
-                  <Badge
-                    variant="outline"
-                    className="mt-0.5 h-4 gap-1 border-yellow-500/30 bg-yellow-500/5 px-1.5 text-[9px] text-yellow-500"
-                  >
-                    <Crown className="h-2.5 w-2.5" />
-                    Super admin
-                  </Badge>
-                ) : (
-                  <p className="mt-0.5 text-[10px] text-muted-foreground/60">
-                    Administrateur
+                  <p className="text-[9px] font-semibold text-yellow-500">
+                    SUPER ADMIN
                   </p>
+                ) : (
+                  <p className="text-[9px] text-muted-foreground/50">ADMIN</p>
                 )}
               </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-1">
               <ThemeToggle />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="flex-1 justify-start gap-2 text-xs text-muted-foreground hover:text-destructive"
-                    onClick={async () => {
-                      await adminAuthApi.logout();
-                      router.push("/");
-                    }}
-                  >
-                    <LogOut className="h-3.5 w-3.5" />
-                    Se déconnecter
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  Terminer la session
-                </TooltipContent>
-              </Tooltip>
             </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start gap-2 h-7 text-[12px] text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10"
+              onClick={async () => {
+                await adminAuthApi.logout();
+                router.push("/");
+              }}
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Déconnexion
+            </Button>
           </div>
         </aside>
 
-        {/* ── Main ────────────────────────────────────────────────────── */}
+        {/* ── Main ───────────────────────────────────────────────── */}
         <div className="flex flex-1 flex-col overflow-hidden">
-          {/* Top bar */}
-          <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-card/30 px-6">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground/50">Admin</span>
-              {currentNav && (
-                <>
-                  <span className="text-muted-foreground/30">/</span>
-                  <span className="font-medium text-foreground">
-                    {currentNav.label}
-                  </span>
-                </>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1">
-                <Activity className="h-3 w-3 text-emerald-500" />
-                <span className="text-[11px] font-medium text-muted-foreground">
-                  Système opérationnel
+          {/* Topbar */}
+          <header className="flex h-13 shrink-0 items-center gap-2 border-b border-border px-6">
+            <span className="text-xs text-muted-foreground/40">Admin</span>
+            {currentNav && (
+              <>
+                <span className="text-muted-foreground/20">/</span>
+                <span className="text-xs font-medium text-foreground">
+                  {currentNav.label}
                 </span>
-              </div>
+              </>
+            )}
+            <div className="ml-auto flex items-center gap-1.5 rounded-full border border-border/50 bg-card/50 px-2.5 py-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[11px] text-muted-foreground/60">
+                Opérationnel
+              </span>
             </div>
           </header>
-
-          {/* Page content */}
           <main className="flex-1 overflow-y-auto">
             <div className="p-6">{children}</div>
           </main>
