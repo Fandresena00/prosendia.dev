@@ -19,8 +19,8 @@
 "use client";
 
 import { useState } from "react";
-import { CreditStatusBanner } from "../components/credit-status-banner";
 import { CreditHistory } from "../components/credit-history";
+import { CreditStatusBanner } from "../components/credit-status-banner";
 import { PackCard } from "../components/packs-card";
 import { PaymentDialog } from "../components/payment-dialog";
 import { PaymentHistory } from "../components/payment-history";
@@ -59,7 +59,7 @@ export default function BillingPage() {
   }
 
   return (
-    <div className="space-y-8 max-w-5xl mx-auto p-6">
+    <div className="space-y-8 mx-auto p-6">
       {/* Statut crédits */}
       {creditStatus && (
         <CreditStatusBanner
@@ -116,7 +116,6 @@ export default function BillingPage() {
     </div>
   );
 }
-
 
 // ─── Page /billing/success ────────────────────────────────────────────────────
 //
