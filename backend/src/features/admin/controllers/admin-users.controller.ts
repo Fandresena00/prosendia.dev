@@ -1,6 +1,6 @@
 // src/features/admin/controllers/admin-users.controller.ts
 //
-// CHANGE: Ajout de GET /:id/stats → AdminUserStatsService.getUserStats()
+// CHANGE: Ajout de POST /:id/subscription/custom → AdminCustomSubscriptionService
 
 import {
   Body,
@@ -21,6 +21,8 @@ import {
   ChangeUserPlanDto,
   SuspendUserDto,
 } from '../dto/admin-users.dto.js';
+import { CreateCustomSubscriptionDto } from '../dto/admin-custom-subscription.dto.js';
+import { AdminCustomSubscriptionService } from '../services/admin-custom-subscription.service.js';
 import { AdminUserStatsService } from '../services/admin-user-stats.service.js';
 import { AdminUsersService } from '../services/admin-users.service.js';
 import type { AuthenticatedAdmin } from '../strategies/admin-jwt.strategy.js';
@@ -31,6 +33,7 @@ export class AdminUsersController {
   constructor(
     private readonly usersService: AdminUsersService,
     private readonly statsService: AdminUserStatsService,
+    private readonly customSubService: AdminCustomSubscriptionService,
   ) {}
 
   // ─── Liste & détail ───────────────────────────────────────────────────────
@@ -44,13 +47,6 @@ export class AdminUsersController {
   detail(@Param('id') id: string) {
     return this.usersService.getDetail(id);
   }
-
-  // ─── Stats dashboard (nouveau endpoint) ───────────────────────────────────
-  //
-  // GET /admin/users/:id/stats
-  // Retourne les statistiques complètes d'un utilisateur :
-  // abonnement, usage IA, taux de réponse, activité du jour,
-  // graphique hebdomadaire et graphique crédits 30j.
 
   @Get(':id/stats')
   getUserStats(@Param('id') id: string) {
@@ -100,5 +96,19 @@ export class AdminUsersController {
     @CurrentAdmin() admin: AuthenticatedAdmin,
   ) {
     return this.usersService.adjustCredits(id, dto, admin.sub);
+  }
+
+  // ─── Custom subscription ──────────────────────────────────────────────────
+  //
+  // POST /admin/users/:id/subscription/custom
+  // Crée un abonnement CUSTOM directement ACTIVE avec crédits accordés.
+
+  @Post(':id/subscription/custom')
+  createCustomSubscription(
+    @Param('id') id: string,
+    @Body() dto: CreateCustomSubscriptionDto,
+    @CurrentAdmin() admin: AuthenticatedAdmin,
+  ) {
+    return this.customSubService.createCustomSubscription(id, dto, admin.sub);
   }
 }
