@@ -1,16 +1,13 @@
 /**
  * @file features/billing/billing.module.ts
  *
- * CHANGE: Import DashboardModule pour injecter NotificationService
- * dans SubscriptionService via le token NOTIFICATION_SERVICE_TOKEN.
+ * CHANGE: Import AdminModule (forwardRef) pour accéder à AdminCustomPlanTemplateService
+ * dans BillingController (endpoint GET /billing/custom-plans).
  *
- * Le forwardRef() est nécessaire car :
- *   BillingModule  → DashboardModule → BillingModule (via CreditService)
- *
- * Architecture du token :
- *   DashboardModule fournit NotificationService avec le token
- *   NOTIFICATION_SERVICE_TOKEN pour que BillingModule puisse l'injecter
- *   sans import circulaire direct.
+ * Dépendances circulaires gérées :
+ *   BillingModule → forwardRef(DashboardModule)  [déjà existant]
+ *   BillingModule → forwardRef(AdminModule)       [NOUVEAU — AdminModule exporte AdminCustomPlanTemplateService]
+ *   AdminModule   → BillingModule                 [déjà existant — CreditService]
  */
 
 import { Module, forwardRef } from '@nestjs/common';
@@ -28,14 +25,14 @@ import {
   SubscriptionService,
 } from './services/subscription.service.js';
 
-// Import conditionnel pour éviter la circularité
-// DashboardModule exporte NotificationService sous le token NOTIFICATION_SERVICE_TOKEN
 import { DashboardModule } from '../dashboard/dashboard.module.js';
+import { AdminModule } from '../admin/admin.module.js'; // ← NOUVEAU
 
 @Module({
   imports: [
     PrismaModule,
-    forwardRef(() => DashboardModule), // ← pour NotificationService
+    forwardRef(() => DashboardModule),
+    forwardRef(() => AdminModule), // ← pour AdminCustomPlanTemplateService
   ],
   controllers: [
     BillingController,

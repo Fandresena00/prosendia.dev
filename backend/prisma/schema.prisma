@@ -956,3 +956,27 @@ model WebPushSubscription {
   @@index([userId])
   @@map("web_push_subscriptions")
 }
+
+
+ model CustomPlanTemplate {
+   id          String   @id @default(uuid())
+
+   name        String             
+   description String?                  
+   priceAriary Int                    
+   durationDays Int     @default(30)
+   credits     Int                   
+   maxPages    Int
+   maxManagedPosts     Int
+   maxReferenceImages  Int
+
+   isPublic    Boolean  @default(true) 
+   isActive    Boolean  @default(true)    
+
+   createdByAdminId String
+   note        String?              
+   createdAt   DateTime @default(now())
+   updatedAt   DateTime @updatedAt
+
+   @@map("custom_plan_templates")
+ }

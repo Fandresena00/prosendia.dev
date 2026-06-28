@@ -341,3 +341,67 @@ export const adminLogsApi = {
   },
   listAdmins: () => adminFetch<{ id: string; email: string }[]>("/logs/admins"),
 };
+
+// ─── Custom plan templates ────────────────────────────────────────────────────
+
+export interface CustomPlanTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  priceAriary: number;
+  durationDays: number;
+  credits: number;
+  maxPages: number;
+  maxManagedPosts: number;
+  maxReferenceImages: number;
+  isPublic: boolean;
+  isActive: boolean;
+  note: string | null;
+  createdByAdminId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateCustomPlanTemplatePayload {
+  name: string;
+  description?: string;
+  priceAriary: number;
+  durationDays?: number;
+  credits: number;
+  maxPages: number;
+  maxManagedPosts: number;
+  maxReferenceImages: number;
+  isPublic?: boolean;
+  note?: string;
+}
+
+export type UpdateCustomPlanTemplatePayload = Partial<CreateCustomPlanTemplatePayload>;
+
+export const adminCustomPlansApi = {
+  list: (includeInactive = false) =>
+    adminFetch<CustomPlanTemplate[]>(
+      `/custom-plans${includeInactive ? "?includeInactive=true" : ""}`,
+    ),
+
+  create: (data: CreateCustomPlanTemplatePayload) =>
+    adminFetch<CustomPlanTemplate>("/custom-plans", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  update: (id: string, data: UpdateCustomPlanTemplatePayload) =>
+    adminFetch<CustomPlanTemplate>(`/custom-plans/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  toggle: (id: string) =>
+    adminFetch<CustomPlanTemplate>(`/custom-plans/${id}/toggle`, {
+      method: "PATCH",
+    }),
+
+  remove: (id: string) =>
+    adminFetch<{ deleted: boolean; id: string }>(`/custom-plans/${id}`, {
+      method: "DELETE",
+    }),
+};

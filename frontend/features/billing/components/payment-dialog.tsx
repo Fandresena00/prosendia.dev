@@ -1,14 +1,17 @@
 /**
  * @file features/billing/components/payment-dialog.tsx
  *
- * FIXES (batch courant)
- * ─────────────────────
- * 1. Wording "offre" au lieu d'"abonnement".
- * 2. Prop onSuccess optionnelle : appelée avant la redirection Papi pour
- *    permettre au parent de déclencher un refetchStatus() immédiat.
- *    En pratique, le solde sera mis à jour par le webhook Papi quelques
- *    secondes après la confirmation du paiement — mais refetchStatus()
- *    sur la page /billing/success garantit l'affichage immédiat du nouveau solde.
+ * CHANGE: Accepte maintenant un `customTemplateId` optionnel.
+ * Quand un template custom est sélectionné, on passe son ID comme planId
+ * à POST /billing/payments/initiate. Le backend doit résoudre les limites
+ * depuis le template et créer une subscription CUSTOM.
+ *
+ * Flux complet :
+ *   User sélectionne un template custom →
+ *   PaymentDialog reçoit plan = null, customTemplateId = template.id →
+ *   initiatePayment(customTemplateId, provider, phone, name) →
+ *   Backend crée une subscription PENDING CUSTOM →
+ *   Redirect Papi → webhook → activateSubscription() → crédits accordés
  */
 
 "use client";
@@ -24,11 +27,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { ExternalLink, Loader2, Zap } from "lucide-react";
+import { Crown, ExternalLink, Loader2, Zap } from "lucide-react";
 import { useState } from "react";
 import { usePayment } from "../hooks/use-payment";
 import type { PaymentProvider, Plan } from "../types/billing.types";
 import { PROVIDER_META } from "../types/billing.types";
+import type { CustomPlanTemplate } from "./packs-card";
 import { ProviderLogo } from "./payment-logos";
 
 const PROVIDERS: PaymentProvider[] = ["MVOLA", "ORANGE_MONEY", "AIRTEL_MONEY"];
@@ -36,9 +40,11 @@ const PROVIDERS: PaymentProvider[] = ["MVOLA", "ORANGE_MONEY", "AIRTEL_MONEY"];
 interface PaymentDialogProps {
   open: boolean;
   onClose: () => void;
+  /** Plan standard (FREE/STARTER/PRO) — null si c'est un template custom */
   plan: Plan | null;
+  /** Template custom — null si c'est un plan standard */
+  customTemplate?: CustomPlanTemplate | null;
   payerName?: string;
-  /** Appelé juste avant la redirection Papi — permet un refetch du statut */
   onSuccess?: () => void;
 }
 
@@ -46,6 +52,7 @@ export function PaymentDialog({
   open,
   onClose,
   plan,
+  customTemplate,
   payerName = "",
   onSuccess,
 }: PaymentDialogProps) {
@@ -54,11 +61,18 @@ export function PaymentDialog({
     PROVIDER_META["MVOLA"].prefixes[0],
   );
   const [phoneLocal, setPhoneLocal] = useState("");
-  const [nameInput, setNameInput] = useState(payerName);
+  const [nameInput, setNameInput]   = useState(payerName);
   const { state, errorMsg, pay, reset } = usePayment();
 
-  const meta = PROVIDER_META[provider];
-  const isLoading = state === "loading" || state === "redirecting";
+  // Données d'affichage — soit depuis plan standard, soit depuis template custom
+  const displayName     = plan?.name          ?? customTemplate?.name    ?? "";
+  const displayPrice    = plan?.priceAriary   ?? customTemplate?.priceAriary ?? 0;
+  const displayCredits  = plan?.credits       ?? customTemplate?.credits ?? null;
+  const displayId       = plan?.id            ?? customTemplate?.id      ?? "";
+  const isCustom        = !!customTemplate;
+
+  const meta         = PROVIDER_META[provider];
+  const isLoading    = state === "loading" || state === "redirecting";
   const isRedirecting = state === "redirecting";
 
   const handleClose = () => {
@@ -70,9 +84,9 @@ export function PaymentDialog({
   };
 
   const handlePay = async () => {
-    if (!plan || !phoneLocal.trim() || !nameInput.trim()) return;
+    if (!displayId || !phoneLocal.trim() || !nameInput.trim()) return;
     const fullPhone = `${selectedPrefix}${phoneLocal.replace(/\D/g, "")}`;
-    await pay(plan.id, provider, fullPhone, nameInput.trim(), onSuccess);
+    await pay(displayId, provider, fullPhone, nameInput.trim(), onSuccess);
   };
 
   const isValid =
@@ -82,23 +96,21 @@ export function PaymentDialog({
     <AlertDialog open={open} onOpenChange={handleClose}>
       <AlertDialogContent className="max-w-sm">
         <AlertDialogHeader>
-          <AlertDialogTitle>
+          <AlertDialogTitle className="flex items-center gap-2">
+            {isCustom && <Crown className="h-4 w-4 text-yellow-500" />}
             {isRedirecting
               ? "Redirection vers le paiement…"
-              : `Souscrire à l'offre ${plan?.name}`}
+              : `Souscrire à l'offre ${displayName}`}
           </AlertDialogTitle>
         </AlertDialogHeader>
 
         {isRedirecting ? (
-          /* État redirection */
           <div className="py-8 flex flex-col items-center gap-4">
             <div className="h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center">
               <Loader2 className="h-7 w-7 text-primary animate-spin" />
             </div>
             <div className="text-center space-y-1">
-              <p className="text-sm font-semibold">
-                Ouverture de la page de paiement
-              </p>
+              <p className="text-sm font-semibold">Ouverture de la page de paiement</p>
               <p className="text-xs text-muted-foreground">
                 Vous allez être redirigé vers Papi pour finaliser le paiement.
               </p>
@@ -117,10 +129,7 @@ export function PaymentDialog({
                 return (
                   <button
                     key={p}
-                    onClick={() => {
-                      setProvider(p);
-                      setSelectedPrefix(m.prefixes[0]);
-                    }}
+                    onClick={() => { setProvider(p); setSelectedPrefix(m.prefixes[0]); }}
                     className={`flex flex-col items-center gap-2 rounded-md border p-3 transition-all ${
                       provider === p
                         ? "border-primary/40 bg-primary/5"
@@ -129,16 +138,12 @@ export function PaymentDialog({
                   >
                     <ProviderLogo provider={p} size={28} />
                     <div className="text-center">
-                      <p className="text-xs font-semibold leading-tight">
-                        {m.label}
-                      </p>
+                      <p className="text-xs font-semibold leading-tight">{m.label}</p>
                       <p className="text-[10px] text-muted-foreground whitespace-nowrap">
                         {m.prefixes.join(" & ")}
                       </p>
                     </div>
-                    {provider === p && (
-                      <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                    )}
+                    {provider === p && <div className="h-1.5 w-1.5 rounded-full bg-primary" />}
                   </button>
                 );
               })}
@@ -167,10 +172,8 @@ export function PaymentDialog({
                     onChange={(e) => setSelectedPrefix(e.target.value)}
                     className="flex items-center justify-center h-10 w-16 rounded-md border border-border/50 bg-secondary/50 text-sm font-semibold text-muted-foreground shrink-0 focus:outline-none focus:ring-1 focus:ring-primary/40 px-1 cursor-pointer"
                   >
-                    {meta.prefixes.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
+                    {meta.prefixes.map((px) => (
+                      <option key={px} value={px}>{px}</option>
                     ))}
                   </select>
                 ) : (
@@ -192,33 +195,59 @@ export function PaymentDialog({
             </div>
 
             {/* Récapitulatif */}
-            <div className="rounded-md border border-border/40 bg-secondary/30 p-3 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Offre</span>
-                <span className="font-medium">{plan?.name}</span>
-              </div>
-              {plan?.credits && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Crédits IA</span>
-                  <span className="font-medium text-primary">
-                    {plan.credits.toLocaleString("fr-FR")} crédits
+            <div className={`rounded-md border p-3 space-y-2 ${
+              isCustom
+                ? "border-yellow-500/20 bg-yellow-500/5"
+                : "border-border/40 bg-secondary/30"
+            }`}>
+              {isCustom && (
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Crown className="h-3.5 w-3.5 text-yellow-500" />
+                  <span className="text-[11px] font-semibold text-yellow-600 uppercase tracking-wide">
+                    Offre personnalisée
                   </span>
                 </div>
               )}
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Durée</span>
-                <span>30 jours</span>
+                <span className="text-muted-foreground">Offre</span>
+                <span className="font-medium">{displayName}</span>
               </div>
+              {displayCredits && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Crédits IA</span>
+                  <span className="font-medium text-primary">
+                    {displayCredits.toLocaleString("fr-FR")} crédits
+                  </span>
+                </div>
+              )}
+              {customTemplate && (
+                <>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Durée</span>
+                    <span>{customTemplate.durationDays} jours</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Pages max</span>
+                    <span>{customTemplate.maxPages}</span>
+                  </div>
+                </>
+              )}
+              {!customTemplate && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Durée</span>
+                  <span>30 jours</span>
+                </div>
+              )}
               <Separator />
               <div className="flex justify-between text-sm font-bold">
                 <span>Total</span>
-                <span className="text-primary">
-                  {plan?.priceAriary?.toLocaleString("fr-MG")} Ar
+                <span className={isCustom ? "text-yellow-600" : "text-primary"}>
+                  {displayPrice === 0 ? "Gratuit" : `${displayPrice.toLocaleString("fr-MG")} Ar`}
                 </span>
               </div>
               <p className="text-[10px] text-muted-foreground leading-relaxed">
-                ⚠️ Sans recharge automatique — renouvellement manuel chaque
-                mois. Vous serez redirigé vers Papi pour le paiement.
+                ⚠️ Sans recharge automatique — renouvellement manuel chaque mois.
+                Vous serez redirigé vers Papi pour le paiement.
               </p>
             </div>
 
@@ -231,10 +260,7 @@ export function PaymentDialog({
 
             {/* Actions */}
             <div className="flex gap-3">
-              <AlertDialogCancel
-                className="flex-1 h-9 text-sm"
-                onClick={handleClose}
-              >
+              <AlertDialogCancel className="flex-1 h-9 text-sm" onClick={handleClose}>
                 Annuler
               </AlertDialogCancel>
               <Button
@@ -243,14 +269,10 @@ export function PaymentDialog({
                 onClick={handlePay}
               >
                 {state === "loading" ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Traitement…
-                  </>
+                  <><Loader2 className="h-4 w-4 animate-spin" />Traitement…</>
                 ) : (
-                  <>
-                    <Zap className="h-4 w-4" />
-                    Payer {plan?.priceAriary?.toLocaleString("fr-MG")} Ar
+                  <><Zap className="h-4 w-4" />
+                    Payer {displayPrice === 0 ? "Gratuit" : `${displayPrice.toLocaleString("fr-MG")} Ar`}
                   </>
                 )}
               </Button>
