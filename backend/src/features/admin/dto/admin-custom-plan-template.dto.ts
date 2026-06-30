@@ -1,16 +1,22 @@
-// src/features/admin/dto/admin-custom-plan-template.dto.ts
+// src/features/admin/dto/admin-custom-plan-config.dto.ts
+//
+// userId est maintenant REQUIS dans la création (config user-specific).
 
 import { Type } from 'class-transformer';
 import {
   IsBoolean, IsInt, IsOptional, IsPositive,
-  IsString, Max, MaxLength, Min, MinLength,
+  IsString, IsUUID, Max, MaxLength, Min, MinLength,
 } from 'class-validator';
 
-export class CreateCustomPlanTemplateDto {
+export class CreateCustomPlanConfigDto {
+  @IsUUID('4')
+  userId!: string; // ← OBLIGATOIRE — config liée à un user spécifique
+
+  @IsOptional()
   @IsString()
   @MinLength(2)
   @MaxLength(80)
-  name!: string;
+  name?: string;
 
   @IsOptional()
   @IsString()
@@ -22,11 +28,12 @@ export class CreateCustomPlanTemplateDto {
   @Min(0)
   priceAriary!: number;
 
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(3650)
-  durationDays: number = 30;
+  durationDays?: number;
 
   @Type(() => Number)
   @IsInt()
@@ -50,7 +57,11 @@ export class CreateCustomPlanTemplateDto {
 
   @IsOptional()
   @IsBoolean()
-  isPublic?: boolean = true;
+  isVisible?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isPurchasable?: boolean;
 
   @IsOptional()
   @IsString()
@@ -58,8 +69,8 @@ export class CreateCustomPlanTemplateDto {
   note?: string;
 }
 
-// Tous les champs optionnels pour le PATCH
-export class UpdateCustomPlanTemplateDto {
+// Tous champs optionnels pour PATCH
+export class UpdateCustomPlanConfigDto {
   @IsOptional()
   @IsString()
   @MinLength(2)
@@ -110,10 +121,18 @@ export class UpdateCustomPlanTemplateDto {
 
   @IsOptional()
   @IsBoolean()
-  isPublic?: boolean;
+  isVisible?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isPurchasable?: boolean;
 
   @IsOptional()
   @IsString()
   @MaxLength(500)
   note?: string;
 }
+
+// Aliases pour compatibilité avec les imports existants
+export { CreateCustomPlanConfigDto as CreateCustomPlanTemplateDto };
+export { UpdateCustomPlanConfigDto as UpdateCustomPlanTemplateDto };

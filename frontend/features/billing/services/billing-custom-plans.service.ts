@@ -1,14 +1,8 @@
 /**
  * @file features/billing/services/billing-custom-plans.service.ts
  *
- * Fetche les templates de plans custom publics depuis le backend.
- * Utilisé par la page /billing pour afficher les offres custom achetables.
- *
- * Endpoint: GET /billing/custom-plans (route publique côté user, voir NOTE ci-dessous)
- *
- * NOTE : Il faut ajouter cet endpoint dans BillingController côté backend :
- *   GET /billing/custom-plans → délègue à AdminCustomPlanTemplateService.listPublicTemplates()
- *   Protégé par JwtAuthGuard comme les autres routes billing.
+ * Fetche la config custom de CET user depuis GET /billing/custom-plan (singulier).
+ * Retourne null si l'user n'a pas de config ou si l'endpoint n'existe pas encore.
  */
 
 import { apiClient } from "@/lib/api-client";
@@ -16,16 +10,14 @@ import type { CustomPlanTemplate } from "../components/packs-card";
 
 export const billingCustomPlansService = {
   /**
-   * Retourne les templates custom publics et actifs.
-   * Retourne [] si aucun template ou si le backend n'a pas encore l'endpoint.
+   * Retourne la config custom propre à cet utilisateur (null si aucune).
+   * Silencieux si le backend n'a pas encore l'endpoint.
    */
-  async getPublicTemplates(): Promise<CustomPlanTemplate[]> {
+  async getMyCustomPlan(): Promise<CustomPlanTemplate | null> {
     try {
-      return await apiClient<CustomPlanTemplate[]>("/billing/custom-plans");
+      return await apiClient<CustomPlanTemplate | null>("/billing/custom-plan");
     } catch {
-      // Silencieux : si l'endpoint n'existe pas encore, on retourne []
-      // → la PackCard affichera "Nous contacter" par défaut
-      return [];
+      return null;
     }
   },
 };

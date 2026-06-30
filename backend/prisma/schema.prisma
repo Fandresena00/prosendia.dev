@@ -250,10 +250,12 @@ model User {
 
   providerId     String?
   onboardingDone  Boolean      @default(false)
+
 emailVerified   Boolean      @default(false)
 emailVerifiedAt DateTime?
 
   activePlan     Plan         @default(FREE)
+  customPlanConfig CustomPlanConfig?
   provider       AuthProvider @default(LOCAL)
 
 
@@ -958,25 +960,30 @@ model WebPushSubscription {
 }
 
 
- model CustomPlanTemplate {
-   id          String   @id @default(uuid())
+model CustomPlanConfig {
+ id String @id @default(uuid())
+ userId String @unique  
+ user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-   name        String             
-   description String?                  
-   priceAriary Int                    
-   durationDays Int     @default(30)
-   credits     Int                   
-   maxPages    Int
-   maxManagedPosts     Int
-   maxReferenceImages  Int
+ name String @default("Plan Custom")
+ description String?
 
-   isPublic    Boolean  @default(true) 
-   isActive    Boolean  @default(true)    
+ priceAriary Int
+ durationDays Int @default(30)
+ credits Int
+ maxPages Int
+ maxManagedPosts Int
+ maxReferenceImages Int
 
-   createdByAdminId String
-   note        String?              
-   createdAt   DateTime @default(now())
-   updatedAt   DateTime @updatedAt
+ isVisible Boolean @default(true)  
+ isPurchasable Boolean @default(true)  
 
-   @@map("custom_plan_templates")
+ createdByAdminId String 
+ note String? 
+
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+
+ @@map("custom_plan_configs")
  }
+

@@ -342,10 +342,14 @@ export const adminLogsApi = {
   listAdmins: () => adminFetch<{ id: string; email: string }[]>("/logs/admins"),
 };
 
-// ─── Custom plan templates ────────────────────────────────────────────────────
+// ─── Custom plan configs (user-specific) ─────────────────────────────────────
+// Chaque config est liée à UN user. 1 user = au plus 1 config custom.
 
 export interface CustomPlanTemplate {
   id: string;
+  userId: string;
+  userEmail?: string;
+  userName?: string;
   name: string;
   description: string | null;
   priceAriary: number;
@@ -354,8 +358,8 @@ export interface CustomPlanTemplate {
   maxPages: number;
   maxManagedPosts: number;
   maxReferenceImages: number;
-  isPublic: boolean;
-  isActive: boolean;
+  isActive: boolean;       // = isVisible côté backend
+  isPurchasable: boolean;
   note: string | null;
   createdByAdminId: string;
   createdAt: string;
@@ -363,7 +367,8 @@ export interface CustomPlanTemplate {
 }
 
 export interface CreateCustomPlanTemplatePayload {
-  name: string;
+  userId: string;          // ← REQUIS — config liée à ce user
+  name?: string;
   description?: string;
   priceAriary: number;
   durationDays?: number;
@@ -371,18 +376,25 @@ export interface CreateCustomPlanTemplatePayload {
   maxPages: number;
   maxManagedPosts: number;
   maxReferenceImages: number;
-  isPublic?: boolean;
+  isVisible?: boolean;
+  isPurchasable?: boolean;
   note?: string;
 }
 
-export type UpdateCustomPlanTemplatePayload = Partial<CreateCustomPlanTemplatePayload>;
+export type UpdateCustomPlanTemplatePayload = Omit<Partial<CreateCustomPlanTemplatePayload>, "userId">;
 
 export const adminCustomPlansApi = {
-  list: (includeInactive = false) =>
+  // Liste toutes les configs (vue admin)
+  list: (includeInvisible = false) =>
     adminFetch<CustomPlanTemplate[]>(
-      `/custom-plans${includeInactive ? "?includeInactive=true" : ""}`,
+      `/custom-plans${includeInvisible ? "?includeInvisible=true" : ""}`,
     ),
 
+  // Config d'un user spécifique
+  getForUser: (userId: string) =>
+    adminFetch<CustomPlanTemplate | null>(`/custom-plans/user/${userId}`),
+
+  // Crée ou remplace la config d'un user (upsert côté backend)
   create: (data: CreateCustomPlanTemplatePayload) =>
     adminFetch<CustomPlanTemplate>("/custom-plans", {
       method: "POST",
@@ -395,13 +407,14 @@ export const adminCustomPlansApi = {
       body: JSON.stringify(data),
     }),
 
+  // Toggle isVisible
   toggle: (id: string) =>
     adminFetch<CustomPlanTemplate>(`/custom-plans/${id}/toggle`, {
       method: "PATCH",
     }),
 
   remove: (id: string) =>
-    adminFetch<{ deleted: boolean; id: string }>(`/custom-plans/${id}`, {
+    adminFetch<{ deleted: boolean; userId: string }>(`/custom-plans/${id}`, {
       method: "DELETE",
     }),
 };

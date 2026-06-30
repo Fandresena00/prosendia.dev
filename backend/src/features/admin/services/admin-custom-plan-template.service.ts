@@ -1,22 +1,13 @@
-// src/features/admin/services/admin-custom-plan-template.service.ts
+// src/features/admin/services/admin-custom-plan-config.service.ts
 //
-// CRUD des templates de plans custom créés par les admins.
-// Un template est distinct d'un abonnement :
-//   - Template  = config tarifaire/limites définie par l'admin
-//   - Attribution = création d'un abonnement CUSTOM basé sur ce template (ou manuellement)
+// REFACTOR: CustomPlanConfig est maintenant associé à un user UNIQUE.
+// Remplace le concept de "template global" par une "config par user".
 //
-// Endpoints produits :
-//   GET    /admin/custom-plans              → liste tous les templates
-//   POST   /admin/custom-plans              → crée un template
-//   PATCH  /admin/custom-plans/:id          → modifie un template
-//   DELETE /admin/custom-plans/:id          → supprime (ou désactive)
-//   PATCH  /admin/custom-plans/:id/toggle   → active/désactive la visibilité
+// Un admin crée une config custom pour un user spécifique.
+// Cette config est visible dans /billing de ce user (si isVisible=true).
+// L'user peut l'acheter via Papi (si isPurchasable=true) ou l'admin l'attribue manuellement.
 //
-// Côté user (BillingController) :
-//   GET /billing/plans  inclut les templates publics/actifs dans la liste des plans
-//   L'attribution reste déclenchée :
-//     a) par le user (achat via Papi) — souscription standard
-//     b) par l'admin (POST /admin/users/:id/subscription/custom) — attribution manuelle
+// 1 user = au plus 1 CustomPlanConfig (relation @unique userId).
 
 import {
   BadRequestException,
@@ -25,7 +16,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
-import type { CreateCustomPlanTemplateDto, UpdateCustomPlanTemplateDto } from '../dto/admin-custom-plan-template.dto.js';
+import type {
+  CreateCustomPlanConfigDto,
+  UpdateCustomPlanConfigDto,
+} from '../dto/admin-custom-plan-template.dto.js';
 
 @Injectable()
 export class AdminCustomPlanTemplateService {
@@ -33,65 +27,131 @@ export class AdminCustomPlanTemplateService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  // ─── Liste ────────────────────────────────────────────────────────────────
+  // ─── Liste toutes les configs (vue admin) ────────────────────────────────
 
-  async listTemplates(includeInactive = false) {
-    return this.prisma.customPlanTemplate.findMany({
-      where: includeInactive ? undefined : { isActive: true },
+  async listTemplates(includeInvisible = false) {
+    const configs = await this.prisma.customPlanConfig.findMany({
+      where: includeInvisible ? undefined : { isVisible: true },
       orderBy: { createdAt: 'desc' },
+      include: {
+        user: { select: { id: true, email: true, username: true } },
+      },
+    });
+
+    return configs.map((c) => ({
+      id: c.id,
+      userId: c.userId,
+      userEmail: c.user.email,
+      userName: c.user.username,
+      name: c.name,
+      description: c.description,
+      priceAriary: c.priceAriary,
+      durationDays: c.durationDays,
+      credits: c.credits,
+      maxPages: c.maxPages,
+      maxManagedPosts: c.maxManagedPosts,
+      maxReferenceImages: c.maxReferenceImages,
+      isVisible: c.isVisible,
+      isPurchasable: c.isPurchasable,
+      createdByAdminId: c.createdByAdminId,
+      note: c.note,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+    }));
+  }
+
+  // ─── Récupère la config d'un user spécifique ─────────────────────────────
+
+  async getConfigForUser(userId: string) {
+    return this.prisma.customPlanConfig.findUnique({
+      where: { userId },
     });
   }
 
-  // ─── Création ─────────────────────────────────────────────────────────────
+  // ─── Crée ou remplace la config d'un user ────────────────────────────────
 
-  async createTemplate(dto: CreateCustomPlanTemplateDto, adminId: string) {
+  async createTemplate(dto: CreateCustomPlanConfigDto, adminId: string) {
     this.validateLimits(dto);
 
-    const template = await this.prisma.customPlanTemplate.create({
-      data: {
-        name:               dto.name,
-        description:        dto.description,
-        priceAriary:        dto.priceAriary,
-        durationDays:       dto.durationDays,
-        credits:            dto.credits,
-        maxPages:           dto.maxPages,
-        maxManagedPosts:    dto.maxManagedPosts,
+    // Vérifie que le user existe
+    const user = await this.prisma.user.findUnique({
+      where: { id: dto.userId },
+      select: { id: true, email: true },
+    });
+    if (!user) throw new NotFoundException('Utilisateur introuvable.');
+
+    // Upsert : remplace si une config existe déjà pour ce user
+    const config = await this.prisma.customPlanConfig.upsert({
+      where: { userId: dto.userId },
+      create: {
+        userId: dto.userId,
+        name: dto.name ?? 'Plan Custom',
+        description: dto.description,
+        priceAriary: dto.priceAriary,
+        durationDays: dto.durationDays ?? 30,
+        credits: dto.credits,
+        maxPages: dto.maxPages,
+        maxManagedPosts: dto.maxManagedPosts,
         maxReferenceImages: dto.maxReferenceImages,
-        isPublic:           dto.isPublic ?? true,
-        isActive:           true,
-        createdByAdminId:   adminId,
-        note:               dto.note,
+        isVisible: dto.isVisible ?? true,
+        isPurchasable: dto.isPurchasable ?? true,
+        createdByAdminId: adminId,
+        note: dto.note,
+      },
+      update: {
+        name: dto.name ?? 'Plan Custom',
+        description: dto.description,
+        priceAriary: dto.priceAriary,
+        durationDays: dto.durationDays ?? 30,
+        credits: dto.credits,
+        maxPages: dto.maxPages,
+        maxManagedPosts: dto.maxManagedPosts,
+        maxReferenceImages: dto.maxReferenceImages,
+        isVisible: dto.isVisible ?? true,
+        isPurchasable: dto.isPurchasable ?? true,
+        note: dto.note,
       },
     });
 
     this.logger.log(
-      `[CUSTOM_PLAN_CREATED] id=${template.id} name="${template.name}" admin=${adminId}`,
+      `[CUSTOM_PLAN_UPSERTED] configId=${config.id} userId=${dto.userId} admin=${adminId}`,
     );
 
-    return template;
+    return config;
   }
 
-  // ─── Modification ─────────────────────────────────────────────────────────
+  // ─── Modifie partiellement une config ────────────────────────────────────
 
-  async updateTemplate(id: string, dto: UpdateCustomPlanTemplateDto) {
-    await this.ensureExists(id);
-    if (dto.credits !== undefined || dto.priceAriary !== undefined) {
-      this.validateLimits(dto);
-    }
+  async updateTemplate(id: string, dto: UpdateCustomPlanConfigDto) {
+    const config = await this.prisma.customPlanConfig.findUnique({
+      where: { id },
+    });
+    if (!config) throw new NotFoundException('Config introuvable.');
+    if (dto.credits !== undefined)
+      this.validateLimits({ credits: dto.credits, priceAriary: 0 });
 
-    return this.prisma.customPlanTemplate.update({
+    return this.prisma.customPlanConfig.update({
       where: { id },
       data: {
-        ...(dto.name               !== undefined && { name:               dto.name }),
-        ...(dto.description        !== undefined && { description:        dto.description }),
-        ...(dto.priceAriary        !== undefined && { priceAriary:        dto.priceAriary }),
-        ...(dto.durationDays       !== undefined && { durationDays:       dto.durationDays }),
-        ...(dto.credits            !== undefined && { credits:            dto.credits }),
-        ...(dto.maxPages           !== undefined && { maxPages:           dto.maxPages }),
-        ...(dto.maxManagedPosts    !== undefined && { maxManagedPosts:    dto.maxManagedPosts }),
-        ...(dto.maxReferenceImages !== undefined && { maxReferenceImages: dto.maxReferenceImages }),
-        ...(dto.isPublic           !== undefined && { isPublic:           dto.isPublic }),
-        ...(dto.note               !== undefined && { note:               dto.note }),
+        ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.description !== undefined && { description: dto.description }),
+        ...(dto.priceAriary !== undefined && { priceAriary: dto.priceAriary }),
+        ...(dto.durationDays !== undefined && {
+          durationDays: dto.durationDays,
+        }),
+        ...(dto.credits !== undefined && { credits: dto.credits }),
+        ...(dto.maxPages !== undefined && { maxPages: dto.maxPages }),
+        ...(dto.maxManagedPosts !== undefined && {
+          maxManagedPosts: dto.maxManagedPosts,
+        }),
+        ...(dto.maxReferenceImages !== undefined && {
+          maxReferenceImages: dto.maxReferenceImages,
+        }),
+        ...(dto.isVisible !== undefined && { isVisible: dto.isVisible }),
+        ...(dto.isPurchasable !== undefined && {
+          isPurchasable: dto.isPurchasable,
+        }),
+        ...(dto.note !== undefined && { note: dto.note }),
       },
     });
   }
@@ -99,53 +159,52 @@ export class AdminCustomPlanTemplateService {
   // ─── Toggle visibilité ────────────────────────────────────────────────────
 
   async toggleActive(id: string) {
-    const template = await this.ensureExists(id);
-    return this.prisma.customPlanTemplate.update({
+    const config = await this.prisma.customPlanConfig.findUnique({
       where: { id },
-      data: { isActive: !template.isActive },
+    });
+    if (!config) throw new NotFoundException('Config introuvable.');
+    return this.prisma.customPlanConfig.update({
+      where: { id },
+      data: { isVisible: !config.isVisible },
     });
   }
 
-  // ─── Suppression ─────────────────────────────────────────────────────────
+  // ─── Supprime la config d'un user ────────────────────────────────────────
 
   async deleteTemplate(id: string) {
-    await this.ensureExists(id);
-    // Désactiver plutôt que supprimer pour préserver l'historique des abonnements
-    await this.prisma.customPlanTemplate.update({
+    const config = await this.prisma.customPlanConfig.findUnique({
       where: { id },
-      data: { isActive: false, isPublic: false },
     });
-    return { deleted: true, id };
+    if (!config) throw new NotFoundException('Config introuvable.');
+    await this.prisma.customPlanConfig.delete({ where: { id } });
+    return { deleted: true, userId: config.userId };
   }
 
-  // ─── Liste publique (pour /billing/plans) ─────────────────────────────────
+  // ─── Pour /billing/custom-plan (côté user authentifié) ───────────────────
+  // Retourne la config custom de CET user uniquement (si visible).
 
-  async listPublicTemplates() {
-    return this.prisma.customPlanTemplate.findMany({
-      where: { isActive: true, isPublic: true },
-      orderBy: [{ priceAriary: 'asc' }, { createdAt: 'desc' }],
-      select: {
-        id: true, name: true, description: true,
-        priceAriary: true, durationDays: true, credits: true,
-        maxPages: true, maxManagedPosts: true, maxReferenceImages: true,
-      },
+  async getConfigForCurrentUser(userId: string) {
+    const config = await this.prisma.customPlanConfig.findUnique({
+      where: { userId },
     });
+    // Le user ne doit voir sa config que si elle est visible
+    if (!config || !config.isVisible) return null;
+    return config;
+  }
+
+  // ─── Méthode maintenue pour compatibilité avec BillingController ─────────
+  async listPublicTemplates() {
+    // Non utilisé dans la nouvelle architecture user-specific
+    // Gardé pour ne pas casser BillingController
+    return [];
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
-  private async ensureExists(id: string) {
-    const t = await this.prisma.customPlanTemplate.findUnique({ where: { id } });
-    if (!t) throw new NotFoundException('Template introuvable.');
-    return t;
-  }
-
-  private validateLimits(dto: Partial<CreateCustomPlanTemplateDto>) {
-    if (dto.credits !== undefined && dto.credits <= 0) {
-      throw new BadRequestException('Les crédits doivent être > 0.');
-    }
-    if (dto.priceAriary !== undefined && dto.priceAriary < 0) {
-      throw new BadRequestException('Le prix ne peut pas être négatif.');
-    }
+  private validateLimits(dto: { credits: number; priceAriary: number }) {
+    if (dto.credits <= 0)
+      throw new BadRequestException('Crédits doit être > 0.');
+    if (dto.priceAriary < 0)
+      throw new BadRequestException('Prix ne peut pas être négatif.');
   }
 }

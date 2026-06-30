@@ -1,6 +1,6 @@
 "use client";
 
-// app/(login)/page.tsx — Login page, Linear dark style
+// app/page.tsx — Login page, émeraude accent
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -45,19 +45,18 @@ export default function LoginPage() {
           backgroundSize: "40px 40px",
         }}
       />
-      {/* Gradient overlay */}
+      {/* Emerald glow */}
+      <div className="pointer-events-none fixed left-1/2 top-1/3 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500/5 blur-3xl" />
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_60%_60%_at_50%_40%,transparent_30%,hsl(var(--background))_100%)]" />
-      {/* Purple glow */}
-      <div className="pointer-events-none fixed left-1/2 top-1/3 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/8 blur-3xl" />
 
-      <div className="relative z-10 w-full max-w-85">
+      <div className="relative z-10 w-full max-w-[340px]">
         {/* Logo */}
         <div className="mb-10 flex flex-col items-center">
-          <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-xl border border-primary/20 bg-primary/10">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
               <path
                 d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-                stroke="hsl(var(--primary))"
+                stroke="oklch(0.70 0.18 162)"
                 strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -67,13 +66,13 @@ export default function LoginPage() {
           <h1 className="text-[22px] font-semibold tracking-tight">
             VendeoAI Admin
           </h1>
-          <p className="mt-1.5 text-[13px] text-muted-foreground">
+          <p className="mt-1.5 text-[13px] text-muted-foreground/50">
             Accès réservé aux administrateurs
           </p>
         </div>
 
-        {/* Form */}
-        <div className="rounded-xl border border-border bg-card/80 backdrop-blur-sm">
+        {/* Form card */}
+        <div className="rounded-2xl border border-border bg-card/80 backdrop-blur-sm shadow-xl shadow-black/10">
           <div className="p-5">
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
@@ -86,7 +85,7 @@ export default function LoginPage() {
               <div className="space-y-1.5">
                 <label
                   htmlFor="email"
-                  className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
+                  className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/50"
                 >
                   Email
                 </label>
@@ -106,7 +105,7 @@ export default function LoginPage() {
               <div className="space-y-1.5">
                 <label
                   htmlFor="password"
-                  className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
+                  className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/50"
                 >
                   Mot de passe
                 </label>
@@ -115,7 +114,6 @@ export default function LoginPage() {
                     id="password"
                     type={showPwd ? "text" : "password"}
                     required
-                    autoComplete="current-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••••"
@@ -124,7 +122,7 @@ export default function LoginPage() {
                   <button
                     type="button"
                     onClick={() => setShowPwd(!showPwd)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/30 hover:text-muted-foreground transition-colors"
                   >
                     {showPwd ? (
                       <EyeOff className="h-3.5 w-3.5" />
@@ -137,7 +135,7 @@ export default function LoginPage() {
 
               <Button
                 type="submit"
-                className="h-9 w-full text-sm font-medium"
+                className="h-9 w-full text-sm font-medium bg-emerald-500 hover:bg-emerald-600 text-white border-0"
                 disabled={loading}
               >
                 {loading ? (
@@ -151,14 +149,14 @@ export default function LoginPage() {
               </Button>
             </form>
           </div>
-          <div className="border-t border-border/50 px-5 py-3 text-center">
-            <p className="text-[11px] text-muted-foreground/30">
+          <div className="border-t border-border/40 px-5 py-3 text-center">
+            <p className="text-[10px] text-muted-foreground/25">
               Session chiffrée · Accès restreint
             </p>
           </div>
         </div>
 
-        <p className="mt-6 text-center text-[11px] text-muted-foreground/20">
+        <p className="mt-6 text-center text-[10px] text-muted-foreground/20">
           VendeoAI © {new Date().getFullYear()}
         </p>
       </div>

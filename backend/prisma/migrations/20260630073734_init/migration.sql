@@ -1,4 +1,10 @@
 -- CreateEnum
+CREATE TYPE "AdminRole" AS ENUM ('SUPER_ADMIN', 'ADMIN');
+
+-- CreateEnum
+CREATE TYPE "AdminAuditAction" AS ENUM ('LOGIN', 'CREATE_ADMIN', 'DELETE_ADMIN', 'SUSPEND_USER', 'REACTIVATE_USER', 'DELETE_USER', 'CHANGE_PLAN', 'ADD_CREDITS', 'REMOVE_CREDITS', 'REVOKE_SUBSCRIPTION', 'ACTIVATE_SUBSCRIPTION');
+
+-- CreateEnum
 CREATE TYPE "AuthProvider" AS ENUM ('LOCAL', 'GOOGLE', 'FACEBOOK');
 
 -- CreateEnum
@@ -59,6 +65,33 @@ CREATE TYPE "NotificationChannel" AS ENUM ('IN_APP', 'WEB_PUSH', 'EMAIL');
 CREATE TYPE "AiDecision" AS ENUM ('REPLIED', 'ESCALATED', 'SKIPPED', 'ERROR');
 
 -- CreateTable
+CREATE TABLE "admins" (
+    "id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "passwordHash" TEXT NOT NULL,
+    "role" "AdminRole" NOT NULL DEFAULT 'ADMIN',
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "lastLoginAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "admins_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "admin_audit_logs" (
+    "id" TEXT NOT NULL,
+    "adminId" TEXT NOT NULL,
+    "action" "AdminAuditAction" NOT NULL,
+    "targetType" TEXT NOT NULL,
+    "targetId" TEXT,
+    "metadata" JSONB,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "admin_audit_logs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "users" (
     "id" TEXT NOT NULL,
     "email" TEXT NOT NULL,
@@ -76,6 +109,9 @@ CREATE TABLE "users" (
     "creditAlertSent" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "isSuspended" BOOLEAN NOT NULL DEFAULT false,
+    "suspendedAt" TIMESTAMP(3),
+    "suspendedReason" TEXT,
 
     CONSTRAINT "users_pkey" PRIMARY KEY ("id")
 );
@@ -469,6 +505,37 @@ CREATE TABLE "web_push_subscriptions" (
     CONSTRAINT "web_push_subscriptions_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "custom_plan_configs" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "name" TEXT NOT NULL DEFAULT 'Plan Custom',
+    "description" TEXT,
+    "priceAriary" INTEGER NOT NULL,
+    "durationDays" INTEGER NOT NULL DEFAULT 30,
+    "credits" INTEGER NOT NULL,
+    "maxPages" INTEGER NOT NULL,
+    "maxManagedPosts" INTEGER NOT NULL,
+    "maxReferenceImages" INTEGER NOT NULL,
+    "isVisible" BOOLEAN NOT NULL DEFAULT true,
+    "isPurchasable" BOOLEAN NOT NULL DEFAULT true,
+    "createdByAdminId" TEXT NOT NULL,
+    "note" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "custom_plan_configs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "admins_email_key" ON "admins"("email");
+
+-- CreateIndex
+CREATE INDEX "admin_audit_logs_adminId_idx" ON "admin_audit_logs"("adminId");
+
+-- CreateIndex
+CREATE INDEX "admin_audit_logs_targetType_targetId_idx" ON "admin_audit_logs"("targetType", "targetId");
+
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
@@ -610,6 +677,12 @@ CREATE UNIQUE INDEX "web_push_subscriptions_endpoint_key" ON "web_push_subscript
 -- CreateIndex
 CREATE INDEX "web_push_subscriptions_userId_idx" ON "web_push_subscriptions"("userId");
 
+-- CreateIndex
+CREATE UNIQUE INDEX "custom_plan_configs_userId_key" ON "custom_plan_configs"("userId");
+
+-- AddForeignKey
+ALTER TABLE "admin_audit_logs" ADD CONSTRAINT "admin_audit_logs_adminId_fkey" FOREIGN KEY ("adminId") REFERENCES "admins"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
 -- AddForeignKey
 ALTER TABLE "business_profiles" ADD CONSTRAINT "business_profiles_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -684,3 +757,6 @@ ALTER TABLE "notifications" ADD CONSTRAINT "notifications_conversationId_fkey" F
 
 -- AddForeignKey
 ALTER TABLE "web_push_subscriptions" ADD CONSTRAINT "web_push_subscriptions_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "custom_plan_configs" ADD CONSTRAINT "custom_plan_configs_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

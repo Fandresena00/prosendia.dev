@@ -1,16 +1,13 @@
 // src/features/admin/services/admin-custom-plan-template-billing.service.ts
 //
-// Gère la création d'une subscription PENDING CUSTOM via un template,
-// déclenchée quand un user achète un plan custom via Papi.
+// FIX: utilise this.prisma.customPlanConfig (le modèle réel, user-specific)
+// au lieu de this.prisma.customPlanTemplate (ancien nom, n'existe plus).
 //
-// Appelé depuis BillingService.initiatePayment() quand planId ne correspond
-// pas à un plan standard (FREE/STARTER/PRO) mais à un UUID de template custom.
+// Gère la création d'une subscription PENDING CUSTOM quand un user achète
+// SA config custom via Papi.
 //
-// Flux :
-//   1. initiatePayment(planId=templateId, ...) →
-//   2. BillingService détecte que planId n'est pas dans BILLING_PLANS →
-//   3. Délègue ici pour créer une sub PENDING basée sur le template →
-//   4. Retourne { subscriptionId, amount, ... } pour Papi
+// Appelé depuis BillingService.initiatePayment() quand planId correspond
+// à l'ID d'une CustomPlanConfig plutôt qu'à un plan standard (FREE/STARTER/PRO).
 
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
@@ -20,36 +17,50 @@ export class AdminCustomPlanTemplateBillingService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Crée une subscription PENDING CUSTOM basée sur un template.
-   * Retourne les infos nécessaires pour initier le paiement Papi.
+   * Crée une subscription PENDING CUSTOM basée sur la config custom du user.
+   * Vérifie que la config appartient bien à userId (sécurité — un user ne
+   * peut acheter que SA PROPRE config, jamais celle d'un autre).
    */
-  async createPendingFromTemplate(userId: string, templateId: string): Promise<{
+  async createPendingFromTemplate(
+    userId: string,
+    configId: string,
+  ): Promise<{
     subscriptionId: string;
-    amount:         number;
-    credits:        number;
-    durationDays:   number;
+    amount: number;
+    credits: number;
+    durationDays: number;
   }> {
-    const template = await this.prisma.customPlanTemplate.findUnique({
-      where: { id: templateId, isActive: true, isPublic: true },
+    const config = await this.prisma.customPlanConfig.findUnique({
+      where: { id: configId },
     });
 
-    if (!template) {
+    if (!config) {
+      throw new NotFoundException(`Config custom ${configId} introuvable.`);
+    }
+
+    // Sécurité : la config doit appartenir à cet user et être achetable
+    if (config.userId !== userId) {
       throw new NotFoundException(
-        `Template custom ${templateId} introuvable ou inactif.`,
+        `Cette config custom n'appartient pas à cet utilisateur.`,
+      );
+    }
+    if (!config.isVisible || !config.isPurchasable) {
+      throw new NotFoundException(
+        `Cette config custom n'est pas disponible à l'achat.`,
       );
     }
 
     const now = new Date();
     const periodEnd = new Date(now);
-    periodEnd.setDate(periodEnd.getDate() + template.durationDays);
+    periodEnd.setDate(periodEnd.getDate() + config.durationDays);
 
     const sub = await this.prisma.subscription.create({
       data: {
         userId,
-        plan:           'CUSTOM',
-        status:         'PENDING',
-        creditsGranted: template.credits,
-        periodStart:    now,
+        plan: 'CUSTOM',
+        status: 'PENDING',
+        creditsGranted: config.credits,
+        periodStart: now,
         periodEnd,
       },
       select: { id: true },
@@ -57,19 +68,19 @@ export class AdminCustomPlanTemplateBillingService {
 
     return {
       subscriptionId: sub.id,
-      amount:         template.priceAriary,
-      credits:        template.credits,
-      durationDays:   template.durationDays,
+      amount: config.priceAriary,
+      credits: config.credits,
+      durationDays: config.durationDays,
     };
   }
 
   /**
-   * Vérifie si un planId est un UUID de template custom plutôt qu'un plan standard.
-   * Les plans standards sont: FREE, STARTER, PRO, CUSTOM (chaînes fixes).
-   * Un template custom a un UUID en guise d'ID.
+   * Vérifie si un planId est l'UUID d'une config custom plutôt qu'un plan
+   * standard (FREE/STARTER/PRO/CUSTOM sont des chaînes fixes, pas des UUID).
    */
-  static isTemplateId(planId: string): boolean {
-    // UUID v4 pattern
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(planId);
+  static isConfigId(planId: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      planId,
+    );
   }
 }

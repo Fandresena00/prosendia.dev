@@ -1,29 +1,14 @@
 /**
  * @file features/billing/billing.controller.ts
  *
- * CHANGE: Ajout de GET /billing/custom-plans → templates custom publics.
- * Le controller importe AdminCustomPlanTemplateService via injection directe
- * (AdminModule exporte ce service).
- *
- * Routes:
- *   GET  /billing/plans              → catalogue plans standards
- *   GET  /billing/custom-plans       → templates custom publics (NOUVEAU)
- *   GET  /billing/status             → crédits + abonnement actuel
- *   GET  /billing/subscription       → abonnement actif détaillé
- *   POST /billing/payments/initiate  → initier un paiement Papi
- *   GET  /billing/payments/history   → historique paiements
- *   GET  /billing/credits/history    → ledger consommation crédits
+ * CHANGE: GET /billing/custom-plan (singulier) retourne la config custom
+ * propre à CET utilisateur authentifié (pas une liste globale).
+ * Retourne null si l'user n'a pas de config custom visible.
  */
 
 import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  HttpStatus,
-  Post,
-  Query,
-  UseGuards,
+  Body, Controller, Get,
+  HttpCode, HttpStatus, Post, Query, UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
@@ -50,13 +35,13 @@ export class BillingController {
   }
 
   /**
-   * GET /billing/custom-plans
-   * Retourne les templates custom publics et actifs.
-   * Utilisé par la page /billing côté user pour afficher les offres sur mesure achetables.
+   * GET /billing/custom-plan
+   * Retourne la config custom de CET user (null si aucune).
+   * L'user ne voit que sa propre config — jamais celle d'un autre.
    */
-  @Get('custom-plans')
-  getCustomPlans() {
-    return this.customPlanService.listPublicTemplates();
+  @Get('custom-plan')
+  getMyCustomPlan(@CurrentUser() user: AuthenticatedUser) {
+    return this.customPlanService.getConfigForCurrentUser(user.sub);
   }
 
   @Get('status')
