@@ -13,7 +13,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
-import { CreditService } from '../../billing/services/credit.service.js';
+import { SubscriptionService } from '../../billing/services/subscription.service.js';
+import { resolveCustomBillingPlan } from '../../billing/billing.constants.js';
 import type { CreateCustomSubscriptionDto } from '../dto/admin-custom-subscription.dto.js';
 
 @Injectable()
@@ -22,7 +23,7 @@ export class AdminCustomSubscriptionService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly credits: CreditService,
+    private readonly subscriptions: SubscriptionService,
   ) {}
 
   async createCustomSubscription(
@@ -44,61 +45,67 @@ export class AdminCustomSubscriptionService {
       throw new BadRequestException('Durée invalide (1–3650 jours).');
     }
 
-    const now = new Date();
-    const periodEnd = new Date(now);
-    periodEnd.setDate(periodEnd.getDate() + dto.durationDays);
+    const customPlan = resolveCustomBillingPlan({
+      name: 'Custom',
+      priceAriary: dto.priceAriary,
+      durationDays: dto.durationDays,
+      credits: dto.credits,
+      maxPages: dto.maxPages,
+      maxManagedPosts: dto.maxManagedPosts,
+      maxReferenceImages: dto.maxReferenceImages,
+    });
 
-    // 2. Transaction : expirer subs actives + créer CUSTOM ACTIVE
-    const sub = await this.prisma.$transaction(async (tx) => {
-      // Expirer toutes les subscriptions actives existantes
-      await tx.subscription.updateMany({
-        where: { userId: targetUserId, status: 'ACTIVE' },
-        data:  { status: 'EXPIRED' },
-      });
+    await this.prisma.customPlanConfig.upsert({
+      where: { userId: targetUserId },
+      create: {
+        userId: targetUserId,
+        name: 'Plan Custom',
+        description: dto.note ?? null,
+        priceAriary: dto.priceAriary,
+        durationDays: dto.durationDays,
+        credits: dto.credits,
+        maxPages: dto.maxPages,
+        maxManagedPosts: dto.maxManagedPosts,
+        maxReferenceImages: dto.maxReferenceImages,
+        isVisible: true,
+        isPurchasable: false,
+        createdByAdminId: adminId,
+        note: dto.note,
+      },
+      update: {
+        priceAriary: dto.priceAriary,
+        durationDays: dto.durationDays,
+        credits: dto.credits,
+        maxPages: dto.maxPages,
+        maxManagedPosts: dto.maxManagedPosts,
+        maxReferenceImages: dto.maxReferenceImages,
+        isVisible: true,
+        isPurchasable: false,
+        note: dto.note,
+      },
+    });
 
-      // Créer la nouvelle subscription CUSTOM directement ACTIVE
-      const newSub = await tx.subscription.create({
-        data: {
-          userId:         targetUserId,
-          plan:           'CUSTOM',
-          status:         'ACTIVE',
-          creditsGranted: dto.credits,
-          periodStart:    now,
-          periodEnd,
-        },
-      });
+    const subscriptionId = await this.subscriptions.createManualSubscription(
+      targetUserId,
+      'CUSTOM',
+      {
+        credits: customPlan.credits ?? dto.credits,
+        durationDays: customPlan.durationDays,
+        planName: `Custom (admin) — ${dto.note ?? 'Plan personnalisé'}`,
+      },
+    );
 
-      // Mettre à jour le plan de l'utilisateur
-      await tx.user.update({
-        where: { id: targetUserId },
-        data:  { activePlan: 'CUSTOM' },
-      });
-
-      // Stocker la config custom si le modèle CustomSubscriptionConfig existe
-      // (à activer quand le modèle Prisma est migré)
-      // await tx.customSubscriptionConfig.upsert({ ... })
-
-      return newSub;
+    const sub = await this.prisma.subscription.findUniqueOrThrow({
+      where: { id: subscriptionId },
+      select: { id: true, periodEnd: true },
     });
 
     this.logger.log(
       `[CUSTOM_SUB_CREATED] subscriptionId=${sub.id} user=${targetUserId} ` +
-      `credits=${dto.credits} days=${dto.durationDays} periodEnd=${periodEnd.toISOString()}`,
+      `credits=${dto.credits} days=${dto.durationDays} periodEnd=${sub.periodEnd.toISOString()}`,
     );
 
-    // 3. Attribuer les crédits (SET au quota complet)
-    await this.credits.grantCredits(
-      targetUserId,
-      sub.id,
-      dto.credits,
-      `Custom (admin) — ${dto.note ?? 'Plan personnalisé'}`,
-    );
-
-    this.logger.log(
-      `[CREDITS_GRANTED] ${dto.credits} crédits → user=${targetUserId}`,
-    );
-
-    // 4. Audit log
+    // 3. Audit log
     await this.prisma.adminAuditLog.create({
       data: {
         adminId,
@@ -123,7 +130,7 @@ export class AdminCustomSubscriptionService {
       subscriptionId: sub.id,
       plan:           'CUSTOM',
       credits:        dto.credits,
-      periodEnd,
+      periodEnd:      sub.periodEnd,
       userId:         targetUserId,
     };
   }

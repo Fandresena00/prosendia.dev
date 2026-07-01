@@ -20,6 +20,7 @@ import { CreditGuard } from './guards/credit.guard.js';
 import { BillingCleanupService } from './services/billing-cleanup.service.js';
 import { BillingService } from './services/billing.service.js';
 import { CreditService } from './services/credit.service.js';
+import { AdminCustomPlanTemplateBillingService } from './services/admin-custom-plan-template-billing.service.js';
 import {
   NOTIFICATION_SERVICE_TOKEN,
   SubscriptionService,
@@ -43,6 +44,7 @@ import { AdminModule } from '../admin/admin.module.js'; // ← NOUVEAU
     PapiClient,
     CreditService,
     SubscriptionService,
+    AdminCustomPlanTemplateBillingService,
     BillingService,
     BillingCleanupService,
     CreditGuard,
@@ -52,6 +54,7 @@ import { AdminModule } from '../admin/admin.module.js'; // ← NOUVEAU
     BillingService,
     CreditGuard,
     SubscriptionService,
+    AdminCustomPlanTemplateBillingService,
   ],
 })
 export class BillingModule {}

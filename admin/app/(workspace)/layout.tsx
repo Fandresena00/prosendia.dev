@@ -61,7 +61,7 @@ function NavLink({
     >
       <Icon
         className={cn(
-          "h-[15px] w-[15px] shrink-0 transition-colors",
+          "h-3.75 w-3.75 shrink-0 transition-colors",
           active
             ? "text-emerald-500"
             : "text-muted-foreground/40 group-hover:text-muted-foreground",
@@ -110,9 +110,9 @@ export default function AdminLayout({
     <TooltipProvider delayDuration={100}>
       <div className="flex h-screen overflow-hidden bg-background">
         {/* ── Sidebar ──────────────────────────────────────────────── */}
-        <aside className="flex w-[220px] shrink-0 flex-col border-r border-border">
+        <aside className="flex w-55 shrink-0 flex-col border-r border-border">
           {/* Brand */}
-          <div className="flex h-[52px] items-center gap-2.5 border-b border-border px-4">
+          <div className="flex h-13 items-center gap-2.5 border-b border-border px-4">
             <div className="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-500/15">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
                 <path
@@ -186,7 +186,7 @@ export default function AdminLayout({
         {/* ── Main ───────────────────────────────────────────────── */}
         <div className="flex flex-1 flex-col overflow-hidden">
           {/* Topbar */}
-          <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-6">
+          <header className="flex h-13 shrink-0 items-center gap-2 border-b border-border px-6">
             <span className="text-xs text-muted-foreground/30">Admin</span>
             {currentNav && (
               <>

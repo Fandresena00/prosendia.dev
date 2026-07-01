@@ -16,20 +16,7 @@ import { PrismaService } from '../../../database/prisma.service.js';
 export class AdminCustomPlanTemplateBillingService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Crée une subscription PENDING CUSTOM basée sur la config custom du user.
-   * Vérifie que la config appartient bien à userId (sécurité — un user ne
-   * peut acheter que SA PROPRE config, jamais celle d'un autre).
-   */
-  async createPendingFromTemplate(
-    userId: string,
-    configId: string,
-  ): Promise<{
-    subscriptionId: string;
-    amount: number;
-    credits: number;
-    durationDays: number;
-  }> {
+  async getPurchasableConfig(userId: string, configId: string) {
     const config = await this.prisma.customPlanConfig.findUnique({
       where: { id: configId },
     });
@@ -37,8 +24,6 @@ export class AdminCustomPlanTemplateBillingService {
     if (!config) {
       throw new NotFoundException(`Config custom ${configId} introuvable.`);
     }
-
-    // Sécurité : la config doit appartenir à cet user et être achetable
     if (config.userId !== userId) {
       throw new NotFoundException(
         `Cette config custom n'appartient pas à cet utilisateur.`,
@@ -49,6 +34,29 @@ export class AdminCustomPlanTemplateBillingService {
         `Cette config custom n'est pas disponible à l'achat.`,
       );
     }
+
+    return config;
+  }
+
+  /**
+   * Crée une subscription PENDING CUSTOM basée sur la config custom du user.
+   * Vérifie que la config appartient bien à userId (sécurité — un user ne
+   * peut acheter que SA PROPRE config, jamais celle d'un autre).
+   */
+  async createPendingFromTemplate(
+    userId: string,
+    configId: string,
+  ): Promise<{
+    subscriptionId: string;
+    name: string;
+    amount: number;
+    credits: number;
+    durationDays: number;
+    maxPages: number;
+    maxManagedPosts: number;
+    maxReferenceImages: number;
+  }> {
+    const config = await this.getPurchasableConfig(userId, configId);
 
     const now = new Date();
     const periodEnd = new Date(now);
@@ -68,9 +76,13 @@ export class AdminCustomPlanTemplateBillingService {
 
     return {
       subscriptionId: sub.id,
+      name: config.name,
       amount: config.priceAriary,
       credits: config.credits,
       durationDays: config.durationDays,
+      maxPages: config.maxPages,
+      maxManagedPosts: config.maxManagedPosts,
+      maxReferenceImages: config.maxReferenceImages,
     };
   }
 

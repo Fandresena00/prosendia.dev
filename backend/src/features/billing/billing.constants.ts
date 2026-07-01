@@ -102,6 +102,97 @@ export const BILLING_PLANS = {
 } as const;
 
 export type PlanId = keyof typeof BILLING_PLANS;
+export type BillingPlanConfig = {
+  id: PlanId;
+  name: string;
+  priceAriary: number | null;
+  durationDays: number;
+  credits: number | null;
+  maxPages: number | null;
+  maxManagedPosts: number | null;
+  maxReferenceImages: number | null;
+  popular?: boolean;
+  supportPriority: boolean;
+  advancedStats: boolean;
+  features: readonly string[];
+};
+
+export type CustomBillingPlanInput = {
+  id?: string;
+  name: string;
+  description?: string | null;
+  priceAriary: number;
+  durationDays: number;
+  credits: number;
+  maxPages: number;
+  maxManagedPosts: number;
+  maxReferenceImages: number;
+  isPurchasable?: boolean;
+};
+
+export type ResolvedBillingPlan = Omit<BillingPlanConfig, 'id'> & {
+  id: string;
+  sourcePlanId: PlanId;
+  customConfigId?: string;
+  isPurchasable?: boolean;
+};
+
+export function buildPlanFeatures(plan: {
+  credits: number | null;
+  maxPages: number | null;
+  maxManagedPosts: number | null;
+  maxReferenceImages: number | null;
+  supportPriority: boolean;
+  advancedStats: boolean;
+}): string[] {
+  return [
+    plan.maxPages === null
+      ? 'Nombre de pages personnalisé'
+      : `${plan.maxPages} page${plan.maxPages > 1 ? 's' : ''} Facebook`,
+    plan.credits === null
+      ? 'Crédits IA personnalisés'
+      : `${plan.credits.toLocaleString('fr-FR')} crédits IA par mois`,
+    plan.maxManagedPosts === null
+      ? 'Nombre de posts personnalisé'
+      : `${plan.maxManagedPosts} post${plan.maxManagedPosts > 1 ? 's' : ''} géré${plan.maxManagedPosts > 1 ? 's' : ''} simultanément`,
+    plan.maxReferenceImages === null
+      ? 'Images de référence personnalisées'
+      : `${plan.maxReferenceImages} images de référence`,
+    'Réponses IA Messenger',
+    "Réponses IA aux commentaires",
+    'Personnalisation IA',
+    'Synchronisation automatique',
+    ...(plan.supportPriority ? ['Support prioritaire'] : []),
+    ...(plan.advancedStats ? ['Statistiques avancées'] : []),
+  ];
+}
+
+export function resolveCustomBillingPlan(
+  config: CustomBillingPlanInput,
+): ResolvedBillingPlan {
+  return {
+    ...BILLING_PLANS.CUSTOM,
+    id: config.id ?? 'CUSTOM',
+    sourcePlanId: 'CUSTOM',
+    customConfigId: config.id,
+    name: config.name || BILLING_PLANS.CUSTOM.name,
+    priceAriary: config.priceAriary,
+    durationDays: config.durationDays,
+    credits: config.credits,
+    maxPages: config.maxPages,
+    maxManagedPosts: config.maxManagedPosts,
+    maxReferenceImages: config.maxReferenceImages,
+    isPurchasable: config.isPurchasable,
+    features: buildPlanFeatures({
+      credits: config.credits,
+      maxPages: config.maxPages,
+      maxManagedPosts: config.maxManagedPosts,
+      maxReferenceImages: config.maxReferenceImages,
+      supportPriority: true,
+      advancedStats: true,
+    }),
+  };
+}
 
 /** 1 crédit VendeoAI = TOKENS_PER_CREDIT tokens OpenRouter */
 export const TOKENS_PER_CREDIT = 100;

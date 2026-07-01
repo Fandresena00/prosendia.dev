@@ -26,8 +26,9 @@ export enum PaymentProviderDto {
 }
 
 export class InitiatePaymentDto {
-  @IsEnum(PlanIdDto)
-  plan!: PlanIdDto;
+  @IsString()
+  @IsNotEmpty()
+  plan!: string;
 
   @IsEnum(PaymentProviderDto)
   provider!: PaymentProviderDto;

@@ -175,7 +175,7 @@ export default function UsersPage() {
             setPage(1);
             load(1, search, plan, status);
           }}
-          className="relative flex-1 min-w-[200px] max-w-xs"
+          className="relative flex-1 min-w-50 max-w-xs"
         >
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/30" />
           <Input
@@ -260,7 +260,7 @@ export default function UsersPage() {
                 return (
                   <TableRow
                     key={user.id}
-                    className="group border-border/30 hover:bg-white/[0.02]"
+                    className="group border-border/30 hover:bg-white/2"
                   >
                     <TableCell>
                       <Link

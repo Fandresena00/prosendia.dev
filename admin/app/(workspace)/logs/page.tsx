@@ -154,7 +154,7 @@ function MetaDiff({ meta }: { meta: Record<string, unknown> }) {
         <div className="flex gap-2">
           {hasBefore && (
             <div className="flex-1 rounded-md bg-orange-500/5 border border-orange-500/10 px-2.5 py-2">
-              <p className="mb-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-orange-400/60">
+              <p className="mb-1 text-[9px] font-semibold uppercase tracking-widest text-orange-400/60">
                 Avant
               </p>
               {Object.entries(before).map(([k, v]) => (
@@ -174,7 +174,7 @@ function MetaDiff({ meta }: { meta: Record<string, unknown> }) {
           )}
           {hasAfter && (
             <div className="flex-1 rounded-md bg-emerald-500/5 border border-emerald-500/10 px-2.5 py-2">
-              <p className="mb-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-emerald-400/60">
+              <p className="mb-1 text-[9px] font-semibold uppercase tracking-widest text-emerald-400/60">
                 Après
               </p>
               {Object.entries(after).map(([k, v]) => (
@@ -252,7 +252,7 @@ function LogRow({ log }: { log: AdminAuditLog }) {
             {log.targetId && (
               <>
                 <span className="text-muted-foreground/20 text-xs">→</span>
-                <span className="font-mono text-[10px] text-muted-foreground/40 truncate max-w-[160px]">
+                <span className="font-mono text-[10px] text-muted-foreground/40 truncate max-w-40">
                   {log.targetId}
                 </span>
               </>

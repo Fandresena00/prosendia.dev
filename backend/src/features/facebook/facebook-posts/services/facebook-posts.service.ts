@@ -19,7 +19,11 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../../../database/prisma.service.js';
 import { ResponseStyle, Tone } from '../../../../generated/prisma/enums.js';
-import { BILLING_PLANS, type PlanId } from '../../../billing/billing.constants.js';
+import {
+  BILLING_PLANS,
+  resolveCustomBillingPlan,
+  type PlanId,
+} from '../../../billing/billing.constants.js';
 import { FacebookGraphClient } from '../../clients/facebook-graph.client.js';
 import { FacebookApiError } from '../../clients/facebook-graph.errors.js';
 import { TokenEncryptionService } from '../../security/token-encryption.service.js';
@@ -180,10 +184,13 @@ export class FacebookPostsService {
     if (!isAlreadyManaged) {
       const user = await this.prisma.user.findUnique({
         where:  { id: userId },
-        select: { activePlan: true },
+        select: { activePlan: true, customPlanConfig: true },
       });
       const planId       = (user?.activePlan ?? 'FREE') as PlanId;
-      const planConfig   = BILLING_PLANS[planId];
+      const planConfig   =
+        planId === 'CUSTOM' && user?.customPlanConfig
+          ? resolveCustomBillingPlan(user.customPlanConfig)
+          : BILLING_PLANS[planId];
       const maxManaged   = planConfig?.maxManagedPosts ?? null;
 
       if (maxManaged !== null) {

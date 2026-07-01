@@ -13,7 +13,10 @@
 
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
-import { BILLING_PLANS } from '../../billing/billing.constants.js';
+import {
+  BILLING_PLANS,
+  resolveCustomBillingPlan,
+} from '../../billing/billing.constants.js';
 import type {
   AdminUserActivityTodayDto,
   AdminUserAiStatsDto,
@@ -86,26 +89,27 @@ export class AdminUserStatsService {
       select: {
         activePlan: true,
         creditBalance: true,
+        customPlanConfig: true,
       },
     });
 
     const planConfig =
-      BILLING_PLANS[user.activePlan as keyof typeof BILLING_PLANS];
+      user.activePlan === 'CUSTOM' && user.customPlanConfig
+        ? resolveCustomBillingPlan(user.customPlanConfig)
+        : BILLING_PLANS[user.activePlan as keyof typeof BILLING_PLANS];
     const planName = planConfig?.name ?? user.activePlan;
-    const creditsGranted = planConfig?.credits ?? 0;
+    const activeSub = await this.prisma.subscription.findFirst({
+      where: { userId, status: 'ACTIVE' },
+      select: { periodEnd: true, creditsGranted: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const creditsGranted = activeSub?.creditsGranted ?? planConfig?.credits ?? 0;
 
     // Calcul du pourcentage de crédits restants
     const creditRemainingPct =
       creditsGranted > 0
         ? Math.round((user.creditBalance / creditsGranted) * 100)
         : 0;
-
-    // Abonnement actif
-    const activeSub = await this.prisma.subscription.findFirst({
-      where: { userId, status: 'ACTIVE' },
-      select: { periodEnd: true, creditsGranted: true },
-      orderBy: { createdAt: 'desc' },
-    });
 
     const periodEnd = activeSub?.periodEnd ?? null;
     const daysRemaining = periodEnd

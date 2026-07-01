@@ -49,7 +49,7 @@ export default function LoginPage() {
       <div className="pointer-events-none fixed left-1/2 top-1/3 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500/5 blur-3xl" />
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_60%_60%_at_50%_40%,transparent_30%,hsl(var(--background))_100%)]" />
 
-      <div className="relative z-10 w-full max-w-[340px]">
+      <div className="relative z-10 w-full max-w-85">
         {/* Logo */}
         <div className="mb-10 flex flex-col items-center">
           <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10">
@@ -85,7 +85,7 @@ export default function LoginPage() {
               <div className="space-y-1.5">
                 <label
                   htmlFor="email"
-                  className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/50"
+                  className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50"
                 >
                   Email
                 </label>
@@ -105,7 +105,7 @@ export default function LoginPage() {
               <div className="space-y-1.5">
                 <label
                   htmlFor="password"
-                  className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/50"
+                  className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50"
                 >
                   Mot de passe
                 </label>

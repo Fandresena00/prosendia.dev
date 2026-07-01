@@ -30,8 +30,8 @@ export class BillingController {
   ) {}
 
   @Get('plans')
-  getPlans() {
-    return this.billing.getPlans();
+  getPlans(@CurrentUser() user: AuthenticatedUser) {
+    return this.billing.getPlans(user.sub);
   }
 
   /**

@@ -51,7 +51,11 @@ import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { PrismaService } from '../../../database/prisma.service.js';
-import { BILLING_PLANS, type PlanId } from '../../billing/billing.constants.js';
+import {
+  BILLING_PLANS,
+  resolveCustomBillingPlan,
+  type PlanId,
+} from '../../billing/billing.constants.js';
 import { FacebookGraphClient } from '../clients/facebook-graph.client.js';
 import { ConnectPageDto } from '../dto/auth/connect-page.dto.js';
 import { FacebookConnectionResponseDto } from '../dto/auth/facebook-connection-response.dto.js';
@@ -230,10 +234,13 @@ export class FacebookAuthService {
     if (isNewConnection) {
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
-        select: { activePlan: true },
+        select: { activePlan: true, customPlanConfig: true },
       });
       const planId = (user?.activePlan ?? 'FREE') as PlanId;
-      const planConfig = BILLING_PLANS[planId];
+      const planConfig =
+        planId === 'CUSTOM' && user?.customPlanConfig
+          ? resolveCustomBillingPlan(user.customPlanConfig)
+          : BILLING_PLANS[planId];
       const maxPages = planConfig?.maxPages ?? null;
 
       if (maxPages !== null) {

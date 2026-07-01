@@ -7,7 +7,6 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { PrismaModule } from '../../database/prisma.module.js';
 import { BillingModule } from '../billing/billing.module.js';
-import { AdminCustomPlanTemplateBillingService } from '../billing/services/admin-custom-plan-template-billing.service.js';
 import { AdminAuthController } from './controllers/admin-auth.controller.js';
 import { AdminCustomPlanTemplateController } from './controllers/admin-custom-plan-template.controller.js';
 import { AdminDashboardController } from './controllers/admin-dashboard.controller.js';
@@ -51,13 +50,11 @@ import { AdminJwtStrategy } from './strategies/admin-jwt.strategy.js';
     AdminDashboardChartsService,
     AdminCustomSubscriptionService,
     AdminCustomPlanTemplateService,
-    AdminCustomPlanTemplateBillingService,
     AdminLogsService,
     AdminJwtStrategy,
   ],
   exports: [
     AdminCustomPlanTemplateService,
-    AdminCustomPlanTemplateBillingService,
   ],
 })
 export class AdminModule {}

@@ -17,6 +17,7 @@ import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { BILLING_PLANS } from '../billing.constants.js';
+import { resolveCustomBillingPlan, type PlanId } from '../billing.constants.js';
 import type { SubscriptionStatusDto } from '../dto/billing.dto.js';
 import { CreditService } from './credit.service.js';
 
@@ -71,9 +72,12 @@ export class SubscriptionService {
 
     const user = await this.prisma.user.findUnique({
       where:  { id: userId },
-      select: { creditBalance: true },
+      select: { creditBalance: true, customPlanConfig: true },
     });
-    const planConfig = BILLING_PLANS[sub.plan as keyof typeof BILLING_PLANS];
+    const planConfig =
+      sub.plan === 'CUSTOM' && user?.customPlanConfig
+        ? resolveCustomBillingPlan(user.customPlanConfig)
+        : BILLING_PLANS[sub.plan as keyof typeof BILLING_PLANS];
 
     return {
       id:             sub.id,
@@ -133,6 +137,51 @@ export class SubscriptionService {
     return sub.id;
   }
 
+  async createManualSubscription(
+    userId: string,
+    planId: PlanId,
+    options?: {
+      credits?: number;
+      durationDays?: number;
+      planName?: string;
+    },
+  ): Promise<string> {
+    const planConfig = BILLING_PLANS[planId];
+    if (!planConfig) {
+      throw new Error(`Plan ${planId} inconnu`);
+    }
+
+    const credits = options?.credits ?? planConfig.credits;
+    if (!credits || credits <= 0) {
+      throw new Error(`Plan ${planId} sans quota de crédits attribuable`);
+    }
+
+    const now = new Date();
+    const end = new Date(now);
+    end.setDate(end.getDate() + (options?.durationDays ?? planConfig.durationDays));
+
+    const sub = await this.prisma.subscription.create({
+      data: {
+        userId,
+        plan: planId as any,
+        status: 'PENDING',
+        creditsGranted: credits,
+        periodStart: now,
+        periodEnd: end,
+      },
+      select: { id: true },
+    });
+
+    this.logger.log(
+      `[SUBSCRIPTION_CREATED] MANUAL PENDING — ` +
+      `subscriptionId=${sub.id} user=${userId} plan=${planId} ` +
+      `credits=${credits} periodEnd=${end.toISOString()}`,
+    );
+
+    await this.activateSubscription(sub.id, options?.planName);
+    return sub.id;
+  }
+
   // ─── Activate ─────────────────────────────────────────────────────────────
 
   /**
@@ -145,7 +194,10 @@ export class SubscriptionService {
    *   4. grantCredits() → SET du solde au quota complet de la nouvelle offre
    *   5. Notifie l'user (fire-and-forget)
    */
-  async activateSubscription(subscriptionId: string): Promise<void> {
+  async activateSubscription(
+    subscriptionId: string,
+    planNameOverride?: string,
+  ): Promise<void> {
     const sub = await this.prisma.subscription.findUnique({
       where:  { id: subscriptionId },
       select: {
@@ -171,6 +223,7 @@ export class SubscriptionService {
     }
 
     const planConfig = BILLING_PLANS[sub.plan as keyof typeof BILLING_PLANS];
+    const planName = planNameOverride ?? planConfig?.name ?? sub.plan;
 
     this.logger.log(
       `[SUBSCRIPTION_ACTIVATING] Starting — ` +
@@ -220,7 +273,7 @@ export class SubscriptionService {
         sub.userId,
         subscriptionId,
         sub.creditsGranted,
-        planConfig?.name ?? sub.plan,
+        planName,
       );
 
       this.logger.log(
@@ -248,7 +301,7 @@ export class SubscriptionService {
       await this.notifySilent(() =>
         this.notifService!.notifySubscriptionActivated(
           sub.userId,
-          planConfig?.name ?? sub.plan,
+          planName,
           sub.creditsGranted,
           payment?.amount ?? 0,
           sub.periodEnd,

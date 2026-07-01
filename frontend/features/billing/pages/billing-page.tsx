@@ -27,6 +27,7 @@ import { PaymentHistory } from "../components/payment-history";
 import PaymentMethod from "../components/payment-method";
 import { useBilling } from "../hooks/use-billing";
 import type { Plan } from "../types/billing.types";
+import type { CustomPlanTemplate } from "../components/packs-card";
 
 export default function BillingPage() {
   const {
@@ -34,6 +35,7 @@ export default function BillingPage() {
     history,
     ledger,
     creditStatus,
+    customPlan,
     isLoading,
     error,
     refetchStatus,
@@ -41,6 +43,8 @@ export default function BillingPage() {
   } = useBilling();
 
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [selectedCustomPlan, setSelectedCustomPlan] =
+    useState<CustomPlanTemplate | null>(null);
 
   if (isLoading) {
     return (
@@ -84,6 +88,8 @@ export default function BillingPage() {
               creditStatus={creditStatus}
               onSelect={setSelectedPlan}
               formatCurrency={formatCurrency}
+              customPlan={customPlan}
+              onSelectCustomPlan={(p) => setSelectedCustomPlan(p)}
             />
           ))}
         </div>
@@ -111,6 +117,13 @@ export default function BillingPage() {
         plan={selectedPlan}
         // onSuccess : refetch le statut dès la redirection vers Papi
         // Le nouveau solde sera visible dès le retour sur /billing/success
+        onSuccess={refetchStatus}
+      />
+      <PaymentDialog
+        open={!!selectedCustomPlan}
+        onClose={() => setSelectedCustomPlan(null)}
+        plan={null}
+        customTemplate={selectedCustomPlan}
         onSuccess={refetchStatus}
       />
     </div>

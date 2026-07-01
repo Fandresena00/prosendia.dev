@@ -25,6 +25,7 @@ import {
   BILLING_PLANS,
   PAPI_LINK_VALIDITY_MINUTES,
   PAPI_REFERENCE_PREFIX,
+  resolveCustomBillingPlan,
 } from '../billing.constants.js';
 import {
   PapiClient,
@@ -39,6 +40,7 @@ import type {
 } from '../dto/billing.dto.js';
 import { CreditService } from './credit.service.js';
 import { SubscriptionService } from './subscription.service.js';
+import { AdminCustomPlanTemplateBillingService } from './admin-custom-plan-template-billing.service.js';
 
 @Injectable()
 export class BillingService {
@@ -49,12 +51,13 @@ export class BillingService {
     private readonly papiClient:    PapiClient,
     private readonly creditService: CreditService,
     private readonly subService:    SubscriptionService,
+    private readonly customPlans:   AdminCustomPlanTemplateBillingService,
   ) {}
 
   // ─── Plans catalogue ──────────────────────────────────────────────────────
 
-  getPlans(): PlanFeatureDto[] {
-    return Object.values(BILLING_PLANS).map((p) => ({
+  async getPlans(userId?: string): Promise<PlanFeatureDto[]> {
+    const plans = Object.values(BILLING_PLANS).map((p) => ({
       id:                 p.id,
       name:               p.name,
       priceAriary:        p.priceAriary ?? null,
@@ -68,6 +71,33 @@ export class BillingService {
       advancedStats:      p.advancedStats,
       features:           [...p.features],
     }));
+
+    if (!userId) return plans;
+
+    const config = await this.prisma.customPlanConfig.findUnique({
+      where: { userId },
+    });
+
+    if (!config || !config.isVisible) return plans;
+
+    const customPlan = resolveCustomBillingPlan(config);
+    return plans.map((p) =>
+      p.id === 'CUSTOM'
+        ? {
+            id:                 'CUSTOM',
+            name:               customPlan.name,
+            priceAriary:        customPlan.priceAriary,
+            durationDays:       customPlan.durationDays,
+            credits:            customPlan.credits,
+            maxPages:           customPlan.maxPages,
+            maxManagedPosts:    customPlan.maxManagedPosts,
+            maxReferenceImages: customPlan.maxReferenceImages,
+            supportPriority:    customPlan.supportPriority,
+            advancedStats:      customPlan.advancedStats,
+            features:           [...customPlan.features],
+          }
+        : p,
+    );
   }
 
   // ─── Initiate payment ─────────────────────────────────────────────────────
@@ -86,7 +116,14 @@ export class BillingService {
     userId: string,
     dto:    InitiatePaymentDto,
   ): Promise<InitiatePaymentResponseDto> {
-    const planConfig = BILLING_PLANS[dto.plan as keyof typeof BILLING_PLANS];
+    const isCustomConfigId =
+      AdminCustomPlanTemplateBillingService.isConfigId(dto.plan);
+    const customConfig = isCustomConfigId
+      ? await this.customPlans.getPurchasableConfig(userId, dto.plan)
+      : null;
+    const planConfig = customConfig
+      ? resolveCustomBillingPlan(customConfig)
+      : BILLING_PLANS[dto.plan as keyof typeof BILLING_PLANS];
 
     if (!planConfig) {
       throw new BadRequestException(`Plan "${dto.plan}" inconnu`);
@@ -111,10 +148,11 @@ export class BillingService {
     });
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
 
-    const subscriptionId = await this.subService.createPendingSubscription(
-      userId,
-      dto.plan,
-    );
+    const customPayment = customConfig
+      ? await this.customPlans.createPendingFromTemplate(userId, dto.plan)
+      : null;
+    const subscriptionId = customPayment?.subscriptionId ??
+      await this.subService.createPendingSubscription(userId, dto.plan);
     this.logger.log(
       `[PAYMENT_INITIATE] Subscription PENDING created — ` +
       `subscriptionId=${subscriptionId} user=${userId} plan=${dto.plan}`,

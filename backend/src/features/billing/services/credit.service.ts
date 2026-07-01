@@ -30,6 +30,7 @@ import {
   BILLING_PLANS,
   CREDIT_ALERT_THRESHOLD_PCT,
   CREDIT_CRITICAL_THRESHOLD,
+  resolveCustomBillingPlan,
   tokensToCredits,
 } from '../billing.constants.js';
 import type { CreditStatusDto } from '../dto/billing.dto.js';
@@ -119,7 +120,11 @@ export class CreditService {
   async initializeFreeUser(userId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { creditBalance: true, activePlan: true },
+      select: {
+        creditBalance: true,
+        activePlan: true,
+        customPlanConfig: true,
+      },
     });
 
     if (!user) {
@@ -379,7 +384,11 @@ export class CreditService {
   async getCreditStatus(userId: string): Promise<CreditStatusDto> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { creditBalance: true, activePlan: true },
+      select: {
+        creditBalance: true,
+        activePlan: true,
+        customPlanConfig: true,
+      },
     });
     if (!user) throw new Error(`User ${userId} not found`);
 
@@ -390,7 +399,9 @@ export class CreditService {
     });
 
     const planConfig =
-      BILLING_PLANS[user.activePlan as keyof typeof BILLING_PLANS];
+      user.activePlan === 'CUSTOM' && user.customPlanConfig
+        ? resolveCustomBillingPlan(user.customPlanConfig)
+        : BILLING_PLANS[user.activePlan as keyof typeof BILLING_PLANS];
     const creditsGranted =
       activeSub?.creditsGranted ?? planConfig?.credits ?? null;
     const creditBalance = user.creditBalance;
@@ -531,12 +542,18 @@ export class CreditService {
   private async checkAndAlert(userId: string, balance: number): Promise<void> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { creditAlertSent: true, activePlan: true },
+      select: {
+        creditAlertSent: true,
+        activePlan: true,
+        customPlanConfig: true,
+      },
     });
     if (!user) return;
 
     const planConfig =
-      BILLING_PLANS[user.activePlan as keyof typeof BILLING_PLANS];
+      user.activePlan === 'CUSTOM' && user.customPlanConfig
+        ? resolveCustomBillingPlan(user.customPlanConfig)
+        : BILLING_PLANS[user.activePlan as keyof typeof BILLING_PLANS];
     const creditsGranted = planConfig?.credits ?? null;
 
     if (

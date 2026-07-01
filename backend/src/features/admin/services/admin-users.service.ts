@@ -3,10 +3,13 @@
 // Fix TS: action doit être du type AdminAuditAction (enum Prisma), pas string.
 // La méthode audit() accepte maintenant le type enum directement.
 
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { $Enums, Prisma } from '../../../generated/prisma/client.js';
 import { CreditService } from '../../billing/services/credit.service.js';
+import { SubscriptionService } from '../../billing/services/subscription.service.js';
+import { BILLING_PLANS } from '../../billing/billing.constants.js';
+import type { PlanId } from '../../billing/billing.constants.js';
 import {
   AdjustCreditsDto,
   AdminListUsersQueryDto,
@@ -19,6 +22,7 @@ export class AdminUsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly credits: CreditService,
+    private readonly subscriptions: SubscriptionService,
   ) {}
 
   // ─── Liste ────────────────────────────────────────────────────────────────
@@ -198,13 +202,43 @@ export class AdminUsersService {
 
   async changePlan(userId: string, dto: ChangeUserPlanDto, adminId: string) {
     const user = await this.ensureUserExists(userId);
-    const updated = await this.prisma.user.update({
+    if (dto.plan === 'CUSTOM') {
+      throw new BadRequestException(
+        "Le plan CUSTOM doit être attribué depuis l'action d'abonnement custom.",
+      );
+    }
+
+    const plan = dto.plan as PlanId;
+    const planConfig = BILLING_PLANS[plan];
+    if (!planConfig || !planConfig.credits) {
+      throw new BadRequestException(`Plan ${dto.plan} invalide.`);
+    }
+
+    const subscriptionId = await this.subscriptions.createManualSubscription(
+      userId,
+      plan,
+      { planName: `${planConfig.name} (admin)` },
+    );
+
+    const updated = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
-      data: { activePlan: dto.plan as $Enums.Plan },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        activePlan: true,
+        creditBalance: true,
+        isSuspended: true,
+        emailVerified: true,
+        createdAt: true,
+      },
     });
+
     await this.audit(adminId, $Enums.AdminAuditAction.CHANGE_PLAN, userId, {
       previousPlan: user.activePlan as string,
       plan: dto.plan as string,
+      credits: planConfig.credits,
+      subscriptionId,
     });
     return updated;
   }

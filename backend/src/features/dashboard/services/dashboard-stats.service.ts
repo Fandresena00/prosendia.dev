@@ -11,7 +11,6 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
-import { BILLING_PLANS } from '../../billing/billing.constants.js';
 import { CreditService } from '../../billing/services/credit.service.js';
 import type {
   ActivityTodayDto,
@@ -63,9 +62,6 @@ export class DashboardStatsService {
   async getSubscriptionUsage(userId: string): Promise<SubscriptionUsageDto> {
     const creditStatus = await this.credits.getCreditStatus(userId);
 
-    const planConfig =
-      BILLING_PLANS[creditStatus.plan as keyof typeof BILLING_PLANS];
-
     // Compter les pages actives
     const pagesUsed = await this.prisma.facebookConnection.count({
       where: { businessProfile: { userId }, isActive: true },
@@ -112,11 +108,11 @@ export class DashboardStatsService {
       periodEnd,
       daysRemaining,
       pagesUsed,
-      pagesLimit: planConfig?.maxPages ?? null,
+      pagesLimit: creditStatus.maxPages,
       postsManaged,
-      postsLimit: planConfig?.maxManagedPosts ?? null,
+      postsLimit: creditStatus.maxManagedPosts,
       referenceImages,
-      imagesLimit: planConfig?.maxReferenceImages ?? null,
+      imagesLimit: creditStatus.maxReferenceImages,
     };
   }
 
