@@ -1,6 +1,6 @@
 "use client";
 
-// app/page.tsx — Login page, émeraude accent
+// app/(login)/page.tsx
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.SubmitEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
@@ -35,58 +35,49 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-background px-4">
-      {/* Grid texture */}
-      <div
-        className="pointer-events-none fixed inset-0 opacity-[0.03]"
-        style={{
-          backgroundImage:
-            "linear-gradient(hsl(var(--foreground)) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--foreground)) 1px, transparent 1px)",
-          backgroundSize: "40px 40px",
-        }}
-      />
-      {/* Emerald glow */}
-      <div className="pointer-events-none fixed left-1/2 top-1/3 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500/5 blur-3xl" />
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_60%_60%_at_50%_40%,transparent_30%,hsl(var(--background))_100%)]" />
-
-      <div className="relative z-10 w-full max-w-85">
+    <div className="admin-shell relative flex min-h-screen items-center justify-center px-4">
+      <div className="relative z-10 w-full max-w-[380px]">
         {/* Logo */}
-        <div className="mb-10 flex flex-col items-center">
-          <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10">
+        <div className="mb-8 flex flex-col items-center">
+          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-secondary shadow-lg shadow-primary/20">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
               <path
                 d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-                stroke="oklch(0.70 0.18 162)"
-                strokeWidth="2.5"
+                stroke="white"
+                strokeWidth="2.4"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
             </svg>
           </div>
-          <h1 className="text-[22px] font-semibold tracking-tight">
+          <h1 className="text-xl font-semibold tracking-tight">
             VendeoAI Admin
           </h1>
-          <p className="mt-1.5 text-[13px] text-muted-foreground/50">
+          <p className="mt-1.5 text-sm text-muted-foreground">
             Accès réservé aux administrateurs
           </p>
         </div>
 
-        {/* Form card */}
-        <div className="rounded-2xl border border-border bg-card/80 backdrop-blur-sm shadow-xl shadow-black/10">
-          <div className="p-5">
+        {/* Form card — glass surface + signature hairline */}
+        <div className="glass-card">
+          <div
+            className="card-hairline"
+            style={{
+              background:
+                "linear-gradient(90deg, transparent, var(--primary), var(--secondary), transparent)",
+            }}
+          />
+          <div className="p-6">
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
-                <Alert variant="destructive" className="py-2.5 text-xs">
-                  <AlertCircle className="h-3.5 w-3.5" />
+                <Alert variant="destructive" className="py-2.5 text-sm">
+                  <AlertCircle className="h-4 w-4" />
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
 
               <div className="space-y-1.5">
-                <label
-                  htmlFor="email"
-                  className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50"
-                >
+                <label htmlFor="email" className="text-label">
                   Email
                 </label>
                 <Input
@@ -98,15 +89,12 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="admin@vendeoai.com"
-                  className="h-9 bg-background/60 text-sm"
+                  className="h-10 bg-background/60 text-sm"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label
-                  htmlFor="password"
-                  className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50"
-                >
+                <label htmlFor="password" className="text-label">
                   Mot de passe
                 </label>
                 <div className="relative">
@@ -117,17 +105,18 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••••"
-                    className="h-9 bg-background/60 pr-9 text-sm"
+                    className="h-10 bg-background/60 pr-10 text-sm"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPwd(!showPwd)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/30 hover:text-muted-foreground transition-colors"
+                    aria-label={showPwd ? "Masquer" : "Afficher"}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
                   >
                     {showPwd ? (
-                      <EyeOff className="h-3.5 w-3.5" />
+                      <EyeOff className="h-4 w-4" />
                     ) : (
-                      <Eye className="h-3.5 w-3.5" />
+                      <Eye className="h-4 w-4" />
                     )}
                   </button>
                 </div>
@@ -135,12 +124,12 @@ export default function LoginPage() {
 
               <Button
                 type="submit"
-                className="h-9 w-full text-sm font-medium bg-emerald-500 hover:bg-emerald-600 text-white border-0"
+                className="h-10 w-full bg-secondary text-sm font-medium text-secondary-foreground hover:bg-secondary/90"
                 disabled={loading}
               >
                 {loading ? (
                   <>
-                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     Connexion…
                   </>
                 ) : (
@@ -149,14 +138,14 @@ export default function LoginPage() {
               </Button>
             </form>
           </div>
-          <div className="border-t border-border/40 px-5 py-3 text-center">
-            <p className="text-[10px] text-muted-foreground/25">
+          <div className="border-t border-border/60 px-6 py-3.5 text-center">
+            <p className="text-xs text-muted-foreground">
               Session chiffrée · Accès restreint
             </p>
           </div>
         </div>
 
-        <p className="mt-6 text-center text-[10px] text-muted-foreground/20">
+        <p className="mt-6 text-center text-xs text-muted-foreground/60">
           VendeoAI © {new Date().getFullYear()}
         </p>
       </div>

@@ -1,224 +1,466 @@
 "use client";
 
-// app/(workspace)/dashboard/page.tsx — émeraude + auto-refresh 30s
-
-import { useCallback, useEffect, useState } from "react";
-import {
-  AreaChart, Area, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid,
-  Tooltip as RechartsTooltip, ResponsiveContainer,
-} from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   adminDashboardApi,
-  type AdminDashboardStats,
   type AdminDashboardCharts,
+  type AdminDashboardStats,
   type ChartPeriod,
 } from "@/lib/admin-api";
-import { Users, TrendingUp, CreditCard, ShieldAlert, UserPlus } from "lucide-react";
+import {
+  CreditCard,
+  ShieldAlert,
+  Sparkles,
+  TrendingUp,
+  UserPlus,
+  Users,
+} from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from "recharts";
 
-function PeriodBtn({ value, active, onClick }: { value: ChartPeriod; active: boolean; onClick: () => void }) {
+// ─── Period switch ────────────────────────────────────────────────────────
+
+function PeriodBtn({
+  value,
+  active,
+  onClick,
+}: {
+  value: ChartPeriod;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
-    <button onClick={onClick}
-      className={`rounded px-2.5 py-1 text-[11px] font-medium transition-all ${
-        active ? "bg-emerald-500/10 text-emerald-500" : "text-muted-foreground/50 hover:text-foreground"
-      }`}>
+    <button
+      onClick={onClick}
+      className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+        active
+          ? "bg-primary text-primary-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
       {value === "7d" ? "7 jours" : value === "30d" ? "30 jours" : "90 jours"}
     </button>
   );
 }
 
-function KpiCard({ label, value, icon: Icon, accent = false, sub }: {
-  label: string; value: React.ReactNode; icon: React.ElementType; accent?: boolean; sub?: string;
+// ─── KPI card — glass surface + colored hairline + font-black number ─────
+
+function KpiCard({
+  label,
+  value,
+  icon: Icon,
+  color,
+  sub,
+}: {
+  label: string;
+  value: React.ReactNode;
+  icon: React.ElementType;
+  color: string;
+  sub?: string;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4 transition-colors hover:border-border/80">
+    <div className="glass-card group p-4 transition-shadow duration-200 hover:shadow-md sm:p-5">
+      <div
+        className="card-hairline"
+        style={{
+          background: `linear-gradient(90deg, transparent, ${color}, transparent)`,
+        }}
+      />
       <div className="mb-3 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/40">{label}</span>
-        <div className={`flex h-6 w-6 items-center justify-center rounded-md ${
-          accent ? "bg-emerald-500/10 text-emerald-500" : "bg-white/5 text-muted-foreground/30"
-        }`}>
-          <Icon className="h-3.5 w-3.5" />
+        <span className="text-label">{label}</span>
+        <div
+          className="flex h-9 w-9 items-center justify-center rounded-lg"
+          style={{ background: `color-mix(in oklch, ${color} 14%, transparent)`, color }}
+        >
+          <Icon className="h-4 w-4" />
         </div>
       </div>
-      <p className="font-mono text-[22px] font-semibold tracking-tight">{value}</p>
-      {sub && <p className="mt-1 text-[11px] text-muted-foreground/40">{sub}</p>}
+      <p className="tabular text-3xl font-black tracking-tight">{value}</p>
+      {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
     </div>
   );
 }
 
-function ChartCard({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
+// ─── Chart card wrapper — glass surface + hairline ────────────────────────
+
+function ChartCard({
+  title,
+  sub,
+  accent,
+  children,
+}: {
+  title: string;
+  sub?: string;
+  accent: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
+    <div className="glass-card p-4 sm:p-5">
+      <div
+        className="card-hairline"
+        style={{
+          background: `linear-gradient(90deg, transparent, ${accent}, transparent)`,
+        }}
+      />
       <div className="mb-4">
-        <p className="text-[12px] font-semibold">{title}</p>
-        {sub && <p className="mt-0.5 text-[10px] text-muted-foreground/40">{sub}</p>}
+        <p className="text-sm font-semibold">{title}</p>
+        {sub && <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>}
       </div>
       {children}
     </div>
   );
 }
 
-function ChartTip({ active, payload, label, fmt }: {
-  active?: boolean; payload?: { value: number }[]; label?: string; fmt?: (v: number) => string;
+function ChartTip({
+  active,
+  payload,
+  label,
+  fmt,
+}: {
+  active?: boolean;
+  payload?: { value: number }[];
+  label?: string;
+  fmt?: (v: number) => string;
 }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-md border border-border/50 bg-popover px-2.5 py-2 shadow-xl text-xs">
-      <p className="mb-1 text-muted-foreground/60">{label}</p>
-      <p className="font-mono font-semibold">{fmt ? fmt(payload[0].value) : payload[0].value}</p>
+    <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-lg">
+      <p className="mb-1 text-muted-foreground">{label}</p>
+      <p className="tabular font-semibold">
+        {fmt ? fmt(payload[0].value) : payload[0].value}
+      </p>
     </div>
   );
 }
 
+// ─── Semantic plan color map — one source of truth, reused everywhere ────
+
 const PLAN_COLORS: Record<string, string> = {
-  FREE: "oklch(0.52 0.015 265)", STARTER: "oklch(0.65 0.18 200)",
-  PRO: "oklch(0.62 0.22 280)", CUSTOM: "oklch(0.75 0.16 55)",
+  FREE: "var(--muted-foreground)",
+  STARTER: "var(--primary)",
+  PRO: "var(--secondary)",
+  CUSTOM: "var(--warning)",
 };
-const PLAN_LABELS: Record<string, string> = { FREE: "Gratuit", STARTER: "Starter", PRO: "Pro", CUSTOM: "Custom" };
+const PLAN_LABELS: Record<string, string> = {
+  FREE: "Gratuit",
+  STARTER: "Starter",
+  PRO: "Pro",
+  CUSTOM: "Custom",
+};
+
+// ─── Skeleton — matches the exact geometry of the loaded layout ──────────
+
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="admin-panel p-6 sm:p-7">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-2">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="h-8 w-52" />
+            <Skeleton className="h-4 w-72" />
+          </div>
+          <Skeleton className="h-9 w-48 rounded-lg" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="glass-card p-4">
+            <Skeleton className="mb-3 h-3 w-20" />
+            <Skeleton className="h-8 w-16" />
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Skeleton className="h-64 rounded-xl" />
+        <Skeleton className="h-64 rounded-xl" />
+      </div>
+    </div>
+  );
+}
 
 export default function DashboardPage() {
-  const [stats,   setStats]   = useState<AdminDashboardStats | null>(null);
-  const [charts,  setCharts]  = useState<AdminDashboardCharts | null>(null);
-  const [period,  setPeriod]  = useState<ChartPeriod>("30d");
-  const [loadS,   setLoadS]   = useState(true);
-  const [loadC,   setLoadC]   = useState(true);
+  const [stats, setStats] = useState<AdminDashboardStats | null>(null);
+  const [charts, setCharts] = useState<AdminDashboardCharts | null>(null);
+  const [period, setPeriod] = useState<ChartPeriod>("30d");
+  const [loadS, setLoadS] = useState(true);
+  const [loadC, setLoadC] = useState(true);
 
-  const loadStats  = useCallback(() => {
-    let c = false;
-    adminDashboardApi.getStats().then((d) => { if (!c) { setStats(d); setLoadS(false); } });
-    return () => { c = true; };
+  const loadStats = useCallback(() => {
+    let cancelled = false;
+    adminDashboardApi.getStats().then((d) => {
+      if (!cancelled) {
+        setStats(d);
+        setLoadS(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const loadCharts = useCallback(() => {
-    let c = false;
+    let cancelled = false;
     setLoadC(true);
-    adminDashboardApi.getCharts(period).then((d) => { if (!c) { setCharts(d); setLoadC(false); } });
-    return () => { c = true; };
+    adminDashboardApi.getCharts(period).then((d) => {
+      if (!cancelled) {
+        setCharts(d);
+        setLoadC(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [period]);
 
-  useEffect(() => loadStats(),  [loadStats]);
+  useEffect(() => loadStats(), [loadStats]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => loadCharts(), [loadCharts]);
 
   useEffect(() => {
-    const id = setInterval(() => { loadStats(); loadCharts(); }, 30_000);
+    const id = setInterval(() => {
+      loadStats();
+      loadCharts();
+    }, 30_000);
     return () => clearInterval(id);
   }, [loadStats, loadCharts]);
 
+  if (loadS && !stats) return <DashboardSkeleton />;
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[18px] font-semibold tracking-tight">Dashboard</h1>
-          <p className="mt-0.5 text-[12px] text-muted-foreground/40">Vue globale · Actualisation 30s</p>
-        </div>
-        <div className="flex items-center gap-0.5 rounded-lg border border-border bg-card/50 p-1">
-          {(["7d", "30d", "90d"] as ChartPeriod[]).map((p) => (
-            <PeriodBtn key={p} value={p} active={period === p} onClick={() => setPeriod(p)} />
-          ))}
-        </div>
-      </div>
-
-      {/* KPIs */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
-        {loadS ? Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="rounded-xl border border-border bg-card p-4">
-            <Skeleton className="mb-3 h-3 w-20 bg-white/5" />
-            <Skeleton className="h-7 w-16 bg-white/5" />
+      <div className="admin-panel overflow-hidden p-6 sm:p-7">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
+              <Sparkles className="h-3.5 w-3.5" />
+              Centre de pilotage
+            </div>
+            <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-[1.7rem]">
+              Dashboard
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Surveillez l’activité, les revenus et la santé de vos comptes en un instant.
+            </p>
           </div>
-        )) : stats ? (
-          <>
-            <KpiCard label="Utilisateurs"       value={stats.totalUsers.toLocaleString("fr-FR")}          icon={Users}      accent />
-            <KpiCard label="Abonnements actifs" value={stats.activeSubscriptions.toLocaleString("fr-FR")} icon={CreditCard} />
-            <KpiCard label="Nouveaux auj."      value={stats.newUsersToday}                               icon={UserPlus}   accent={stats.newUsersToday > 0} />
-            <KpiCard label="Suspendus"          value={stats.suspendedUsers}                              icon={ShieldAlert} />
-            <KpiCard label="Revenus totaux"     value={stats.totalRevenue.toLocaleString("fr-FR")}        icon={TrendingUp}  sub="Ariary" />
-          </>
-        ) : null}
+          <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/50 p-1">
+            {(["7d", "30d", "90d"] as ChartPeriod[]).map((p) => (
+              <PeriodBtn
+                key={p}
+                value={p}
+                active={period === p}
+                onClick={() => setPeriod(p)}
+              />
+            ))}
+          </div>
+        </div>
       </div>
 
-      {/* Charts row 1 */}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+        {stats && (
+          <>
+            <KpiCard
+              label="Utilisateurs"
+              value={stats.totalUsers.toLocaleString("fr-FR")}
+              icon={Users}
+              color="var(--primary)"
+            />
+            <KpiCard
+              label="Abonnements actifs"
+              value={stats.activeSubscriptions.toLocaleString("fr-FR")}
+              icon={CreditCard}
+              color="var(--secondary)"
+            />
+            <KpiCard
+              label="Nouveaux auj."
+              value={stats.newUsersToday}
+              icon={UserPlus}
+              color={stats.newUsersToday > 0 ? "var(--secondary)" : "var(--muted-foreground)"}
+            />
+            <KpiCard
+              label="Suspendus"
+              value={stats.suspendedUsers}
+              icon={ShieldAlert}
+              color={stats.suspendedUsers > 0 ? "var(--destructive)" : "var(--muted-foreground)"}
+            />
+            <KpiCard
+              label="Revenus totaux"
+              value={stats.totalRevenue.toLocaleString("fr-FR")}
+              icon={TrendingUp}
+              color="var(--primary)"
+              sub="Ariary"
+            />
+          </>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <ChartCard title="Nouveaux utilisateurs" sub="Inscriptions par jour">
-          {loadC ? <Skeleton className="h-44 w-full rounded bg-white/5" /> : (
+        <ChartCard title="Nouveaux utilisateurs" sub="Inscriptions par jour" accent="var(--secondary)">
+          {loadC ? (
+            <Skeleton className="h-44 w-full rounded-lg" />
+          ) : (
             <ResponsiveContainer width="100%" height={176}>
               <AreaChart data={charts?.newUsers ?? []}>
                 <defs>
                   <linearGradient id="geu" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="oklch(0.70 0.18 162)" stopOpacity={0.2} />
-                    <stop offset="95%" stopColor="oklch(0.70 0.18 162)" stopOpacity={0} />
+                    <stop offset="0%" stopColor="var(--secondary)" stopOpacity={0.32} />
+                    <stop offset="100%" stopColor="var(--secondary)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="2 4" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))", opacity: 0.4 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))", opacity: 0.4 }} axisLine={false} tickLine={false} width={24} />
-                <RechartsTooltip content={<ChartTip />} cursor={{ stroke: "hsl(var(--border))" }} />
-                <Area type="monotone" dataKey="value" stroke="oklch(0.70 0.18 162)" strokeWidth={1.5} fill="url(#geu)" />
+                <CartesianGrid stroke="currentColor" strokeOpacity={0.04} strokeDasharray="2 4" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={26}
+                />
+                <RechartsTooltip content={<ChartTip />} cursor={{ stroke: "var(--border)" }} />
+                <Area
+                  type="monotone"
+                  dataKey="value"
+                  stroke="var(--secondary)"
+                  strokeWidth={2}
+                  fill="url(#geu)"
+                  activeDot={{ r: 3, fill: "var(--secondary)", strokeWidth: 0 }}
+                />
               </AreaChart>
             </ResponsiveContainer>
           )}
         </ChartCard>
 
-        <ChartCard title="Revenus" sub="Paiements réussis (Ar)">
-          {loadC ? <Skeleton className="h-44 w-full rounded bg-white/5" /> : (
+        <ChartCard title="Revenus" sub="Paiements réussis (Ar)" accent="var(--primary)">
+          {loadC ? (
+            <Skeleton className="h-44 w-full rounded-lg" />
+          ) : (
             <ResponsiveContainer width="100%" height={176}>
               <AreaChart data={charts?.revenue ?? []}>
                 <defs>
                   <linearGradient id="ger" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="hsl(var(--primary))" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                    <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.28} />
+                    <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="2 4" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))", opacity: 0.4 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))", opacity: 0.4 }} axisLine={false} tickLine={false} width={38} tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} />
-                <RechartsTooltip content={<ChartTip fmt={(v) => `${v.toLocaleString("fr-FR")} Ar`} />} cursor={{ stroke: "hsl(var(--border))" }} />
-                <Area type="monotone" dataKey="value" stroke="hsl(var(--primary))" strokeWidth={1.5} fill="url(#ger)" />
+                <CartesianGrid stroke="currentColor" strokeOpacity={0.04} strokeDasharray="2 4" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={40}
+                  tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
+                />
+                <RechartsTooltip
+                  content={<ChartTip fmt={(v) => `${v.toLocaleString("fr-FR")} Ar`} />}
+                  cursor={{ stroke: "var(--border)" }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="value"
+                  stroke="var(--primary)"
+                  strokeWidth={2}
+                  fill="url(#ger)"
+                  activeDot={{ r: 3, fill: "var(--primary)", strokeWidth: 0 }}
+                />
               </AreaChart>
             </ResponsiveContainer>
           )}
         </ChartCard>
       </div>
 
-      {/* Charts row 2 */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <ChartCard title="Consommation crédits" sub="Débits IA agrégés">
-            {loadC ? <Skeleton className="h-44 w-full rounded bg-white/5" /> : (
+          <ChartCard title="Consommation crédits" sub="Débits IA agrégés" accent="var(--secondary)">
+            {loadC ? (
+              <Skeleton className="h-44 w-full rounded-lg" />
+            ) : (
               <ResponsiveContainer width="100%" height={176}>
                 <BarChart data={charts?.creditConsumption ?? []} barSize={period === "90d" ? 3 : 7}>
-                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="2 4" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))", opacity: 0.4 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))", opacity: 0.4 }} axisLine={false} tickLine={false} width={32} />
-                  <RechartsTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--border))", opacity: 0.3 }} />
-                  <Bar dataKey="value" fill="oklch(0.70 0.18 162)" radius={[2, 2, 0, 0]} fillOpacity={0.7} />
+                  <defs>
+                    <linearGradient id="gCredit" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--secondary)" stopOpacity={0.95} />
+                      <stop offset="100%" stopColor="var(--secondary)" stopOpacity={0.55} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="currentColor" strokeOpacity={0.04} strokeDasharray="2 4" vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={32}
+                  />
+                  <RechartsTooltip
+                    content={<ChartTip />}
+                    cursor={{ fill: "var(--muted)", opacity: 0.5 }}
+                  />
+                  <Bar dataKey="value" fill="url(#gCredit)" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}
           </ChartCard>
         </div>
 
-        <ChartCard title="Plans" sub="Distribution actuelle">
-          {loadC ? <Skeleton className="h-44 w-full rounded bg-white/5" /> : (
-            <div className="space-y-3 pt-1">
+        <ChartCard title="Plans" sub="Distribution actuelle" accent="var(--warning)">
+          {loadC ? (
+            <Skeleton className="h-44 w-full rounded-lg" />
+          ) : (
+            <div className="space-y-3.5 pt-1">
               {(charts?.planDistribution ?? []).map((item) => (
                 <div key={item.plan}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] font-medium">{PLAN_LABELS[item.plan] ?? item.plan}</span>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="text-sm font-medium">
+                      {PLAN_LABELS[item.plan] ?? item.plan}
+                    </span>
                     <div className="flex items-baseline gap-1.5">
-                      <span className="font-mono text-[12px] font-semibold">{item.count.toLocaleString("fr-FR")}</span>
-                      <span className="font-mono text-[10px] text-muted-foreground/40">{item.pct}%</span>
+                      <span className="tabular text-sm font-semibold">
+                        {item.count.toLocaleString("fr-FR")}
+                      </span>
+                      <span className="tabular text-xs text-muted-foreground">
+                        {item.pct}%
+                      </span>
                     </div>
                   </div>
-                  <div className="h-1 w-full overflow-hidden rounded-full bg-white/5">
-                    <div className="h-full rounded-full transition-all duration-700"
-                      style={{ width: `${item.pct}%`, backgroundColor: PLAN_COLORS[item.plan] ?? "oklch(0.70 0.18 162)" }} />
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full transition-all duration-700"
+                      style={{
+                        width: `${item.pct}%`,
+                        backgroundColor: PLAN_COLORS[item.plan] ?? "var(--secondary)",
+                      }}
+                    />
                   </div>
                 </div>
               ))}
               {(charts?.planDistribution ?? []).length === 0 && (
-                <p className="py-8 text-center text-xs text-muted-foreground/30">Aucune donnée</p>
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  Aucune donnée
+                </p>
               )}
             </div>
           )}

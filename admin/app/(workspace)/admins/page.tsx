@@ -1,6 +1,6 @@
 "use client";
 
-// app/(workspace)/admins/page.tsx — émeraude cohérent
+// app/(workspace)/admins/page.tsx
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -18,9 +18,9 @@ import { useCallback, useEffect, useState } from "react";
 
 function SkeletonRows() {
   return Array.from({ length: 3 }).map((_, i) => (
-    <TableRow key={i} className="hover:bg-transparent border-border/30">
+    <TableRow key={i} className="border-border/70 hover:bg-transparent">
       {Array.from({ length: 5 }).map((_, j) => (
-        <TableCell key={j}><Skeleton className="h-3.5 w-full bg-white/5" /></TableCell>
+        <TableCell key={j}><Skeleton className="h-3.5 w-full" /></TableCell>
       ))}
     </TableRow>
   ));
@@ -77,45 +77,51 @@ export default function AdminsPage() {
     <div className="max-w-2xl space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-[18px] font-semibold tracking-tight">Administrateurs</h1>
-        <p className="mt-0.5 text-[12px] text-muted-foreground/50">Gestion des accès admin à la plateforme</p>
+        <h1 className="text-xl font-semibold tracking-tight">Administrateurs</h1>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          Gestion des accès admin à la plateforme
+        </p>
       </div>
 
-      {/* Create form */}
-      <div className="rounded-xl border border-border bg-card">
-        <div className="border-b border-border/50 px-4 py-3">
-          <p className="text-[12px] font-semibold">Ajouter un administrateur</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground/40">
+      {/* Create form — hairline in emerald: this card's job is a positive action */}
+      <div className="glass-card">
+        <div
+          className="card-hairline"
+          style={{ background: "linear-gradient(90deg, transparent, var(--secondary), transparent)" }}
+        />
+        <div className="border-b border-border/60 px-4 py-3">
+          <p className="text-sm font-semibold">Ajouter un administrateur</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
             Rôle Admin uniquement — le Super Admin est créé via le script de seed.
           </p>
         </div>
         <div className="p-4">
           {error && (
-            <Alert variant="destructive" className="mb-3 py-2.5 text-xs">
-              <AlertCircle className="h-3.5 w-3.5" /><AlertDescription>{error}</AlertDescription>
+            <Alert variant="destructive" className="mb-3 py-2.5 text-sm">
+              <AlertCircle className="h-4 w-4" /><AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
           <form onSubmit={handleCreate} className="flex items-end gap-2">
             <div className="flex-1 space-y-1">
-              <label className="text-[9px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/40">Email</label>
+              <label className="text-label">Email</label>
               <Input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@vendeoai.com" className="h-8 bg-background/60 text-xs" />
+                placeholder="admin@vendeoai.com" className="h-9 bg-background/60 text-sm" />
             </div>
             <div className="flex-1 space-y-1">
-              <label className="text-[9px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/40">Mot de passe</label>
+              <label className="text-label">Mot de passe</label>
               <div className="relative">
                 <Input type={showPwd ? "text" : "password"} required minLength={10}
                   value={password} onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Min. 10 caractères" className="h-8 bg-background/60 pr-8 text-xs" />
+                  placeholder="Min. 10 caractères" className="h-9 bg-background/60 pr-9 text-sm" />
                 <button type="button" onClick={() => setShowPwd((p) => !p)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/30 hover:text-muted-foreground">
-                  {showPwd ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
             </div>
             <Button type="submit" size="sm" disabled={busy}
-              className="h-8 shrink-0 text-xs bg-emerald-500 hover:bg-emerald-600 text-white border-0">
-              {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Plus className="mr-1.5 h-3.5 w-3.5" />}
+              className="h-9 shrink-0 bg-secondary text-secondary-foreground hover:bg-secondary/90">
+              {busy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Plus className="mr-1.5 h-4 w-4" />}
               Créer
             </Button>
           </form>
@@ -123,12 +129,12 @@ export default function AdminsPage() {
       </div>
 
       {/* Table */}
-      <div className="rounded-xl border border-border overflow-hidden">
+      <div className="glass-card overflow-hidden">
         <Table>
           <TableHeader>
-            <TableRow className="hover:bg-transparent border-border/50">
+            <TableRow className="border-border hover:bg-transparent">
               {["Administrateur", "Rôle", "Statut", "Dernière connexion", ""].map((h) => (
-                <TableHead key={h} className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/40">{h}</TableHead>
+                <TableHead key={h} className="text-label">{h}</TableHead>
               ))}
             </TableRow>
           </TableHeader>
@@ -136,60 +142,60 @@ export default function AdminsPage() {
             {loading ? <SkeletonRows /> :
               accounts.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-16 text-center text-sm text-muted-foreground/30">
+                  <TableCell colSpan={5} className="py-16 text-center text-sm text-muted-foreground">
                     Aucun administrateur
                   </TableCell>
                 </TableRow>
               ) : accounts.map((account) => (
-                <TableRow key={account.id} className="border-border/30 hover:bg-white/[0.02]">
+                <TableRow key={account.id} className="group border-border/70 hover:bg-primary/5">
                   {/* Avatar + email */}
                   <TableCell>
                     <div className="flex items-center gap-2.5">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-[11px] font-bold text-emerald-500 ring-1 ring-emerald-500/15">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary/10 text-[11px] font-bold text-secondary-foreground ring-1 ring-secondary/20 dark:text-secondary">
                         {account.email[0].toUpperCase()}
                       </div>
-                      <span className="text-[12px] font-medium">{account.email}</span>
+                      <span className="text-sm font-medium">{account.email}</span>
                     </div>
                   </TableCell>
                   {/* Rôle */}
                   <TableCell>
                     {account.role === "SUPER_ADMIN" ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-yellow-500/10 px-2 py-0.5 text-[10px] font-semibold text-yellow-400">
-                        <Crown className="h-2.5 w-2.5" />Super admin
+                      <span className="inline-flex items-center gap-1 rounded-full border border-warning/25 bg-warning/10 px-2 py-0.5 text-xs font-semibold text-warning">
+                        <Crown className="h-3 w-3" />Super admin
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground/60">
-                        <ShieldCheck className="h-2.5 w-2.5" />Admin
+                      <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground">
+                        <ShieldCheck className="h-3 w-3" />Admin
                       </span>
                     )}
                   </TableCell>
                   {/* Statut */}
                   <TableCell>
                     {account.isActive ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-500">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Actif
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-secondary-foreground dark:text-secondary">
+                        <span className="h-1.5 w-1.5 rounded-full bg-secondary" />Actif
                       </span>
                     ) : (
-                      <span className="text-[10px] text-muted-foreground/30">Désactivé</span>
+                      <span className="text-xs text-muted-foreground">Désactivé</span>
                     )}
                   </TableCell>
                   {/* Dernière connexion */}
-                  <TableCell className="font-mono text-[11px] text-muted-foreground/30">
+                  <TableCell className="tabular text-xs text-muted-foreground">
                     {account.lastLoginAt ? new Date(account.lastLoginAt).toLocaleDateString("fr-FR") : "—"}
                   </TableCell>
-                  {/* Actions */}
+                  {/* Actions — hidden until hover, house-style restraint */}
                   <TableCell>
                     {account.role !== "SUPER_ADMIN" && (
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex items-center justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100">
                         <Button variant="ghost" size="sm" disabled={busy}
                           onClick={() => handleToggle(account)}
-                          className="h-6 text-[11px] text-muted-foreground/50 hover:text-foreground">
+                          className="h-7 text-xs text-muted-foreground hover:text-foreground">
                           {account.isActive ? "Désactiver" : "Activer"}
                         </Button>
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
                             <Button variant="ghost" size="sm" disabled={busy}
-                              className="h-6 text-[11px] text-muted-foreground/30 hover:bg-destructive/10 hover:text-destructive">
+                              className="h-7 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
                               Supprimer
                             </Button>
                           </AlertDialogTrigger>

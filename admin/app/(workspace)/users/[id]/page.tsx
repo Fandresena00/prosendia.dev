@@ -243,51 +243,58 @@ function PlanCard({
       type="button"
       onClick={onClick}
       className={cn(
-        "relative w-full rounded-lg border p-3 text-left transition-all duration-100",
+        "group relative w-full rounded-2xl border p-4 text-left transition-all duration-200",
         selected
-          ? "border-primary bg-primary/5 ring-1 ring-primary/25"
-          : "border-border bg-card/50 hover:bg-card hover:border-border/80",
-        current && !selected && "opacity-50",
+          ? "border-primary/40 bg-gradient-to-br from-primary/12 via-primary/6 to-secondary/10 shadow-[0_16px_45px_-24px_rgba(59,130,246,0.55)]"
+          : "border-border/70 bg-card/75 hover:border-primary/25 hover:bg-card/95 hover:shadow-sm",
+        current && !selected && "opacity-70",
       )}
     >
       {plan.popular && (
-        <span className="absolute -top-2 right-2 rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-semibold text-primary-foreground">
+        <span className="absolute -top-2 right-2 rounded-full bg-primary px-2 py-0.5 text-[9px] font-semibold text-primary-foreground">
           Popular
         </span>
       )}
-      <div className="flex items-center justify-between mb-1.5">
-        <p className={cn("text-[12px] font-semibold", plan.color)}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className={cn("text-[13px] font-semibold", plan.color)}>
           {plan.label}
         </p>
         <div
           className={cn(
-            "flex h-3.5 w-3.5 items-center justify-center rounded-full border",
-            selected ? "border-primary bg-primary" : "border-border/60",
+            "flex h-4 w-4 items-center justify-center rounded-full border",
+            selected ? "border-primary bg-primary" : "border-border/70",
           )}
         >
-          {selected && <Check className="h-2 w-2 text-primary-foreground" />}
+          {selected && (
+            <Check className="h-2.5 w-2.5 text-primary-foreground" />
+          )}
         </div>
       </div>
       {plan.credits !== null ? (
-        <div className="grid grid-cols-2 gap-0.5">
+        <div className="grid grid-cols-2 gap-1.5">
           {[
             { k: "Crédits", v: plan.credits?.toLocaleString("fr-FR") },
             { k: "Pages", v: plan.pages },
           ].map((i) => (
-            <div key={i.k} className="rounded bg-white/5 px-1.5 py-0.5">
-              <p className="text-[9px] text-muted-foreground/50">{i.k}</p>
-              <p className="text-[10px] font-semibold">{i.v}</p>
+            <div
+              key={i.k}
+              className="rounded-xl border border-border/60 bg-background/70 px-2 py-1.5"
+            >
+              <p className="text-[9px] text-muted-foreground/70">{i.k}</p>
+              <p className="text-[10px] font-semibold text-foreground/90">
+                {i.v}
+              </p>
             </div>
           ))}
         </div>
       ) : (
-        <p className="text-[10px] text-muted-foreground/40 italic">
+        <p className="text-[10px] text-muted-foreground/70 italic">
           Config personnalisée
         </p>
       )}
       {current && (
-        <div className="mt-1.5 flex items-center gap-1 text-[9px] text-emerald-500">
-          <span className="h-1 w-1 rounded-full bg-emerald-500" />
+        <div className="mt-2 flex items-center gap-1 text-[10px] text-emerald-500">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
           Actuel
         </div>
       )}
@@ -1719,51 +1726,69 @@ export default function UserDetailPage() {
           if (!busy) setPlanDialog(o);
         }}
       >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-sm">
-              Changer de plan standard
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Plan actuel :{" "}
-              <strong>{PLANS[currentPlan]?.label ?? currentPlan}</strong>. Pour
-              le plan Custom, utilisez l&apos;onglet{" "}
-              <Crown className="inline h-3 w-3 text-yellow-400 mx-0.5" />
-              Custom.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-3 gap-2 py-1">
-            {(Object.values(PLANS) as PlanConfig[])
-              .filter((p) => p.id !== "CUSTOM")
-              .map((plan) => (
-                <PlanCard
-                  key={plan.id}
-                  plan={plan}
-                  selected={selectedPlan === plan.id}
-                  current={currentPlan === plan.id && currentPlan !== "CUSTOM"}
-                  onClick={() => setSelectedPlan(plan.id as PlanId)}
-                />
-              ))}
+        <DialogContent className="overflow-hidden border border-border/70 bg-background/95 p-0 sm:max-w-2xl">
+          <div className="border-b border-border/70 bg-gradient-to-br from-primary/10 via-background to-secondary/10 p-5 sm:p-6">
+            <DialogHeader className="space-y-2">
+              <div className="inline-flex w-fit items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
+                <Crown className="h-3.5 w-3.5" />
+                Changement de plan
+              </div>
+              <DialogTitle className="text-lg font-semibold text-foreground">
+                Changer de plan standard
+              </DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground/80">
+                Plan actuel :{" "}
+                <span className="font-semibold text-foreground">
+                  {PLANS[currentPlan]?.label ?? currentPlan}
+                </span>
+                . Pour un plan custom, ouvrez l&apos;onglet{" "}
+                <Crown className="mx-0.5 inline h-3.5 w-3.5 text-yellow-500" />
+                Custom.
+              </DialogDescription>
+            </DialogHeader>
           </div>
-          {selectedPlan &&
-            selectedPlan !== currentPlan &&
-            (() => {
-              const cur = PLANS[currentPlan];
-              const next = PLANS[selectedPlan as PlanId];
-              if (cur?.credits && next?.credits && next.credits < cur.credits) {
-                return (
-                  <div className="flex items-start gap-2 rounded-md border border-orange-500/20 bg-orange-500/5 px-3 py-2">
-                    <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-orange-500" />
-                    <p className="text-[10px] text-orange-500">
-                      Downgrade : crédits réinitialisés à{" "}
-                      {next.credits.toLocaleString("fr-FR")}.
-                    </p>
-                  </div>
-                );
-              }
-              return null;
-            })()}
-          <DialogFooter className="gap-2">
+
+          <div className="space-y-4 p-5 sm:p-6">
+            <div className="grid gap-3 md:grid-cols-3">
+              {(Object.values(PLANS) as PlanConfig[])
+                .filter((p) => p.id !== "CUSTOM")
+                .map((plan) => (
+                  <PlanCard
+                    key={plan.id}
+                    plan={plan}
+                    selected={selectedPlan === plan.id}
+                    current={
+                      currentPlan === plan.id && currentPlan !== "CUSTOM"
+                    }
+                    onClick={() => setSelectedPlan(plan.id as PlanId)}
+                  />
+                ))}
+            </div>
+            {selectedPlan &&
+              selectedPlan !== currentPlan &&
+              (() => {
+                const cur = PLANS[currentPlan];
+                const next = PLANS[selectedPlan as PlanId];
+                if (
+                  cur?.credits &&
+                  next?.credits &&
+                  next.credits < cur.credits
+                ) {
+                  return (
+                    <div className="flex items-start gap-2 rounded-2xl border border-orange-500/20 bg-orange-500/10 px-3 py-2.5">
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />
+                      <p className="text-[12px] text-orange-600 dark:text-orange-400">
+                        Downgrade : crédits réinitialisés à{" "}
+                        {next.credits.toLocaleString("fr-FR")}.
+                      </p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+          </div>
+
+          <DialogFooter className="border-t border-border/70 bg-card/50 px-5 py-4 sm:px-6">
             <Button
               variant="outline"
               size="sm"
@@ -1782,7 +1807,7 @@ export default function UserDetailPage() {
                 selectedPlan === "CUSTOM"
               }
             >
-              {busy && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+              {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
               {selectedPlan && selectedPlan !== currentPlan
                 ? `Passer en ${PLANS[selectedPlan as PlanId]?.label}`
                 : "Choisir"}
