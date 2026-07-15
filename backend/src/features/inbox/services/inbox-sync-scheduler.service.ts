@@ -11,7 +11,20 @@
  *     the conversation is in AI mode (real-time guard).
  *   - Detect client messages that have been unanswered for more than
  *     UNANSWERED_THRESHOLD_MS and re-enqueue the AI reply job (24h guard).
- *   - Emit SSE events so the inbox UI updates without a page refresh.
+ *   - Emit realtime events (WebSocket) so the inbox UI updates without a
+ *     page refresh.
+ *
+ * CHANGES (realtime upgrade):
+ *   - syncMessages() now stamps Conversation.lastClientMessageAt whenever a
+ *     new CLIENT message is inserted — this is the source of truth for the
+ *     Messenger 24h messaging-window banner (see messaging-window.util.ts).
+ *   - ensureAiReply() / recoverUnansweredConversations() now emit
+ *     `ai_typing_start` right before enqueuing the AI reply job, so the chat
+ *     UI can show a "VendeoAI est en train d'écrire…" bubble. The actual
+ *     `ai_typing_stop` is expected to be emitted by the AI reply worker once
+ *     it has sent (or failed to send) the reply — see InboxEventEmitter.
+ *     As a safety net, the frontend also clears the bubble automatically
+ *     when a new message arrives for that conversation, or after ~20s.
  */
 
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
@@ -191,7 +204,7 @@ export class InboxSyncSchedulerService implements OnModuleInit {
         !imageUrl && firstAttachment?.file_url ? firstAttachment.file_url : null;
 
       if (!existing) {
-        // New message missed by the webhook → insert and emit SSE.
+        // New message missed by the webhook → insert and emit realtime event.
         const saved = await this.prisma.message.create({
           data: {
             conversationId: localConvId,
@@ -225,9 +238,16 @@ export class InboxSyncSchedulerService implements OnModuleInit {
           saved.content?.trim() ||
           (imageUrl ? '📷 Photo' : fileUrl ? '📎 Fichier' : null);
 
+        // lastClientMessageAt only advances on CLIENT messages — it is the
+        // basis of the Messenger 24h messaging window (see toDto in
+        // ConversationService / messaging-window.util.ts).
         await this.prisma.conversation.update({
           where: { id: localConvId },
-          data:  { lastMessage: preview, lastMessageAt: fbCreatedAt },
+          data: {
+            lastMessage: preview,
+            lastMessageAt: fbCreatedAt,
+            ...(senderRole === 'CLIENT' ? { lastClientMessageAt: fbCreatedAt } : {}),
+          },
         });
 
       } else if (fbMsg.message && existing.content !== normalizeText(fbMsg.message)) {
@@ -269,6 +289,10 @@ export class InboxSyncSchedulerService implements OnModuleInit {
       where: { id: conversationId },
       data:  { needsAiReply: true },
     });
+
+    // "VendeoAI est en train d'écrire…" — cleared by the AI worker
+    // (ai_typing_stop) or automatically by the frontend on new_message/timeout.
+    this.sseEmitter.aiTypingStart(userId, { conversationId });
 
     await this.aiQueue.enqueueAiReply({
       conversationId,
@@ -318,6 +342,8 @@ export class InboxSyncSchedulerService implements OnModuleInit {
         `Unanswered client message detected in conv=${id} ` +
         `(age: ${Math.round((Date.now() - lastMsg.createdAt.getTime()) / 3_600_000)}h) — re-enqueuing AI reply`,
       );
+
+      this.sseEmitter.aiTypingStart(userId, { conversationId: id });
 
       await this.aiQueue.enqueueAiReply({
         conversationId:    id,

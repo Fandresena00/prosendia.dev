@@ -7,6 +7,21 @@
  * NOTE: This component uses useSearchParams (via useInbox) which requires
  * a Suspense boundary in Next.js App Router. The default export wraps
  * InboxPage in <Suspense> so callers don't need to worry about it.
+ *
+ * CHANGES (realtime + mobile upgrade):
+ *   - 100vh → 100dvh: on mobile browsers the address bar resizing the
+ *     visual viewport used to make the page jump/clip; dvh tracks the real
+ *     available height so the inbox always fits in exactly one screen.
+ *   - Mobile navigation between the conversation list and the chat is now a
+ *     real sliding transition (translate-x + transition-transform) instead
+ *     of an instant hidden/flex swap — both panels stay mounted and slide
+ *     past each other, which is both smoother and avoids remounting/losing
+ *     scroll position when going back and forth.
+ *   - sseStatus renamed wsStatus; ChatView now also receives isAiTyping,
+ *     newMessageIds, and the suggestion state + handlers.
+ *   - The "no conversation" empty placeholder now follows the same
+ *     mobile show/hide rule as ChatView so it never doubles up with a
+ *     full-width conversation list on small screens.
  */
 
 import { Button } from "@/components/ui/button";
@@ -28,6 +43,9 @@ import { InboxSettingsDrawer } from "../components/InboxSettingsDrawer";
 import { useInbox } from "../hooks/useInbox";
 import type { PhotoPreset } from "../types/inbox.types";
 
+/** Full height on exactly one mobile screen, no matter the browser chrome. */
+const PAGE_HEIGHT = "h-[calc(100dvh-20px)]";
+
 export function InboxPage() {
   return (
     <Suspense fallback={null}>
@@ -46,7 +64,7 @@ function InboxPageInner() {
     inbox.accounts.length === 0
   ) {
     return (
-      <div className="flex h-[calc(100vh-20px)] items-center justify-center bg-background p-6">
+      <div className={`flex ${PAGE_HEIGHT} items-center justify-center bg-background p-6`}>
         <Empty className="max-w-xl border">
           <EmptyHeader>
             <EmptyTitle>Aucune page Facebook connectée</EmptyTitle>
@@ -65,10 +83,27 @@ function InboxPageInner() {
     );
   }
 
+  // ── Deep-link resolution screen ────────────────────────────────────────────
+  // Shown briefly while /inbox?conv=<id> is being resolved — e.g. when the
+  // linked conversation belongs to a different connected page than the one
+  // shown by default, and we need to switch pages before opening the chat.
+  if (inbox.resolvingDeepLink) {
+    return (
+      <div className={`flex ${PAGE_HEIGHT} items-center justify-center bg-background`}>
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-6 w-6 text-primary animate-spin" />
+          <p className="text-xs text-muted-foreground">
+            Ouverture de la conversation…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // ── Initial sync loading screen ────────────────────────────────────────────
   if (inbox.isInitialSyncing) {
     return (
-      <div className="flex h-[calc(100vh-20px)] items-center justify-center bg-background">
+      <div className={`flex ${PAGE_HEIGHT} items-center justify-center bg-background`}>
         <div className="flex flex-col items-center gap-5 max-w-xs text-center px-6">
           {/* Animated icon */}
           <div className="relative">
@@ -106,10 +141,20 @@ function InboxPageInner() {
   }
 
   const showChat = !!inbox.selected;
+  // On mobile exactly one of {list, chat} is visible, sliding in/out; on
+  // sm+ both are always visible side by side and the transforms are neutralised.
+  const listSlideClass = inbox.showList
+    ? "translate-x-0"
+    : "-translate-x-full sm:translate-x-0";
+  const chatSlideClass = inbox.showList
+    ? "translate-x-full sm:translate-x-0"
+    : "translate-x-0";
+  const slideBase =
+    "absolute inset-0 sm:relative sm:inset-auto transition-transform duration-300 ease-out will-change-transform";
 
   return (
-    <div className="flex h-[calc(100vh-20px)] overflow-hidden bg-background">
-      {/* ── Left panel ── */}
+    <div className={`flex ${PAGE_HEIGHT} overflow-hidden bg-background relative`}>
+      {/* ── Left panel: conversation list ── */}
       <ConvList
         accounts={inbox.accounts}
         activeAcc={inbox.activeAcc}
@@ -120,17 +165,13 @@ function InboxPageInner() {
         onSelect={inbox.handleSelectConv}
         searchQuery={inbox.searchQuery}
         onSearchChange={inbox.setSearchQuery}
-        sseStatus={inbox.sseStatus}
+        wsStatus={inbox.wsStatus}
         onOpenSettings={() => inbox.setSettingsOpen(true)}
         compactMode={inbox.uiPrefs.compactMode}
-        className={
-          inbox.showList
-            ? "mx-auto w-full max-w-107.5 sm:mx-0 sm:w-85 sm:max-w-85 sm:basis-85 xl:w-90 xl:max-w-90 xl:basis-90"
-            : "hidden sm:flex sm:w-85 sm:max-w-85 sm:basis-85 xl:w-90 xl:max-w-90 xl:basis-90"
-        }
+        className={`${slideBase} ${listSlideClass} w-full sm:w-85 sm:max-w-85 sm:basis-85 xl:w-90 xl:max-w-90 xl:basis-90`}
       />
 
-      {/* ── Right panel ── */}
+      {/* ── Right panel: chat ── */}
       {showChat && inbox.selected ? (
         <ChatView
           selected={inbox.selected}
@@ -143,7 +184,9 @@ function InboxPageInner() {
           loadingMsgs={inbox.loadingMsgs}
           onLoadMore={inbox.loadMore}
           isSyncing={inbox.isSyncing}
-          sseStatus={inbox.sseStatus}
+          wsStatus={inbox.wsStatus}
+          isAiTyping={inbox.isAiTyping}
+          newMessageIds={inbox.newMessageIds}
           pendingPhotos={inbox.pendingPhotos}
           pendingFile={inbox.pendingFile}
           pendingPreset={inbox.pendingPreset}
@@ -170,14 +213,20 @@ function InboxPageInner() {
           textareaRef={inbox.textareaRef}
           onPhotoFiles={inbox.handlePhotoFiles}
           onFileSelect={inbox.handleFileSelect}
-          infoPanel={<InboxInfoPanel sseStatus={inbox.sseStatus} />}
-          className={!inbox.showList ? "flex" : "hidden sm:flex"}
+          suggestion={inbox.suggestion}
+          onRequestSuggestion={inbox.requestSuggestion}
+          onAcceptSuggestion={inbox.acceptSuggestion}
+          onDismissSuggestion={inbox.dismissSuggestion}
+          infoPanel={<InboxInfoPanel wsStatus={inbox.wsStatus} />}
+          className={`${slideBase} ${chatSlideClass} flex flex-col`}
         />
       ) : /* No conversation selected — placeholder */
       !inbox.loadingConvs &&
         inbox.initialSyncDone &&
         inbox.convs.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center">
+        <div
+          className={`${slideBase} ${chatSlideClass} sm:flex-1 flex items-center justify-center`}
+        >
           <div className="flex flex-col items-center gap-3 text-center px-8">
             <div className="h-12 w-12 rounded-2xl bg-secondary flex items-center justify-center">
               <MessageSquareDashed className="h-6 w-6 text-muted-foreground" />

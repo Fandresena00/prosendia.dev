@@ -33,7 +33,7 @@ interface ConvListProps {
   onSelect: (c: Conv) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
-  sseStatus: "connecting" | "connected" | "error";
+  wsStatus: "connecting" | "connected" | "error";
   onOpenSettings: () => void;
   compactMode?: boolean;
   className?: string;
@@ -49,15 +49,15 @@ export function ConvList({
   onSelect,
   searchQuery,
   onSearchChange,
-  sseStatus,
+  wsStatus,
   onOpenSettings,
   compactMode = false,
   className = "",
 }: ConvListProps) {
-  const sseDotClass =
-    sseStatus === "connected"
+  const wsDotClass =
+    wsStatus === "connected"
       ? "bg-emerald-500"
-      : sseStatus === "error"
+      : wsStatus === "error"
         ? "bg-destructive animate-pulse"
         : "bg-amber-400 animate-pulse";
 
@@ -72,11 +72,11 @@ export function ConvList({
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-bold tracking-tight">Messages</h2>
             <span
-              className={`h-1.5 w-1.5 rounded-full shrink-0 ${sseDotClass}`}
+              className={`h-1.5 w-1.5 rounded-full shrink-0 ${wsDotClass}`}
               title={
-                sseStatus === "connected"
+                wsStatus === "connected"
                   ? "Temps réel actif"
-                  : sseStatus === "error"
+                  : wsStatus === "error"
                     ? "Temps réel déconnecté"
                     : "Connexion…"
               }

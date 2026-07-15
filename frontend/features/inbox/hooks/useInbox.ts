@@ -11,15 +11,33 @@
  *   loadingConvs     — conversation list fetched from DB
  *   loadingMsgs      — messages loading on first open of a conversation
  *   isSyncing        — sync-on-open running per conversation
- *   sseStatus        — 'connecting' | 'connected' | 'error'
+ *   wsStatus         — 'connecting' | 'connected' | 'error' (WebSocket, formerly SSE)
+ *
+ * CHANGES (realtime upgrade):
+ *   - useInboxSse → useInboxWs (Socket.io). sseStatus renamed wsStatus.
+ *   - aiTypingConvIds tracks which conversations currently show the
+ *     "VendeoAI écrit…" bubble — set on ai_typing_start, cleared on
+ *     ai_typing_stop, on the next new_message for that conversation, or
+ *     after a 20s safety timeout (in case the AI worker never confirms).
+ *   - newMessageIds tracks message ids that just arrived in realtime, for a
+ *     one-shot entrance animation in MessageRow (cleared ~700ms later).
+ *   - suggestion / requestSuggestion / acceptSuggestion / dismissSuggestion:
+ *     drives the AI reply-suggestion button + SuggestionBar. Streamed chunks
+ *     are matched against the active requestId so a stale response from a
+ *     dismissed/superseded request can never overwrite a newer one.
+ *   - canSend / handleSend now also require selectedConv.canSendFreeform —
+ *     defensive guard in addition to ChatView swapping the composer for
+ *     MessagingWindowClosedBanner once the Messenger 24h window is closed.
  */
 
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   createReferencePreset,
   deleteReferencePreset,
   fetchAccounts,
+  fetchConversationById,
   fetchConversations,
   fetchMessages,
   fetchReferencePresets,
@@ -53,13 +71,18 @@ import {
   messageApiToPreview,
   msgToPreview,
 } from "../utils/api-msg-to-ui-msg";
-import { useInboxSse } from "./use-inbox-sse";
+import { useInboxWs } from "./use-inbox-ws";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const CONV_POLL_MS = 30_000;
 const MSG_POLL_MS = 8_000;
 const MESSAGES_PER_PAGE = 30;
+
+/** Safety net: auto-clear the "AI is typing" bubble if ai_typing_stop never arrives. */
+const AI_TYPING_TIMEOUT_MS = 20_000;
+/** How long a freshly-arrived message keeps its entrance animation flag. */
+const NEW_MESSAGE_ANIMATION_MS = 700;
 
 const GRADIENTS = [
   "from-blue-500/40 to-indigo-600/30",
@@ -69,6 +92,17 @@ const GRADIENTS = [
   "from-rose-500/40 to-pink-600/30",
   "from-cyan-500/40 to-sky-600/30",
 ];
+
+export type SuggestionStatus = "idle" | "loading" | "streaming" | "done" | "error";
+
+interface SuggestionState {
+  status:    SuggestionStatus;
+  text:      string;
+  error:     string | null;
+  requestId: string | null;
+}
+
+const IDLE_SUGGESTION: SuggestionState = { status: "idle", text: "", error: null, requestId: null };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -98,6 +132,21 @@ export function useInbox() {
   // ── Store global (badge sidebar) ──────────────────────────────────────────
   const setInboxUnread = useInboxStore((s) => s.setUnreadCount);
 
+  // ── Deep-link navigation (/inbox?conv=<id>) ──────────────────────────────
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // Captured once on mount: the conv id the user landed on, if any.
+  // Cleared as soon as it's been resolved (found & selected, or failed).
+  // Using a ref (not state) so updating the URL ourselves never re-triggers
+  // this deep-link resolution logic.
+  const deepLinkConvIdRef = useRef<string | null>(searchParams.get("conv"));
+  const deepLinkAttemptedRef = useRef<Set<string>>(new Set());
+  const [resolvingDeepLink, setResolvingDeepLink] = useState(
+    !!deepLinkConvIdRef.current,
+  );
+
   // ── Accounts ──────────────────────────────────────────────────────────────
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activeAcc, setActiveAcc] = useState<Account | null>(null);
@@ -120,14 +169,59 @@ export function useInbox() {
     Record<string, boolean>
   >({});
   const [loadingMessages, setLoadingMessages] = useState(false);
+  /** Message ids that just arrived in realtime — drives MessageRow's entrance animation. */
+  const [newMessageIds, setNewMessageIds] = useState<Set<string>>(new Set());
 
   // ── Sync states ───────────────────────────────────────────────────────────
   const [isInitialSyncing, setIsInitialSyncing] = useState(false);
   const [initialSyncDone, setInitialSyncDone] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [sseStatus, setSseStatus] = useState<
+  const [wsStatus, setWsStatus] = useState<
     "connecting" | "connected" | "error"
   >("connecting");
+
+  // ── AI "typing…" bubble ──────────────────────────────────────────────────
+  const [aiTypingConvIds, setAiTypingConvIds] = useState<Set<string>>(new Set());
+  const aiTypingTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const clearAiTyping = useCallback((convId: string) => {
+    setAiTypingConvIds((prev) => {
+      if (!prev.has(convId)) return prev;
+      const next = new Set(prev);
+      next.delete(convId);
+      return next;
+    });
+    const timeout = aiTypingTimeoutsRef.current[convId];
+    if (timeout) {
+      clearTimeout(timeout);
+      delete aiTypingTimeoutsRef.current[convId];
+    }
+  }, []);
+
+  const startAiTyping = useCallback((convId: string) => {
+    setAiTypingConvIds((prev) => {
+      if (prev.has(convId)) return prev;
+      const next = new Set(prev);
+      next.add(convId);
+      return next;
+    });
+    const existing = aiTypingTimeoutsRef.current[convId];
+    if (existing) clearTimeout(existing);
+    aiTypingTimeoutsRef.current[convId] = setTimeout(
+      () => clearAiTyping(convId),
+      AI_TYPING_TIMEOUT_MS,
+    );
+  }, [clearAiTyping]);
+
+  useEffect(() => {
+    const timeouts = aiTypingTimeoutsRef.current;
+    return () => {
+      Object.values(timeouts).forEach(clearTimeout);
+    };
+  }, []);
+
+  // ── AI reply suggestion ───────────────────────────────────────────────────
+  const [suggestion, setSuggestion] = useState<SuggestionState>(IDLE_SUGGESTION);
 
   // ── Settings ──────────────────────────────────────────────────────────────
   const [uiPrefs, setUiPrefs] = useState<InboxUiPrefs>(() => loadUiPrefs());
@@ -148,6 +242,12 @@ export function useInbox() {
   useEffect(() => {
     activeAccRef.current = activeAcc;
   }, [activeAcc]);
+
+  // Reset the suggestion panel whenever the open conversation changes —
+  // a suggestion drafted for conversation A should never leak into B.
+  useEffect(() => {
+    setSuggestion(IDLE_SUGGESTION);
+  }, [selectedConv?.id]);
 
   /**
    * Wrapper autour de setConvs qui met aussi à jour le badge global de la sidebar.
@@ -239,17 +339,72 @@ export function useInbox() {
   const stagedPhotoFilesRef = useRef<File[]>([]);
   const stagedFileRef = useRef<File | null>(null);
 
+  // ─── Resolved deep-linked conversation (fetched by ID, full detail) ────────
+  // Populated by the "load accounts" effect below when a ?conv=<id> deep link
+  // points at a conversation, so the "load when account changes" effect can
+  // select it (or prepend it to the list) once its account's convs are loaded.
+  const resolvedDeepLinkConvRef = useRef<Conv | null>(null);
+
   // ─── Load accounts ─────────────────────────────────────────────────────────
+  // If the page was opened via a deep link (/inbox?conv=<id>), we resolve
+  // that conversation's own details *before* picking the active account, so
+  // we can switch straight to the page it belongs to instead of defaulting
+  // to the first connected page.
 
   useEffect(() => {
-    fetchAccounts()
-      .then((loaded) => {
+    const deepLinkId = deepLinkConvIdRef.current;
+
+    Promise.all([
+      fetchAccounts(),
+      deepLinkId
+        ? fetchConversationById(deepLinkId).catch(() => null)
+        : Promise.resolve(null),
+    ])
+      .then(([loaded, deepLinkConv]) => {
         setAccounts(loaded);
-        if (loaded.length > 0) setActiveAcc(loaded[0]);
-        else setLoadingConvs(false);
+
+        if (loaded.length === 0) {
+          setLoadingConvs(false);
+          if (deepLinkId) {
+            deepLinkConvIdRef.current = null;
+            setResolvingDeepLink(false);
+          }
+          return;
+        }
+
+        if (deepLinkId && !deepLinkConv) {
+          // Conversation doesn't exist or isn't accessible — give up on the
+          // deep link and fall back to the default (first connected page).
+          toast.error("Cette conversation est introuvable.");
+          deepLinkConvIdRef.current = null;
+          setResolvingDeepLink(false);
+          setActiveAcc(loaded[0]);
+          return;
+        }
+
+        if (deepLinkId && deepLinkConv) {
+          const owningAccount = loaded.find(
+            (a) => a.id === deepLinkConv.businessProfileId,
+          );
+          if (owningAccount) {
+            resolvedDeepLinkConvRef.current = deepLinkConv;
+            setActiveAcc(owningAccount);
+            return;
+          }
+          // Conversation belongs to a page that isn't connected/active here.
+          toast.error("Cette conversation appartient à une page non connectée.");
+          deepLinkConvIdRef.current = null;
+          setResolvingDeepLink(false);
+        }
+
+        setActiveAcc(loaded[0]);
       })
       .catch(() => {
         setLoadingConvs(false);
+        if (deepLinkId) {
+          deepLinkConvIdRef.current = null;
+          setResolvingDeepLink(false);
+        }
         toast.error("Impossible de charger les pages Facebook.");
       });
   }, []);
@@ -272,6 +427,38 @@ export function useInbox() {
       .then(setPresets)
       .catch(() => undefined);
 
+    // Resolves which conversation to auto-select once a page of conversations
+    // has loaded for the active account — respecting a pending ?conv=<id>
+    // deep link when present, and clearing it once resolved either way.
+    const resolveSelection = (data: Conv[]): { list: Conv[]; toSelect: Conv | null } => {
+      const deepLinkId = deepLinkConvIdRef.current;
+      if (!deepLinkId) return { list: data, toSelect: data[0] ?? null };
+
+      const match = data.find((c) => c.id === deepLinkId);
+      if (match) {
+        deepLinkConvIdRef.current = null;
+        setResolvingDeepLink(false);
+        setShowConvList(false);
+        return { list: data, toSelect: match };
+      }
+
+      const resolved = resolvedDeepLinkConvRef.current;
+      if (resolved?.id === deepLinkId && resolved.businessProfileId === activeAcc.id) {
+        // Belongs to this account but fell outside the loaded page (older
+        // conversation) — surface it at the top of the list.
+        deepLinkConvIdRef.current = null;
+        setResolvingDeepLink(false);
+        setShowConvList(false);
+        return { list: [resolved, ...data], toSelect: resolved };
+      }
+
+      // Shouldn't normally happen (resolved before switching account), but
+      // fail safe rather than get stuck.
+      deepLinkConvIdRef.current = null;
+      setResolvingDeepLink(false);
+      return { list: data, toSelect: data[0] ?? null };
+    };
+
     fetchConversations({ businessProfileId: activeAcc.id, pageSize: 1 })
       .then(({ total }) => {
         const accId = activeAcc.id;
@@ -286,13 +473,18 @@ export function useInbox() {
               fetchConversations({ businessProfileId: accId, pageSize: 30 }),
             )
             .then(({ data }) => {
-              setConvsAndSync(data);
-              if (data.length > 0) setSelectedConv(data[0]);
+              const { list, toSelect } = resolveSelection(data);
+              setConvsAndSync(list);
+              if (toSelect) setSelectedConv(toSelect);
               setInitialSyncDone(true);
             })
             .catch(() => {
               toast.error("La synchronisation initiale a échoué.");
               setInitialSyncDone(true);
+              if (deepLinkConvIdRef.current) {
+                deepLinkConvIdRef.current = null;
+                setResolvingDeepLink(false);
+              }
             })
             .finally(() => {
               setIsInitialSyncing(false);
@@ -303,13 +495,18 @@ export function useInbox() {
 
           fetchConversations({ businessProfileId: activeAcc.id, pageSize: 30 })
             .then(({ data }) => {
-              setConvsAndSync(data);
-              if (data.length > 0) setSelectedConv(data[0]);
+              const { list, toSelect } = resolveSelection(data);
+              setConvsAndSync(list);
+              if (toSelect) setSelectedConv(toSelect);
               setInitialSyncDone(true);
             })
-            .catch(() =>
-              toast.error("Impossible de charger les conversations."),
-            )
+            .catch(() => {
+              toast.error("Impossible de charger les conversations.");
+              if (deepLinkConvIdRef.current) {
+                deepLinkConvIdRef.current = null;
+                setResolvingDeepLink(false);
+              }
+            })
             .finally(() => setLoadingConvs(false));
 
           syncConversationList(activeAcc.id).catch(() => undefined);
@@ -317,6 +514,10 @@ export function useInbox() {
       })
       .catch(() => {
         setLoadingConvs(false);
+        if (deepLinkConvIdRef.current) {
+          deepLinkConvIdRef.current = null;
+          setResolvingDeepLink(false);
+        }
         toast.error("Erreur lors du chargement.");
       });
   }, [activeAcc?.id]);
@@ -469,17 +670,20 @@ export function useInbox() {
     }
   }, [selectedConv?.id, cursorByConvId]);
 
-  // ─── SSE ──────────────────────────────────────────────────────────────────
-  // Passed as a plain object — useInboxSse stores callbacks in a ref internally
+  // ─── Realtime (WebSocket) ───────────────────────────────────────────────────
+  // Passed as a plain object — useInboxWs stores callbacks in a ref internally
   // so passing a new object each render is safe and avoids exhaustive-deps issues.
 
-  useInboxSse({
-    onConnect: () => setSseStatus("connected"),
-    onError: () => setSseStatus("error"),
+  const { requestAiSuggestion } = useInboxWs({
+    onConnect: () => setWsStatus("connected"),
+    onError: () => setWsStatus("error"),
 
     onNewMessage: ({ conversationId, message: m }) => {
       const openId = selectedConvRef.current?.id;
       const newUiMsg = apiMsgToUiMsg(m);
+
+      // Any new message closes the "AI is typing…" bubble for that conversation.
+      clearAiTyping(conversationId);
 
       if (openId === conversationId) {
         setMessagesByConvId((p) => {
@@ -491,6 +695,20 @@ export function useInbox() {
                 e.externalId === newUiMsg.externalId),
           );
           if (alreadyIn) return p;
+
+          // Flag this message for the one-shot entrance animation, then
+          // auto-clear the flag shortly after — history loads never pass
+          // through this path so they never animate.
+          setNewMessageIds((prevIds) => new Set(prevIds).add(newUiMsg.id));
+          setTimeout(() => {
+            setNewMessageIds((prevIds) => {
+              if (!prevIds.has(newUiMsg.id)) return prevIds;
+              const next = new Set(prevIds);
+              next.delete(newUiMsg.id);
+              return next;
+            });
+          }, NEW_MESSAGE_ANIMATION_MS);
+
           return {
             ...p,
             [conversationId]: [
@@ -521,14 +739,47 @@ export function useInbox() {
       const activeAccount = activeAccRef.current;
       if (activeAccount && updated.businessProfileId !== activeAccount.id)
         return;
-      const mapped = mapConversation(updated);
+
+      // `updated` may be a PARTIAL snapshot (see ConversationEventSnapshot on
+      // the backend) — e.g. the webhook handler patching just unreadCount
+      // doesn't necessarily recompute the 24h messaging window. A field
+      // that's `undefined` here means "unchanged", never "reset to
+      // default" — so these 4 fields are merged against whatever the
+      // conversation already had in state, not blindly overwritten.
+      const mergeWindowFields = (prev: Conv | undefined): Conv => {
+        const mapped = mapConversation(updated);
+        if (!prev) return mapped;
+        return {
+          ...mapped,
+          lastClientMessageAt:
+            updated.lastClientMessageAt !== undefined
+              ? mapped.lastClientMessageAt
+              : prev.lastClientMessageAt,
+          messagingWindowExpiresAt:
+            updated.messagingWindowExpiresAt !== undefined
+              ? mapped.messagingWindowExpiresAt
+              : prev.messagingWindowExpiresAt,
+          canSendFreeform:
+            updated.canSendFreeform !== undefined
+              ? mapped.canSendFreeform
+              : prev.canSendFreeform,
+          messengerDeepLink:
+            updated.messengerDeepLink !== undefined
+              ? mapped.messengerDeepLink
+              : prev.messengerDeepLink,
+        };
+      };
+
       setConvsAndSync((p) => {
-        const exists = p.some((c) => c.id === updated.id);
-        return exists
-          ? [mapped, ...p.filter((c) => c.id !== updated.id)]
-          : [mapped, ...p];
+        const existing = p.find((c) => c.id === updated.id);
+        const merged = mergeWindowFields(existing);
+        return existing
+          ? [merged, ...p.filter((c) => c.id !== updated.id)]
+          : [merged, ...p];
       });
-      setSelectedConv((prev) => (prev?.id === updated.id ? mapped : prev));
+      setSelectedConv((prev) =>
+        prev?.id === updated.id ? mergeWindowFields(prev) : prev,
+      );
       skipNextConvPollRef.current = true;
     },
 
@@ -544,7 +795,54 @@ export function useInbox() {
         })
         .catch(() => undefined);
     },
+
+    onAiTypingStart: ({ conversationId }) => startAiTyping(conversationId),
+    onAiTypingStop:  ({ conversationId }) => clearAiTyping(conversationId),
+
+    onAiSuggestionChunk: ({ conversationId, requestId, textChunk }) => {
+      if (conversationId !== selectedConvRef.current?.id) return;
+      setSuggestion((prev) => {
+        if (prev.requestId && prev.requestId !== requestId) return prev; // stale response
+        return { status: "streaming", text: prev.text + textChunk, error: null, requestId };
+      });
+    },
+    onAiSuggestionDone: ({ conversationId, requestId, fullText }) => {
+      if (conversationId !== selectedConvRef.current?.id) return;
+      setSuggestion((prev) => {
+        if (prev.requestId && prev.requestId !== requestId) return prev;
+        return { status: "done", text: fullText, error: null, requestId };
+      });
+    },
+    onAiSuggestionError: ({ conversationId, requestId, message }) => {
+      if (conversationId !== selectedConvRef.current?.id) return;
+      setSuggestion((prev) => {
+        if (prev.requestId && prev.requestId !== requestId) return prev;
+        return { status: "error", text: prev.text, error: message, requestId };
+      });
+    },
   });
+
+  // ─── AI reply suggestion controls ──────────────────────────────────────────
+
+  const requestSuggestion = useCallback(() => {
+    if (!selectedConv) return;
+    setSuggestion({ status: "loading", text: "", error: null, requestId: null });
+    requestAiSuggestion(selectedConv.id);
+  }, [selectedConv?.id, requestAiSuggestion]);
+
+  const acceptSuggestion = useCallback(() => {
+    setSuggestion((current) => {
+      if (current.text.trim()) {
+        setMessageText(current.text.trim());
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      }
+      return IDLE_SUGGESTION;
+    });
+  }, []);
+
+  const dismissSuggestion = useCallback(() => {
+    setSuggestion(IDLE_SUGGESTION);
+  }, []);
 
   // ─── File pickers ──────────────────────────────────────────────────────────
 
@@ -581,14 +879,19 @@ export function useInbox() {
   // ─── Send ──────────────────────────────────────────────────────────────────
 
   const canSend = !!(
-    messageText.trim() ||
-    pendingPhotos.length ||
-    pendingFile ||
-    pendingPreset
+    selectedConv?.canSendFreeform !== false &&
+    (messageText.trim() ||
+      pendingPhotos.length ||
+      pendingFile ||
+      pendingPreset)
   );
 
   const handleSend = useCallback(async () => {
     if (!canSend || !selectedConv) return;
+    if (selectedConv.canSendFreeform === false) {
+      toast.error("La fenêtre de 24h est dépassée — répondez depuis Messenger.");
+      return;
+    }
 
     const convId = selectedConv.id;
     const uiSender =
@@ -780,10 +1083,20 @@ export function useInbox() {
 
   // ─── Conversation selection ────────────────────────────────────────────────
 
-  const handleSelectConv = useCallback((conv: Conv) => {
-    setSelectedConv(conv);
-    setShowConvList(false);
-  }, []);
+  const handleSelectConv = useCallback(
+    (conv: Conv) => {
+      setSelectedConv(conv);
+      setShowConvList(false);
+
+      // Keep the URL in sync so the conversation is directly linkable/shareable
+      // and survives a refresh — mirrors the /inbox?conv=<id> pattern used by
+      // notification deep-links.
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("conv", conv.id);
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
 
   // ─── Search ────────────────────────────────────────────────────────────────
 
@@ -817,7 +1130,10 @@ export function useInbox() {
     isInitialSyncing,
     initialSyncDone,
     isSyncing,
-    sseStatus,
+    resolvingDeepLink,
+    wsStatus,
+    isAiTyping: selectedConv ? aiTypingConvIds.has(selectedConv.id) : false,
+    newMessageIds,
     searchQuery,
     setSearchQuery,
     pendingPhotos,
@@ -847,5 +1163,9 @@ export function useInbox() {
     handleSend,
     handleSelectConv,
     handleEmojiSelect,
+    suggestion,
+    requestSuggestion,
+    acceptSuggestion,
+    dismissSuggestion,
   };
 }

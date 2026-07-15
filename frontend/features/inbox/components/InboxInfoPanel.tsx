@@ -14,21 +14,21 @@ import { IconInfoCircle } from "@tabler/icons-react";
 import { Bot, Clock, Database, MessageSquare, Zap } from "lucide-react";
 
 interface InboxInfoPanelProps {
-  sseStatus: "connecting" | "connected" | "error";
+  wsStatus: "connecting" | "connected" | "error";
 }
 
-export function InboxInfoPanel({ sseStatus }: InboxInfoPanelProps) {
-  const sseLabel =
-    sseStatus === "connected"
+export function InboxInfoPanel({ wsStatus }: InboxInfoPanelProps) {
+  const wsLabel =
+    wsStatus === "connected"
       ? "Temps réel connecté"
-      : sseStatus === "error"
+      : wsStatus === "error"
         ? "Temps réel déconnecté"
         : "Connexion en cours…";
 
-  const sseDot =
-    sseStatus === "connected"
+  const wsDot =
+    wsStatus === "connected"
       ? "bg-emerald-500"
-      : sseStatus === "error"
+      : wsStatus === "error"
         ? "bg-destructive"
         : "bg-amber-500 animate-pulse";
 
@@ -39,7 +39,7 @@ export function InboxInfoPanel({ sseStatus }: InboxInfoPanelProps) {
           className="flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-border/40 bg-card/60 hover:bg-accent/60 transition-colors text-muted-foreground hover:text-foreground"
           aria-label="Informations sur l'inbox"
         >
-          <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${sseDot}`} />
+          <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${wsDot}`} />
           <IconInfoCircle className="h-3.5 w-3.5" />
         </button>
       </HoverCardTrigger>
@@ -55,8 +55,8 @@ export function InboxInfoPanel({ sseStatus }: InboxInfoPanelProps) {
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold">VendeoAI Inbox</p>
             <div className="flex items-center gap-1.5">
-              <span className={`h-1.5 w-1.5 rounded-full ${sseDot}`} />
-              <span className="text-[10px] text-muted-foreground">{sseLabel}</span>
+              <span className={`h-1.5 w-1.5 rounded-full ${wsDot}`} />
+              <span className="text-[10px] text-muted-foreground">{wsLabel}</span>
             </div>
           </div>
         </div>
@@ -71,7 +71,7 @@ export function InboxInfoPanel({ sseStatus }: InboxInfoPanelProps) {
             <InfoRow
               icon={<Zap className="h-3.5 w-3.5 text-primary" />}
               label="Temps réel"
-              desc="Messages reçus instantanément via webhook Facebook + SSE"
+              desc="Messages reçus instantanément via webhook Facebook + WebSocket"
             />
             <InfoRow
               icon={<Bot className="h-3.5 w-3.5 text-violet-500" />}
@@ -106,6 +106,7 @@ export function InboxInfoPanel({ sseStatus }: InboxInfoPanelProps) {
             <LimitChip label="Messages" value="50 par conv." />
             <LimitChip label="Reset DB" value="Chaque dimanche" />
             <LimitChip label="Sync auto" value="Toutes les 5 min" />
+            <LimitChip label="Fenêtre Messenger" value="24h après le dernier message client" />
           </div>
           <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
             Les données supprimées du cache restent accessibles depuis Facebook.

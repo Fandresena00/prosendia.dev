@@ -1,6 +1,15 @@
 /**
  * @file features/inbox/services/inbox.service.ts
  * All HTTP calls for the inbox feature.
+ *
+ * CHANGES (realtime upgrade):
+ *   - mapConversation() now passes through lastClientMessageAt,
+ *     messagingWindowExpiresAt, canSendFreeform, messengerDeepLink from the
+ *     backend response (see ConversationApiResponse in inbox.types.ts).
+ *   - AI reply suggestions are NOT a REST call — they're requested and
+ *     streamed over the WebSocket gateway (see hooks/use-inbox-ws.ts),
+ *     since streaming partial tokens over plain HTTP would need SSE/chunked
+ *     transfer wiring that the socket already gives us for free.
  */
 
 import { apiClient } from '@/lib/api-client';
@@ -68,6 +77,10 @@ export function mapConversation(api: ConversationApiResponse): Conv {
     unread:            api.unreadCount,
     online:            false,
     handoverStatus:    api.handoverStatus,
+    lastClientMessageAt:      api.lastClientMessageAt ?? null,
+    messagingWindowExpiresAt: api.messagingWindowExpiresAt ?? null,
+    canSendFreeform:          api.canSendFreeform ?? true,
+    messengerDeepLink:        api.messengerDeepLink ?? null,
   };
 }
 
@@ -114,6 +127,22 @@ export async function fetchConversations(params: {
 
 export async function markConversationRead(conversationId: string): Promise<void> {
   await apiClient(`${INBOX_API_BASE}/conversations/${conversationId}/read`, { method: 'POST' });
+}
+
+/**
+ * Fetches a single conversation by its ID, regardless of pagination.
+ * Used for deep-link navigation (e.g. /inbox?conv=<id>) when the target
+ * conversation isn't part of the currently loaded page of 30 conversations —
+ * for example a link from a notification or an older conversation.
+ *
+ * Throws if the conversation doesn't exist or isn't accessible (404/403),
+ * which callers should catch to show a "conversation introuvable" message.
+ */
+export async function fetchConversationById(conversationId: string): Promise<Conv> {
+  const res = await apiClient<ConversationApiResponse>(
+    `${INBOX_API_BASE}/conversations/${conversationId}`,
+  );
+  return mapConversation(res);
 }
 
 export async function setHandover(
@@ -169,8 +198,8 @@ export async function sendFileMessage(
 
 /**
  * First-connection full sync: fetches 40 conversations × 50 messages.
- * The backend emits sync_complete SSE when done. The return value is
- * also available for callers that don't use SSE.
+ * The backend emits sync_complete over the WS gateway when done. The return
+ * value is also available for callers that don't rely on the socket.
  */
 export async function performInitialSync(businessProfileId: string): Promise<{
   businessProfileId: string; newMessages: number; newConversations: number;

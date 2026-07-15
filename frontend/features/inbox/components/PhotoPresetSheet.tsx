@@ -52,7 +52,7 @@ export function PhotoPresetSheet({
         </Button>
       </SheetTrigger>
 
-      <SheetContent side="right" className="w-[300px] p-0 flex flex-col overflow-hidden">
+      <SheetContent side="right" className="w-full sm:w-[300px] p-0 flex flex-col overflow-hidden">
         <SheetHeader className="px-5 pt-5 pb-3 border-b border-border/40 shrink-0">
           <SheetTitle className="flex items-center gap-2 text-sm font-semibold">
             <IconPhoto className="h-4 w-4 text-primary" />

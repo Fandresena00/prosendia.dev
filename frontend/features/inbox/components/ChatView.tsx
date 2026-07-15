@@ -3,6 +3,17 @@
 /**
  * @file features/inbox/components/ChatView.tsx
  * Right-panel chat view with message list, input bar, and sync indicator.
+ *
+ * CHANGES (realtime upgrade):
+ *   - sseStatus prop renamed to wsStatus (WebSocket, not SSE).
+ *   - isAiTyping renders <AiTypingBubble/> under the message list.
+ *   - When selected.canSendFreeform is false (Messenger 24h window closed),
+ *     the entire composer is replaced by <MessagingWindowClosedBanner/>.
+ *   - New Sparkles button triggers an AI reply suggestion; <SuggestionBar/>
+ *     appears above the composer while it streams in.
+ *   - newMessageIds drives a one-shot entrance animation on freshly-arrived
+ *     bubbles (MessageRow's `isNew` prop) — history loaded on open/scroll
+ *     does not animate, only realtime arrivals do.
  */
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -11,7 +22,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { IconCamera, IconFile, IconSend } from "@tabler/icons-react";
-import { ChevronLeft, Loader2, RefreshCw } from "lucide-react";
+import { ChevronLeft, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
 import type {
   Conv,
@@ -21,12 +32,16 @@ import type {
   PhotoAttachment,
   PhotoPreset,
 } from "../types/inbox.types";
+import type { SuggestionStatus } from "../hooks/useInbox";
 import { groupByDate } from "../utils/inbox.utils";
+import { AiTypingBubble } from "./AiTypingBubble";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { EmojiPickerPopover } from "./EmojiPickerPopover";
+import { MessagingWindowClosedBanner } from "./MessagingWindowClosedBanner";
 import { MessageRow } from "./MessageRow";
 import { ModeToggle } from "./ModeToggle";
 import { PhotoPresetSheet } from "./PhotoPresetSheet";
+import { SuggestionBar } from "./SuggestionBar";
 
 interface ChatViewProps {
   selected: Conv;
@@ -39,7 +54,9 @@ interface ChatViewProps {
   loadingMsgs: boolean;
   onLoadMore: () => void;
   isSyncing?: boolean;
-  sseStatus?: "connecting" | "connected" | "error";
+  wsStatus?: "connecting" | "connected" | "error";
+  isAiTyping?: boolean;
+  newMessageIds?: Set<string>;
   pendingPhotos: PhotoAttachment[];
   pendingFile: FileAttachment | null;
   pendingPreset: PhotoPreset | null;
@@ -61,6 +78,10 @@ interface ChatViewProps {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onPhotoFiles: (files: FileList | null) => void;
   onFileSelect: (files: FileList | null) => void;
+  suggestion: { status: SuggestionStatus; text: string; error: string | null };
+  onRequestSuggestion: () => void;
+  onAcceptSuggestion: () => void;
+  onDismissSuggestion: () => void;
   infoPanel?: ReactNode;
   className?: string;
 }
@@ -76,6 +97,8 @@ export function ChatView({
   loadingMsgs,
   onLoadMore,
   isSyncing = false,
+  isAiTyping = false,
+  newMessageIds,
   pendingPhotos,
   pendingFile,
   pendingPreset,
@@ -97,10 +120,16 @@ export function ChatView({
   textareaRef,
   onPhotoFiles,
   onFileSelect,
+  suggestion,
+  onRequestSuggestion,
+  onAcceptSuggestion,
+  onDismissSuggestion,
   infoPanel,
   className = "",
 }: ChatViewProps) {
   const grouped = groupByDate(msgs);
+  const suggestionActive = suggestion.status !== "idle";
+  const suggestionBusy = suggestion.status === "loading" || suggestion.status === "streaming";
 
   return (
     <div
@@ -198,89 +227,122 @@ export function ChatView({
                   nextMsg={messages[mi + 1]}
                   clientInitials={selected.initials}
                   clientAvatarUrl={selected.avatarUrl}
+                  isNew={newMessageIds?.has(msg.id) ?? false}
                 />
               ))}
             </div>
           ))}
 
+          {/* AI composing a reply */}
+          {isAiTyping && <AiTypingBubble />}
+
           <div ref={bottomRef} />
         </div>
       </ScrollArea>
 
-      {/* ── Input bar ── */}
+      {/* ── Input bar (or 24h window closed banner) ── */}
       <div className="border-t border-border/40 bg-background/95 backdrop-blur-sm shrink-0">
-        <AttachmentPreview
-          photos={pendingPhotos}
-          file={pendingFile}
-          preset={pendingPreset}
-          onRemovePhoto={onRemovePhoto}
-          onRemoveFile={onRemoveFile}
-          onRemovePreset={onRemovePendingPreset}
-        />
+        {selected.canSendFreeform ? (
+          <>
+            {suggestionActive && (
+              <SuggestionBar
+                status={suggestion.status}
+                text={suggestion.text}
+                error={suggestion.error}
+                onAccept={onAcceptSuggestion}
+                onDismiss={onDismissSuggestion}
+              />
+            )}
 
-        <div className="flex items-end gap-1.5 px-3 py-2.5">
-          {/* Camera */}
-          <ActionButton label="Photo" onClick={() => photoRef.current?.click()}>
-            <IconCamera className="h-4.5 w-4.5" />
-          </ActionButton>
-          <input
-            ref={photoRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              onPhotoFiles(e.target.files);
-              e.target.value = "";
-            }}
+            <AttachmentPreview
+              photos={pendingPhotos}
+              file={pendingFile}
+              preset={pendingPreset}
+              onRemovePhoto={onRemovePhoto}
+              onRemoveFile={onRemoveFile}
+              onRemovePreset={onRemovePendingPreset}
+            />
+
+            <div className="flex items-end gap-1.5 px-3 py-2.5">
+              {/* Camera */}
+              <ActionButton label="Photo" onClick={() => photoRef.current?.click()}>
+                <IconCamera className="h-4.5 w-4.5" />
+              </ActionButton>
+              <input
+                ref={photoRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  onPhotoFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+
+              {/* File */}
+              <ActionButton
+                label="Fichier"
+                onClick={() => fileRef.current?.click()}
+              >
+                <IconFile className="h-4.5 w-4.5" />
+              </ActionButton>
+              <input
+                ref={fileRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  onFileSelect(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+
+              {/* Emoji */}
+              <EmojiPickerPopover onSelect={onEmojiSelect} />
+
+              {/* AI suggestion */}
+              <ActionButton
+                label="Suggestion IA"
+                onClick={onRequestSuggestion}
+                disabled={suggestionBusy}
+                active={suggestionActive}
+              >
+                <Sparkles className={`h-4.5 w-4.5 ${suggestionBusy ? "animate-pulse" : ""}`} />
+              </ActionButton>
+
+              {/* Text input */}
+              <Textarea
+                ref={textareaRef}
+                placeholder="Écrire un message…"
+                value={message}
+                onChange={(e) => onMessageChange(e.target.value)}
+                rows={1}
+                className="flex-1 resize-none text-sm min-h-9 max-h-36 rounded-2xl border-0 bg-[#F0F2F5] dark:bg-[#3A3B3C] focus-visible:ring-1 focus-visible:ring-primary/50 py-2 px-4 leading-relaxed transition-shadow"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    onSend();
+                  }
+                }}
+              />
+
+              {/* Send */}
+              <Button
+                size="icon"
+                className="h-9 w-9 rounded-full shrink-0 bg-primary hover:bg-primary/90 transition-all active:scale-95"
+                disabled={!canSend}
+                onClick={onSend}
+              >
+                <IconSend className="h-4 w-4" />
+              </Button>
+            </div>
+          </>
+        ) : (
+          <MessagingWindowClosedBanner
+            clientName={selected.client}
+            messengerDeepLink={selected.messengerDeepLink}
           />
-
-          {/* File */}
-          <ActionButton
-            label="Fichier"
-            onClick={() => fileRef.current?.click()}
-          >
-            <IconFile className="h-4.5 w-4.5" />
-          </ActionButton>
-          <input
-            ref={fileRef}
-            type="file"
-            className="hidden"
-            onChange={(e) => {
-              onFileSelect(e.target.files);
-              e.target.value = "";
-            }}
-          />
-
-          {/* Emoji */}
-          <EmojiPickerPopover onSelect={onEmojiSelect} />
-
-          {/* Text input */}
-          <Textarea
-            ref={textareaRef}
-            placeholder="Écrire un message…"
-            value={message}
-            onChange={(e) => onMessageChange(e.target.value)}
-            rows={1}
-            className="flex-1 resize-none text-sm min-h-9 max-h-36 rounded-2xl border-0 bg-[#F0F2F5] dark:bg-[#3A3B3C] focus-visible:ring-1 focus-visible:ring-primary/50 py-2 px-4 leading-relaxed"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                onSend();
-              }
-            }}
-          />
-
-          {/* Send */}
-          <Button
-            size="icon"
-            className="h-9 w-9 rounded-full shrink-0 bg-primary hover:bg-primary/90 transition-all active:scale-95"
-            disabled={!canSend}
-            onClick={onSend}
-          >
-            <IconSend className="h-4 w-4" />
-          </Button>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -302,17 +364,24 @@ function ActionButton({
   label,
   onClick,
   children,
+  disabled = false,
+  active = false,
 }: {
   label: string;
   onClick: () => void;
   children: React.ReactNode;
+  disabled?: boolean;
+  active?: boolean;
 }) {
   return (
     <button
       type="button"
       aria-label={label}
       onClick={onClick}
-      className="h-9 w-9 rounded-full flex items-center justify-center shrink-0 text-primary hover:bg-primary/8 transition-colors active:scale-95"
+      disabled={disabled}
+      className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 transition-colors active:scale-95 disabled:opacity-50 disabled:pointer-events-none ${
+        active ? "bg-primary/10 text-primary" : "text-primary hover:bg-primary/8"
+      }`}
     >
       {children}
     </button>

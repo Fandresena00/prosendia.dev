@@ -19,6 +19,17 @@
  *
  * 3. EMPTY RESPONSE GUARD: throws a descriptive error if the model returns
  *    nothing useful after stripping, allowing the worker to retry.
+ *
+ * 4. STREAMING (realtime upgrade — inbox AI suggestion button):
+ *    `completeStream()` mirrors `complete()` but streams tokens via SSE and
+ *    calls `onChunk()` as they arrive, for the inbox reply-suggestion feature.
+ *    Thinking chains are just as real a risk in streaming mode — a naive
+ *    implementation would flash the model's raw reasoning to the agent
+ *    character by character before the closing tag ever arrives.stripThinkingChain()
+ *    only works on a complete string, so streaming needs its own incremental
+ *    filter: createThinkingChainStreamFilter() holds back text that could be
+ *    the start of a <think>/<thinking>/<reasoning>/[THINKING] block until
+ *    it's confirmed safe to show, and drops confirmed-hidden spans entirely.
  */
 
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
@@ -59,7 +70,7 @@ export class OpenRouterError extends Error {
   }
 }
 
-// ─── Thinking chain stripper ──────────────────────────────────────────────────
+// ─── Thinking chain stripper (non-streaming — final string) ───────────────────
 
 /**
  * Removes internal reasoning chains from model output before sending to customers.
@@ -101,6 +112,96 @@ function stripThinkingChain(raw: string): string {
   }
 
   return result.trim();
+}
+
+// ─── Thinking chain stripper (streaming — incremental) ─────────────────────────
+
+const THINK_OPEN_TAGS = ['<think>', '<thinking>', '<reasoning>', '[THINKING]', '[THINK]'] as const;
+const THINK_CLOSE_TAGS: Record<string, string> = {
+  '<think>':     '</think>',
+  '<thinking>':  '</thinking>',
+  '<reasoning>': '</reasoning>',
+  '[THINKING]':  '[/THINKING]',
+  '[THINK]':     '[/THINK]',
+};
+/** Longest opening tag ("<thinking>") — how far back we may need to hold text. */
+const MAX_TAG_LEN = Math.max(...THINK_OPEN_TAGS.map((t) => t.length));
+
+/**
+ * Incrementally filters <think>/<thinking>/<reasoning>/[THINKING] blocks out
+ * of a token stream so the UI never flashes the model's raw reasoning before
+ * it's fully suppressed.
+ *
+ * push(delta) returns the portion of `delta` (plus any previously held-back
+ * text now confirmed safe) that should be shown immediately. Text that could
+ * still be the start of a tag is held in an internal buffer until the next
+ * chunk disambiguates it. flush() releases anything left once the stream ends
+ * — except text still "inside" an unterminated think block, which is dropped
+ * rather than leaked.
+ */
+function createThinkingChainStreamFilter() {
+  let buffer = '';
+  let insideThink = false;
+  let closeTag = '';
+
+  function push(delta: string): string {
+    buffer += delta;
+    let visible = '';
+
+    for (;;) {
+      if (insideThink) {
+        const closeIdx = buffer.indexOf(closeTag);
+        if (closeIdx === -1) return visible; // still hidden — keep buffering
+        buffer = buffer.slice(closeIdx + closeTag.length);
+        insideThink = false;
+        continue;
+      }
+
+      let earliestIdx = -1;
+      let matchedTag = '';
+      for (const tag of THINK_OPEN_TAGS) {
+        const idx = buffer.indexOf(tag);
+        if (idx !== -1 && (earliestIdx === -1 || idx < earliestIdx)) {
+          earliestIdx = idx;
+          matchedTag = tag;
+        }
+      }
+
+      if (earliestIdx !== -1) {
+        visible += buffer.slice(0, earliestIdx);
+        buffer = buffer.slice(earliestIdx + matchedTag.length);
+        insideThink = true;
+        closeTag = THINK_CLOSE_TAGS[matchedTag];
+        continue;
+      }
+
+      // No complete tag found — the buffer's tail might be a partial tag
+      // opening (e.g. "<thi"); hold that part back for the next chunk.
+      const holdBackLen = Math.min(buffer.length, MAX_TAG_LEN - 1);
+      const tail = buffer.slice(buffer.length - holdBackLen);
+      const looksLikePartialTag = /<[a-zA-Z]*$|\[[A-Z]*$/.test(tail);
+
+      if (looksLikePartialTag && holdBackLen > 0) {
+        visible += buffer.slice(0, buffer.length - holdBackLen);
+        buffer = buffer.slice(buffer.length - holdBackLen);
+      } else {
+        visible += buffer;
+        buffer = '';
+      }
+      return visible;
+    }
+  }
+
+  function flush(): string {
+    // Anything still held back once the stream ends is released, UNLESS
+    // we're still "inside" an unterminated think block — then it's dropped
+    // (better to lose a reasoning fragment than leak it).
+    const leftover = insideThink ? '' : buffer;
+    buffer = '';
+    return leftover;
+  }
+
+  return { push, flush };
 }
 
 // ─── Client ───────────────────────────────────────────────────────────────────
@@ -213,6 +314,153 @@ export class OpenRouterClient {
 
       throw new InternalServerErrorException(
         `OpenRouter request failed: ${String(err)}`,
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  // ─── Streaming completion call (inbox AI suggestion) ──────────────────────
+
+  /**
+   * Same contract as complete(), but streams tokens as they arrive.
+   * `onChunk` receives only VISIBLE text — thinking-chain spans are filtered
+   * out incrementally (see createThinkingChainStreamFilter above) rather than
+   * stripped after the fact, so nothing hidden ever reaches the caller even
+   * mid-stream.
+   */
+  async completeStream(
+    opts: ChatCompletionOptions,
+    onChunk: (textChunk: string) => void,
+  ): Promise<ChatCompletionResult> {
+    const start      = Date.now();
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+    const body = {
+      model:           opts.model,
+      messages:        opts.messages,
+      max_tokens:      opts.maxTokens,
+      temperature:     opts.temperature ?? 0.7,
+      top_p:           opts.topP ?? 1,
+      stream:          true,
+      stream_options:  { include_usage: true },
+    };
+
+    this.logger.debug(
+      `→ OpenRouter [stream] [${opts.model}] ${opts.messages.length} msgs, max=${opts.maxTokens}t`,
+    );
+
+    try {
+      const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          Authorization:   `Bearer ${this.apiKey}`,
+          'HTTP-Referer':  this.siteUrl,
+          'X-Title':       this.siteTitle,
+        },
+        body:   JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        const errJson = await res.json().catch(() => ({})) as Record<string, unknown>;
+        const msg = (errJson.error as { message?: string } | undefined)?.message
+          ?? `HTTP ${res.status}`;
+        throw new OpenRouterError(msg, res.status, errJson);
+      }
+
+      const reader      = res.body.getReader();
+      const decoder      = new TextDecoder();
+      const thinkFilter  = createThinkingChainStreamFilter();
+
+      let sseBuffer      = '';
+      let rawContent     = '';
+      let promptTokens   = 0;
+      let replyTokens    = 0;
+      let totalTokens    = 0;
+      let modelName      = opts.model;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop() ?? '';
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') continue;
+
+          let json: Record<string, unknown>;
+          try {
+            json = JSON.parse(payload);
+          } catch {
+            continue; // partial/malformed SSE line — next chunk will complete it
+          }
+
+          const choices = json.choices as Array<{ delta?: { content?: string } }> | undefined;
+          const delta = choices?.[0]?.delta?.content;
+          if (delta) {
+            rawContent += delta;
+            const visible = thinkFilter.push(delta);
+            if (visible) onChunk(visible);
+          }
+          if (typeof json.model === 'string') modelName = json.model;
+
+          const usage = json.usage as
+            | { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+            | undefined;
+          if (usage) {
+            promptTokens = usage.prompt_tokens     ?? promptTokens;
+            replyTokens  = usage.completion_tokens ?? replyTokens;
+            totalTokens  = usage.total_tokens      ?? totalTokens;
+          }
+        }
+      }
+
+      const trailing = thinkFilter.flush();
+      if (trailing) onChunk(trailing);
+
+      const content = stripThinkingChain(rawContent);
+      if (!content) {
+        throw new InternalServerErrorException(
+          `Model returned empty content: ${opts.model}`,
+        );
+      }
+      if (totalTokens === 0) {
+        totalTokens = Math.ceil(rawContent.length / 4); // rough ~4 chars/token fallback
+      }
+
+      const latencyMs = Date.now() - start;
+      this.logger.debug(
+        `✓ OpenRouter [stream] [${modelName}] ${totalTokens}t in ${latencyMs}ms`,
+      );
+
+      return {
+        content,
+        promptTokens,
+        replyTokens,
+        totalTokens,
+        model: modelName,
+        latencyMs,
+      };
+    } catch (err) {
+      if (err instanceof OpenRouterError)               throw err;
+      if (err instanceof InternalServerErrorException)  throw err;
+
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new InternalServerErrorException(
+          `OpenRouter timeout after ${TIMEOUT_MS}ms for model ${opts.model}`,
+        );
+      }
+
+      throw new InternalServerErrorException(
+        `OpenRouter stream request failed: ${String(err)}`,
       );
     } finally {
       clearTimeout(timeout);

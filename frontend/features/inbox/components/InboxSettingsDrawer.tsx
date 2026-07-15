@@ -39,7 +39,7 @@ export function InboxSettingsDrawer({
 }: InboxSettingsDrawerProps) {
   return (
     <Sheet open={open} onOpenChange={onClose}>
-      <SheetContent side="right" className="w-[300px] p-0 flex flex-col">
+      <SheetContent side="right" className="w-full sm:w-[300px] p-0 flex flex-col">
         <SheetHeader className="px-5 pt-5 pb-3 border-b border-border/40 shrink-0">
           <SheetTitle className="flex items-center gap-2 text-sm font-semibold">
             <IconSettings className="h-4 w-4 text-primary" />

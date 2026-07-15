@@ -14,6 +14,17 @@
  *   - All upserts are idempotent on externalId — safe to re-run.
  *   - externalId is always the Facebook thread ID (t_xxx), never the client PSID,
  *     so syncConversationMessages can later fetch messages using that ID.
+ *
+ * CHANGES (realtime upgrade):
+ *   - Tracks lastClientAt (distinct from lastAt, which mixes CLIENT + PAGE
+ *     messages) and persists it to Conversation.lastClientMessageAt — the
+ *     source of truth for the Messenger 24h messaging-window banner.
+ *   - The conversation_updated event now carries the FULL ConversationResponseDto
+ *     shape (messagingWindowExpiresAt / canSendFreeform / messengerDeepLink),
+ *     read back from the updated row rather than hand-built, so it never
+ *     drifts from what ConversationService.toDto() would compute.
+ *   - Emits ai_typing_start right before enqueuing an AI reply job for a
+ *     freshly-synced CLIENT message (mirrors InboxSyncSchedulerService).
  */
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -27,6 +38,7 @@ import { FacebookAccountService } from '../../facebook/services/facebook-account
 import { AiQueueProducer } from '../../queue/producers/ai-queue.producer.js';
 import type { SyncCompleteEvent } from '../dto/inbox.dto.js';
 import { InboxEventEmitter } from '../gateways/inbox-sse.gateway.js';
+import { buildMessengerDeepLink, computeMessagingWindow } from '../utils/messaging-window.util.js';
 
 /** Conversations fetched on first connection. */
 const INITIAL_CONVERSATIONS = 40;
@@ -206,6 +218,8 @@ export class InboxSyncService {
 
       let lastPreview: string | null = null;
       let lastAt:      Date | null   = null;
+      /** Distinct from lastAt — only advances on CLIENT messages (24h window basis). */
+      let lastClientAt: Date | null  = null;
 
       for (const fbMsg of ordered) {
         const sender      = fbMsg.from?.id === conn.pageId ? 'PAGE' : 'CLIENT';
@@ -263,8 +277,9 @@ export class InboxSyncService {
           });
 
           newMessages++;
-          lastPreview = messagePreview(stored);
-          lastAt      = stored.createdAt;
+          lastPreview  = messagePreview(stored);
+          lastAt       = stored.createdAt;
+          lastClientAt = stored.createdAt;
 
           this.emitter.newMessage(userId, {
             conversationId: conv.id,
@@ -288,6 +303,7 @@ export class InboxSyncService {
               where: { id: conv.id },
               data:  { needsAiReply: true },
             });
+            this.emitter.aiTypingStart(userId, { conversationId: conv.id });
             await this.aiQueue.enqueueAiReply({
               conversationId:   conv.id,
               inboundMessageId: fbMsg.id,
@@ -342,23 +358,41 @@ export class InboxSyncService {
       }
 
       if (lastAt) {
-        await this.prisma.conversation.update({
+        const updatedConv = await this.prisma.conversation.update({
           where: { id: conv.id },
-          data:  { lastMessage: lastPreview, lastMessageAt: lastAt },
+          data: {
+            lastMessage: lastPreview,
+            lastMessageAt: lastAt,
+            ...(lastClientAt ? { lastClientMessageAt: lastClientAt } : {}),
+          },
+          include: {
+            businessProfile: { select: { facebookConnection: { select: { pageId: true } } } },
+          },
         });
+
+        const { messagingWindowExpiresAt, canSendFreeform } = computeMessagingWindow(
+          updatedConv.lastClientMessageAt,
+        );
+
         this.emitter.conversationUpdated(userId, {
           conversation: {
-            id:                conv.id,
-            businessProfileId: conv.businessProfileId,
-            externalId:        conv.externalId,
-            clientPsid:        conv.clientPsid,
-            clientName:        conv.clientName,
-            clientAvatarUrl:   conv.clientAvatarUrl,
-            lastMessage:       lastPreview,
-            lastMessageAt:     lastAt,
-            handoverStatus:    conv.handoverStatus,
+            id:                updatedConv.id,
+            businessProfileId: updatedConv.businessProfileId,
+            externalId:        updatedConv.externalId,
+            clientPsid:        updatedConv.clientPsid,
+            clientName:        updatedConv.clientName,
+            clientAvatarUrl:   updatedConv.clientAvatarUrl,
+            lastMessage:       updatedConv.lastMessage,
+            lastMessageAt:     updatedConv.lastMessageAt,
+            handoverStatus:    updatedConv.handoverStatus,
             unreadCount:       0,
-            updatedAt:         new Date(),
+            updatedAt:         updatedConv.updatedAt,
+            lastClientMessageAt: updatedConv.lastClientMessageAt,
+            messagingWindowExpiresAt,
+            canSendFreeform,
+            messengerDeepLink: buildMessengerDeepLink(
+              updatedConv.businessProfile?.facebookConnection?.pageId,
+            ),
           },
         });
       }

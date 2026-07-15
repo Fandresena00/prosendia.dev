@@ -32,6 +32,8 @@ interface MessageRowProps {
   nextMsg?:        Msg;
   clientInitials:  string;
   clientAvatarUrl?: string | null;
+  /** True for messages that just arrived in realtime — plays a one-shot entrance animation. History does not animate. */
+  isNew?:          boolean;
 }
 
 function formatInboxText(text: string): string {
@@ -68,6 +70,7 @@ export function MessageRow({
   nextMsg,
   clientInitials,
   clientAvatarUrl,
+  isNew = false,
 }: MessageRowProps) {
   const isClient = msg.sender === "client";
   const isAI     = msg.sender === "ai";
@@ -90,7 +93,9 @@ export function MessageRow({
     <div
       className={`flex items-end gap-2 ${
         isClient ? "justify-start" : "justify-end"
-      } ${prevSame ? "mt-0.5" : "mt-3"}`}
+      } ${prevSame ? "mt-0.5" : "mt-3"} ${
+        isNew ? "animate-in fade-in slide-in-from-bottom-2 duration-300" : ""
+      }`}
     >
       {/* Client avatar */}
       {isClient && !prevSame ? (

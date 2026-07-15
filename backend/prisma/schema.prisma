@@ -578,6 +578,12 @@ model Conversation {
 
   lastMessage   String?
   lastMessageAt DateTime?
+  /// Timestamp of the last message received FROM the client (not the page).
+  /// Drives the Facebook Messenger 24h standard messaging window: free-form
+  /// sends are only allowed while now() - lastClientMessageAt < 24h.
+  /// Updated by InboxSyncService and InboxSyncSchedulerService whenever a
+  /// CLIENT message is inserted.
+  lastClientMessageAt DateTime?
   handoverStatus  HandoverStatus @default(AI)
   humanTookOverAt DateTime?
   agentNote String?

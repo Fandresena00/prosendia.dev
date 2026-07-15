@@ -1,34 +1,34 @@
 /**
  * @file features/inbox/gateways/inbox-sse.gateway.ts
  *
- * Server-Sent Events (SSE) gateway for the inbox.
+ * InboxEventEmitter — the injectable event bus used by sync/webhook/AI
+ * services to push realtime events to a given user.
  *
- * Why SSE instead of WebSocket?
- *   - SSE is one-directional (server → client), which is exactly what we need
- *   - Works through HTTP/2 multiplexing, no special infrastructure needed
- *   - Automatic reconnection built into the browser EventSource API
- *   - NestJS `@Sse` + `Observable` gives us a clean push model
+ * CHANGES (realtime upgrade):
+ *   - Added aiTypingStart() / aiTypingStop() convenience methods for the
+ *     "VendeoAI est en train d'écrire…" bubble.
+ *   - The delivery mechanism has moved from SSE to WebSocket:
+ *     InboxWsGateway (gateways/inbox-ws.gateway.ts) is now the primary
+ *     consumer of forUser() and is registered in inbox.module.ts instead of
+ *     InboxSseController below.
+ *   - InboxSseController / the `stream()` endpoint are KEPT in this file,
+ *     unregistered from the module, purely as a rollback path — delete once
+ *     the WebSocket gateway has been running reliably in production.
  *
- * Architecture:
- *   - InboxSseGateway exposes a single endpoint: GET /inbox/events?userId=...
- *   - InboxEventEmitter is an injectable event bus used by sync / webhook services
- *     to push events into all active SSE streams for the target user
- *
- * Event types:
- *   new_message          → a new message arrived (from Facebook webhook or manual sync)
- *   conversation_updated → metadata changed (handover, unread count, last message)
- *   sync_complete        → background sync finished
- *   ping                 → keepalive every 25s (prevents proxy timeouts)
+ * InboxEventEmitter itself is unchanged in shape (still exported from this
+ * file) so InboxEventsModule and every existing consumer (FacebookModule's
+ * webhook service, AiModule) keep working without any import changes.
  */
 
 import { Controller, Injectable, Logger, Res, Sse, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { Observable, Subject, filter, map, merge, timer } from 'rxjs';
 import type {
+  AiTypingEvent,
   ConversationUpdatedEvent,
+  InboxEventType,
   NewMessageEvent,
   SseEvent,
-  SseEventType,
   SyncCompleteEvent,
 } from '../dto/inbox.dto.js';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator.js';
@@ -39,14 +39,16 @@ import type { AuthenticatedUser } from '../../auth/types/authenticated-user.type
 
 /**
  * Injectable event bus.
- * Other services (WebhookService, InboxSyncService) inject this to push events.
+ * Other services (WebhookService, InboxSyncService, InboxSyncSchedulerService,
+ * the AI reply worker) inject this to push events. InboxWsGateway is the
+ * (single) subscriber that fans events out to connected WebSocket clients.
  */
 @Injectable()
 export class InboxEventEmitter {
   private readonly subject = new Subject<{ userId: string; event: SseEvent }>();
 
-  /** Push an event to all SSE streams subscribed for this userId */
-  emit<T>(userId: string, type: SseEventType, data: T): void {
+  /** Push an event to all realtime streams subscribed for this userId */
+  emit<T>(userId: string, type: InboxEventType, data: T): void {
     const event: SseEvent<T> = { type, data, at: new Date().toISOString() };
     this.subject.next({ userId, event });
   }
@@ -72,10 +74,32 @@ export class InboxEventEmitter {
   syncComplete(userId: string, payload: SyncCompleteEvent): void {
     this.emit(userId, 'sync_complete', payload);
   }
+
+  /**
+   * The AI is composing a reply for this conversation — the chat UI shows a
+   * "VendeoAI est en train d'écrire…" bubble. Call this right before invoking
+   * the model (OpenRouter), from wherever the AI reply job is processed.
+   */
+  aiTypingStart(userId: string, payload: AiTypingEvent): void {
+    this.emit(userId, 'ai_typing_start', payload);
+  }
+
+  /**
+   * Call once the AI reply has been sent OR the attempt has failed/escalated,
+   * so the typing bubble disappears. If your AI reply worker isn't covered by
+   * the files in this change set, add a call to this method there — the
+   * frontend also self-clears the bubble on the next new_message for that
+   * conversation and after a ~20s safety timeout, so a missed call is not
+   * catastrophic, just slightly less crisp.
+   */
+  aiTypingStop(userId: string, payload: AiTypingEvent): void {
+    this.emit(userId, 'ai_typing_stop', payload);
+  }
 }
 
-// ─── SSE controller endpoint ──────────────────────────────────────────────────
+// ─── SSE controller endpoint (deprecated — see file header) ──────────────────
 
+/** @deprecated superseded by InboxWsGateway. Not registered in InboxModule. */
 @Controller('inbox')
 export class InboxSseController {
   private readonly logger = new Logger(InboxSseController.name);
@@ -102,7 +126,7 @@ export class InboxSseController {
     // Keepalive ping every 25 seconds to prevent proxy/load-balancer timeouts
     const ping$ = timer(0, 25_000).pipe(
       map(() => ({
-        type:  'ping' as SseEventType,
+        type:  'ping' as InboxEventType,
         data:  null,
         at:    new Date().toISOString(),
       })),

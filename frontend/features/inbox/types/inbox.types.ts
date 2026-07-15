@@ -1,11 +1,21 @@
 /**
  * @file features/inbox/types/inbox.types.ts
  *
- * CHANGES:
- *   - MsgKind: added 'video' and 'audio' for Facebook media messages.
- *   - VideoAttachment and AudioAttachment interfaces added.
- *   - Msg: added video and audio optional fields.
- *   - MessageApiResponse: fileUrl is now used for videos, audio, and documents.
+ * CHANGES (realtime upgrade):
+ *   - Conv: added lastClientMessageAt, messagingWindowExpiresAt,
+ *     canSendFreeform, messengerDeepLink — powers the 24h-window banner.
+ *     These stay REQUIRED on Conv (the internal app model) — mapConversation
+ *     always fills them in with safe defaults.
+ *   - ConversationApiResponse: mirrors the backend response, but the same 4
+ *     fields are OPTIONAL here — REST responses always include them, but
+ *     conversation_updated realtime events may omit them (see backend's
+ *     ConversationEventSnapshot). "Absent" means "unchanged", not "reset to
+ *     default" — see useInbox.ts's onConversationUpdated, which merges
+ *     rather than replaces these 4 fields for that reason.
+ *   - SseEventType renamed conceptually to WsEventType (kept both names
+ *     exported so existing imports don't break); added ai_typing_start/stop.
+ *   - Added AiTypingSsePayload and the AiSuggestion* payload/state types for
+ *     the streamed reply-suggestion feature.
  */
 
 export type MsgSender      = 'client' | 'ai' | 'human' | 'page';
@@ -92,6 +102,15 @@ export interface Conv {
   unread:           number;
   online?:          boolean;
   handoverStatus:   HandoverStatus;
+
+  /** ISO timestamp of the last message received FROM the client, or null. */
+  lastClientMessageAt:      string | null;
+  /** ISO timestamp at which the Messenger 24h window closes, or null. */
+  messagingWindowExpiresAt: string | null;
+  /** False once the 24h window has elapsed — the composer must be replaced by MessagingWindowClosedBanner. */
+  canSendFreeform:          boolean;
+  /** Link to open this Page's Messenger inbox in Meta Business Suite. */
+  messengerDeepLink:        string | null;
 }
 
 // ─── Account ──────────────────────────────────────────────────────────────────
@@ -121,6 +140,16 @@ export interface ConversationApiResponse {
   handoverStatus:    HandoverStatus;
   unreadCount:       number;
   updatedAt:         string;
+  /**
+   * Always present on REST responses (GET /inbox/conversations...). May be
+   * ABSENT on a conversation_updated realtime event when the backend emitter
+   * didn't compute the 24h window (e.g. a lightweight unreadCount patch from
+   * the webhook handler) — absent means "unchanged", not "reset to default".
+   */
+  lastClientMessageAt?:      string | null;
+  messagingWindowExpiresAt?: string | null;
+  canSendFreeform?:          boolean;
+  messengerDeepLink?:        string | null;
 }
 
 export interface MessageApiResponse {
@@ -144,17 +173,22 @@ export interface MessagesPageApiResponse {
   hasMore:    boolean;
 }
 
-// ─── SSE ──────────────────────────────────────────────────────────────────────
+// ─── Realtime (WebSocket — formerly SSE) ───────────────────────────────────────
 
-export type SseEventType =
+export type WsEventType =
   | 'new_message'
   | 'conversation_updated'
   | 'sync_complete'
+  | 'ai_typing_start'
+  | 'ai_typing_stop'
   | 'typing'
   | 'ping';
 
+/** @deprecated alias of WsEventType, kept so older imports keep compiling. */
+export type SseEventType = WsEventType;
+
 export interface SseEvent<T = unknown> {
-  type: SseEventType;
+  type: WsEventType;
   data: T;
   at:   string;
 }
@@ -172,6 +206,32 @@ export interface SyncCompleteSsePayload {
   businessProfileId: string;
   newMessages:       number;
   newConversations:  number;
+}
+
+/** The AI is composing a reply for this conversation. */
+export interface AiTypingSsePayload {
+  conversationId: string;
+}
+
+// ─── AI reply suggestion (streamed over the WS gateway) ────────────────────────
+
+export interface AiSuggestionChunkPayload {
+  conversationId: string;
+  requestId:      string;
+  textChunk:      string;
+}
+
+export interface AiSuggestionDonePayload {
+  conversationId: string;
+  requestId:      string;
+  fullText:       string;
+  tokensUsed:     number;
+}
+
+export interface AiSuggestionErrorPayload {
+  conversationId: string;
+  requestId:      string;
+  message:        string;
 }
 
 export interface ReferencePresetApiResponse {

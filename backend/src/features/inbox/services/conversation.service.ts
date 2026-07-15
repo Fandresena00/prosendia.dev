@@ -3,6 +3,13 @@
  *
  * Read-side for conversations: list, get, mark read.
  * Write-side (send, handover) is in MessageService.
+ *
+ * CHANGES (realtime upgrade):
+ *   - toDto() now also computes the Messenger 24h messaging window
+ *     (messagingWindowExpiresAt / canSendFreeform) and a messengerDeepLink,
+ *     via the shared messaging-window.util helpers.
+ *   - Queries now also select businessProfile.facebookConnection.pageId,
+ *     needed to build the deep link.
  */
 
 import { Injectable, NotFoundException } from '@nestjs/common';
@@ -12,6 +19,23 @@ import type {
   ListConversationsQueryDto,
 } from '../dto/inbox.dto.js';
 import { buildPaginationMeta, type PaginatedResponseDto } from '../../facebook/dto/shared/pagination.dto.js';
+import { buildMessengerDeepLink, computeMessagingWindow } from '../utils/messaging-window.util.js';
+
+/** Shared include shape — keeps unread count + page id consistent everywhere. */
+const CONVERSATION_INCLUDE = {
+  _count: {
+    select: {
+      messages: {
+        where: { status: { not: 'READ' as const }, sender: 'CLIENT' as const },
+      },
+    },
+  },
+  businessProfile: {
+    select: {
+      facebookConnection: { select: { pageId: true } },
+    },
+  },
+};
 
 @Injectable()
 export class ConversationService {
@@ -46,15 +70,7 @@ export class ConversationService {
         orderBy: { lastMessageAt: 'desc' },
         skip,
         take: pageSize,
-        include: {
-          _count: {
-            select: {
-              messages: {
-                where: { status: { not: 'READ' }, sender: 'CLIENT' },
-              },
-            },
-          },
-        },
+        include: CONVERSATION_INCLUDE,
       }),
       this.prisma.conversation.count({ where }),
     ]);
@@ -73,7 +89,7 @@ export class ConversationService {
   ): Promise<ConversationResponseDto> {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, businessProfile: { userId } },
-      include: { _count: { select: { messages: { where: { status: { not: 'READ' }, sender: 'CLIENT' } } } } },
+      include: CONVERSATION_INCLUDE,
     });
     if (!conv) throw new NotFoundException(`Conversation ${conversationId} not found.`);
     return this.toDto(conv);
@@ -111,7 +127,7 @@ export class ConversationService {
         handoverStatus: status,
         humanTookOverAt: status === 'HUMAN' ? new Date() : undefined,
       },
-      include: { _count: { select: { messages: { where: { status: { not: 'READ' }, sender: 'CLIENT' } } } } },
+      include: CONVERSATION_INCLUDE,
     });
 
     return this.toDto(updated);
@@ -120,6 +136,10 @@ export class ConversationService {
   // ── Mapper ────────────────────────────────────────────────────────────────
 
   private toDto(conv: any): ConversationResponseDto {
+    const lastClientMessageAt: Date | null = conv.lastClientMessageAt ?? null;
+    const { messagingWindowExpiresAt, canSendFreeform } = computeMessagingWindow(lastClientMessageAt);
+    const pageId: string | undefined = conv.businessProfile?.facebookConnection?.pageId;
+
     return {
       id:                conv.id,
       businessProfileId: conv.businessProfileId,
@@ -132,6 +152,10 @@ export class ConversationService {
       handoverStatus:    conv.handoverStatus,
       unreadCount:       conv._count?.messages ?? 0,
       updatedAt:         conv.updatedAt,
+      lastClientMessageAt,
+      messagingWindowExpiresAt,
+      canSendFreeform,
+      messengerDeepLink: buildMessengerDeepLink(pageId),
     };
   }
 }
