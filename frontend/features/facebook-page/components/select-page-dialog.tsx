@@ -216,7 +216,7 @@ export function SelectPageDialog({
             <div className="text-center">
               <p className="text-sm font-semibold">Connexion en cours…</p>
               <p className="text-xs text-muted-foreground mt-1">
-                Liaison de &quot;{selectedPage?.name}&quot; à votre compte VendeoAI.
+                Liaison de &quot;{selectedPage?.name}&quot; à votre compte prosendia.
               </p>
             </div>
           </div>

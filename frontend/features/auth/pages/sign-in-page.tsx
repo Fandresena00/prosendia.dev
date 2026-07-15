@@ -9,7 +9,7 @@
  */
 
 import { ThemeSwitcher } from "@/components/shared/theme-switcher";
-import { VendeoLogo } from "@/components/shared/vendeo-logo";
+import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -121,8 +121,8 @@ export default function SignInPage() {
         />
 
         <div className="flex items-center gap-3">
-          <VendeoLogo size={9} rounded="rounded-xl" />
-          <span className="text-[15px] font-bold tracking-tight">VendeoAI</span>
+          <ProsendiaLogo size={9} rounded="rounded-xl" />
+          <span className="text-[15px] font-bold tracking-tight">prosendia</span>
         </div>
 
         <div className="space-y-8">
@@ -144,7 +144,7 @@ export default function SignInPage() {
               </span>
             </h2>
             <p className="text-[13px] leading-relaxed text-muted-foreground">
-              VendeoAI gère vos messages et commentaires Facebook en temps réel,
+              prosendia gère vos messages et commentaires Facebook en temps réel,
               filtre les demandes et ne vous alerte que quand c&apos;est
               vraiment nécessaire.
             </p>
@@ -168,7 +168,7 @@ export default function SignInPage() {
         </div>
 
         <p className="text-[11px] text-muted-foreground/50">
-          © 2025 VendeoAI · Automatisation IA pour vendeurs Facebook
+          © 2025 prosendia · Automatisation IA pour vendeurs Facebook
         </p>
       </motion.div>
 
@@ -180,8 +180,8 @@ export default function SignInPage() {
             {...fadeUp(0)}
             className="mb-8 flex items-center gap-2 lg:hidden"
           >
-            <VendeoLogo size={7} />
-            <span className="text-sm font-bold">VendeoAI</span>
+            <ProsendiaLogo size={7} />
+            <span className="text-sm font-bold">prosendia</span>
           </motion.div>
 
           <motion.div {...fadeUp(0.05)} className="mb-7 space-y-1.5">
@@ -189,7 +189,7 @@ export default function SignInPage() {
               Bon retour 👋
             </h1>
             <p className="text-[13px] text-muted-foreground">
-              Connectez-vous à votre espace VendeoAI
+              Connectez-vous à votre espace prosendia
             </p>
           </motion.div>
 

@@ -35,8 +35,8 @@ import { getOAuthUrl } from "../services/facebook.service";
 import type { ConnectedPagesLimitInfo } from "../types/facebook.types";
 
 const SECURITY_NOTES = [
-  "Vous êtes redirigé sur Facebook — VendeoAI ne voit jamais votre mot de passe",
-  "Vous choisissez exactement quelles pages partager avec VendeoAI",
+  "Vous êtes redirigé sur Facebook — prosendia ne voit jamais votre mot de passe",
+  "Vous choisissez exactement quelles pages partager avec prosendia",
   "Vous pouvez révoquer l'accès à tout moment depuis vos paramètres Facebook",
   "Vos tokens sont chiffrés AES-256 et ne sont jamais revendus",
 ];

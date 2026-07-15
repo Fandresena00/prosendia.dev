@@ -150,7 +150,7 @@ function Cta() {
             variants={fadeUpVariant}
             className="mb-8 text-sm leading-relaxed text-muted-foreground"
           >
-            Rejoignez les vendeurs qui font confiance à VendeoAI.
+            Rejoignez les vendeurs qui font confiance à prosendia.
           </motion.p>
 
           <motion.div variants={fadeUpVariant}>

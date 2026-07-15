@@ -49,7 +49,7 @@ function Benefits() {
       <div className="mx-auto max-w-5xl">
         <SectionHeader
           label="Avantages"
-          title="Pourquoi choisir VendeoAI ?"
+          title="Pourquoi choisir prosendia ?"
           sub="Les avantages qui font la différence"
         />
         <motion.div
@@ -116,7 +116,7 @@ function UseCases() {
         <SectionHeader
           label="Pour qui"
           title="Pour qui ?"
-          sub="VendeoAI s'adapte à tous types de vendeurs Facebook"
+          sub="prosendia s'adapte à tous types de vendeurs Facebook"
         />
         <motion.div
           className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"

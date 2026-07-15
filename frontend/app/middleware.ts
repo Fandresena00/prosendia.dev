@@ -2,7 +2,7 @@
  * @file middleware.ts  ← place at the root of /src
  * @description Next.js Edge Middleware — route protection via presence cookie.
  *
- * Reads `vendeo.session` (non-HttpOnly, set by JS after login).
+ * Reads `prosendia.session` (non-HttpOnly, set by JS after login).
  * The real HttpOnly auth cookies are scoped to the backend domain — invisible here.
  * This cookie is a UX hint only. Real security happens server-side on every API call.
  */

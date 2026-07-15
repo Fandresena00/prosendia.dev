@@ -1,6 +1,6 @@
 "use client";
 
-import { VendeoLogo } from "@/components/shared/vendeo-logo";
+import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
 import { IconBrandFacebook } from "@tabler/icons-react";
 import { MailIcon } from "lucide-react";
 
@@ -14,9 +14,9 @@ export function Footer() {
         <div className="grid gap-10 md:grid-cols-4">
           <div>
             <div className="mb-3 flex items-center gap-2">
-              <VendeoLogo size={6} rounded="rounded-lg" />
+              <ProsendiaLogo size={6} rounded="rounded-lg" />
               <span className="text-sm font-bold text-foreground">
-                VendeoAI
+                prosendia
               </span>
             </div>
             <p className="text-[11px] leading-relaxed text-muted-foreground">
@@ -72,7 +72,7 @@ export function Footer() {
 
         <div className="mt-10 flex flex-col items-center justify-between gap-4 border-t border-border/30 pt-6 md:flex-row">
           <p className="text-[11px] text-muted-foreground/45">
-            © 2024 VendeoAI. Tous droits réservés.
+            © 2024 prosendia. Tous droits réservés.
           </p>
           <div className="flex gap-4">
             {[IconBrandFacebook, MailIcon].map((Icon, i) => (

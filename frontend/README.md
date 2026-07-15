@@ -23,7 +23,7 @@ A modern Next.js React application providing an intuitive user interface for the
 
 - **Node.js** >= 18.0.0
 - **pnpm** >= 8.0.0
-- **Backend API** running on `https://vendeoia-api.fadevt.org` (configurable)
+- **Backend API** running on `https://prosendiaia-api.fadevt.org` (configurable)
 
 ### Installation
 
@@ -43,7 +43,7 @@ A modern Next.js React application providing an intuitive user interface for the
 
    ```bash
    # Create .env.local file
-   echo "NEXT_PUBLIC_API_URL=https://vendeoia-api.fadevt.org" > .env.local
+   echo "NEXT_PUBLIC_API_URL=https://prosendiaia-api.fadevt.org" > .env.local
    ```
 
 4. **Start development server:**
@@ -88,7 +88,7 @@ Create `.env.local` in the frontend root directory:
 # API CONFIGURATION
 # ============================================
 # Backend API URL (public - accessible from browser)
-NEXT_PUBLIC_API_URL="https://vendeoia-api.fadevt.org"
+NEXT_PUBLIC_API_URL="https://prosendiaia-api.fadevt.org"
 
 # ============================================
 # OTHER SETTINGS (Optional)
@@ -102,7 +102,7 @@ NODE_ENV="development"
 #### Development
 
 ```env
-NEXT_PUBLIC_API_URL="https://vendeoia-api.fadevt.org"
+NEXT_PUBLIC_API_URL="https://prosendiaia-api.fadevt.org"
 NODE_ENV="development"
 ```
 
@@ -550,7 +550,7 @@ debugger;
 Set via environment variable:
 
 ```env
-NEXT_PUBLIC_API_URL="https://vendeoia-api.fadevt.org"
+NEXT_PUBLIC_API_URL="https://prosendiaia-api.fadevt.org"
 ```
 
 ### Fetching Data

@@ -1,7 +1,7 @@
 /**
  * @file features/dashboard/pages/dashboard-page.tsx
  *
- * Dashboard VendeoAI — Vue principale déportée dans le dossier feature.
+ * Dashboard prosendia — Vue principale déportée dans le dossier feature.
  */
 
 "use client";

@@ -1,6 +1,6 @@
 "use client";
 
-import { VendeoLogo } from "@/components/shared/vendeo-logo";
+import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 
@@ -11,9 +11,9 @@ const SECTIONS = [
   {
     num: "01",
     title: "Introduction",
-    content: `VendeoAI s'engage fermement Ã  protÃ©ger la vie privÃ©e de ses utilisateurs. Cette Politique explique de faÃ§on transparente comment nous collectons, utilisons, stockons et protÃ©geons vos donnÃ©es personnelles lorsque vous utilisez notre plateforme.
+    content: `prosendia s'engage fermement Ã  protÃ©ger la vie privÃ©e de ses utilisateurs. Cette Politique explique de faÃ§on transparente comment nous collectons, utilisons, stockons et protÃ©geons vos donnÃ©es personnelles lorsque vous utilisez notre plateforme.
 
-En utilisant VendeoAI, vous consentez aux traitements dÃ©crits ci-dessous. Si vous n'acceptez pas cette politique, veuillez cesser d'utiliser le service.`,
+En utilisant prosendia, vous consentez aux traitements dÃ©crits ci-dessous. Si vous n'acceptez pas cette politique, veuillez cesser d'utiliser le service.`,
   },
   {
     num: "02",
@@ -45,7 +45,7 @@ DonnÃ©es techniques
     title: "Utilisation des donnÃ©es",
     content: `Vos donnÃ©es nous permettent de :
 
-â¢ Fournir, maintenir et amÃ©liorer le service VendeoAI
+â¢ Fournir, maintenir et amÃ©liorer le service prosendia
 â¢ Traiter vos paiements via les opÃ©rateurs mobiles partenaires
 â¢ AmÃ©liorer nos modÃ¨les d'IA (uniquement avec des donnÃ©es anonymisÃ©es)
 â¢ Vous envoyer des notifications importantes et mises Ã  jour du service
@@ -119,12 +119,12 @@ AprÃ¨s suppression du compte, vos donnÃ©es personnelles sont effacÃ©es sou
 â¢ Opposition â vous opposer Ã  certains traitements
 â¢ Limitation â restreindre le traitement
 
-Pour exercer ces droits : privacy@vendeo.ai. RÃ©ponse garantie sous 30 jours. Vous pouvez Ã©galement saisir l'autoritÃ© de protection des donnÃ©es compÃ©tente.`,
+Pour exercer ces droits : privacy@prosendia.ai. RÃ©ponse garantie sous 30 jours. Vous pouvez Ã©galement saisir l'autoritÃ© de protection des donnÃ©es compÃ©tente.`,
   },
   {
     num: "09",
     title: "Cookies",
-    content: `VendeoAI utilise des cookies pour amÃ©liorer votre expÃ©rience :
+    content: `prosendia utilise des cookies pour amÃ©liorer votre expÃ©rience :
 
 Essentiels (obligatoires)
 â¢ Session et authentification
@@ -143,12 +143,12 @@ GÃ©rez vos prÃ©fÃ©rences dans les paramÃ¨tres de votre navigateur. Le re
   {
     num: "10",
     title: "Transferts internationaux",
-    content: `VendeoAI peut traiter vos donnÃ©es dans des pays diffÃ©rents du vÃ´tre. Pour tout transfert international, nous garantissons des protections adÃ©quates via des clauses contractuelles types approuvÃ©es ou des mÃ©canismes Ã©quivalents reconnus par les autoritÃ©s compÃ©tentes.`,
+    content: `prosendia peut traiter vos donnÃ©es dans des pays diffÃ©rents du vÃ´tre. Pour tout transfert international, nous garantissons des protections adÃ©quates via des clauses contractuelles types approuvÃ©es ou des mÃ©canismes Ã©quivalents reconnus par les autoritÃ©s compÃ©tentes.`,
   },
   {
     num: "11",
     title: "Mineurs",
-    content: `VendeoAI est exclusivement destinÃ© aux personnes Ã¢gÃ©es de 18 ans ou plus. Nous ne collectons sciemment aucune donnÃ©e concernant des mineurs. Si vous pensez qu'un enfant nous a fourni des informations, contactez-nous immÃ©diatement Ã  privacy@vendeo.ai pour suppression.`,
+    content: `prosendia est exclusivement destinÃ© aux personnes Ã¢gÃ©es de 18 ans ou plus. Nous ne collectons sciemment aucune donnÃ©e concernant des mineurs. Si vous pensez qu'un enfant nous a fourni des informations, contactez-nous immÃ©diatement Ã  privacy@prosendia.ai pour suppression.`,
   },
   {
     num: "12",
@@ -160,9 +160,9 @@ GÃ©rez vos prÃ©fÃ©rences dans les paramÃ¨tres de votre navigateur. Le re
     title: "Contact",
     content: `Pour toute question relative Ã  cette Politique de confidentialitÃ© :
 
-privacy@vendeo.ai â Protection des donnÃ©es & exercice des droits
-support@vendeo.ai â Support gÃ©nÃ©ral
-https://vendeo.ai â Site officiel`,
+privacy@prosendia.ai â Protection des donnÃ©es & exercice des droits
+support@prosendia.ai â Support gÃ©nÃ©ral
+https://prosendia.ai â Site officiel`,
   },
 ];
 
@@ -173,8 +173,8 @@ export default function PrivacyPage() {
       <div className="border-b border-border/40 bg-background/95 backdrop-blur-sm sticky top-0 z-10">
         <div className="w-full px-6 lg:px-16 py-4 flex items-center justify-between max-w-none">
           <Link href="/" className="flex items-center gap-2">
-            <VendeoLogo size={7} />
-            <span className="text-sm font-bold">VendeoAI</span>
+            <ProsendiaLogo size={7} />
+            <span className="text-sm font-bold">prosendia</span>
           </Link>
           <div className="flex items-center gap-3">
             <Link
@@ -210,7 +210,7 @@ export default function PrivacyPage() {
           <div className="mt-6 rounded-xl border border-border/50 bg-card/60 px-5 py-4">
             <p className="text-sm text-muted-foreground leading-relaxed">
               La protection de vos donnÃ©es personnelles est une prioritÃ©
-              absolue pour VendeoAI. Cette politique explique avec transparence
+              absolue pour prosendia. Cette politique explique avec transparence
               comment nous traitons vos informations.
             </p>
           </div>
@@ -247,7 +247,7 @@ export default function PrivacyPage() {
               Questions sur vos donnÃ©es ?
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              privacy@vendeo.ai
+              privacy@prosendia.ai
             </p>
           </div>
           <div className="flex gap-3 flex-wrap">

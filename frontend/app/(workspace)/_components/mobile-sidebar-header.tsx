@@ -7,7 +7,7 @@
 
 "use client";
 
-import { VendeoLogo } from "@/components/shared/vendeo-logo";
+import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { IconLayoutSidebarLeftExpand } from "@tabler/icons-react";
@@ -24,8 +24,8 @@ export function MobileSidebarHeader() {
     >
       {/* Logo */}
       <div className="flex items-center gap-2 min-w-0">
-        <VendeoLogo size={10} rounded="rounded-lg" />
-        <span className="text-xs font-bold tracking-tight">VendeoAI</span>
+        <ProsendiaLogo size={10} rounded="rounded-lg" />
+        <span className="text-xs font-bold tracking-tight">prosendia</span>
       </div>
 
       {/* Sidebar trigger button */}

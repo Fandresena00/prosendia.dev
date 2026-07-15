@@ -3,7 +3,7 @@
  *
  * NOTE IMPORTANTE : ce fichier utilise un petit wrapper fetch autonome
  * (credentials: "include" pour envoyer les cookies httpOnly cross-origin
- * vers vendeoia-api.fadevt.org). Si le projet a déjà un client HTTP partagé
+ * vers prosendiaia-api.fadevt.org). Si le projet a déjà un client HTTP partagé
  * (ex. une instance axios avec intercepteurs de refresh token, utilisée par
  * le auth.store.ts pour login/register/updateUser), remplace les appels
  * `request(...)` ci-dessous par ce client pour rester cohérent partout.

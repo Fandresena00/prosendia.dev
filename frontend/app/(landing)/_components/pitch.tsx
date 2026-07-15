@@ -86,7 +86,7 @@ function Solution() {
       ai: false,
     },
     {
-      who: "VendeoAI",
+      who: "prosendia",
       msg: "Oui ! Le produit est disponible. Livraison gratuite dès 50€ !",
       ai: true,
     },
@@ -97,7 +97,7 @@ function Solution() {
       <div className="mx-auto max-w-5xl">
         <SectionHeader
           label="La solution"
-          title="La solution : VendeoAI"
+          title="La solution : prosendia"
           sub="Un assistant IA qui répond automatiquement à vos clients Facebook, filtre les messages et vous alerte uniquement quand c'est nécessaire."
         />
         <motion.div
@@ -165,7 +165,7 @@ function Solution() {
             ))}
             <div className="ml-10 mt-1 flex items-center gap-1.5">
               <span className="text-[10px] text-muted-foreground">
-                VendeoAI rédige…
+                prosendia rédige…
               </span>
               {[0, 1, 2].map((i) => (
                 <span

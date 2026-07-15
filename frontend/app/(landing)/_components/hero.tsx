@@ -70,7 +70,7 @@ export function Hero({ onScrollTo }: HeroProps) {
           className="mx-auto mb-9 max-w-2xl text-center text-base leading-relaxed text-muted-foreground"
           {...heroFade(0.16)}
         >
-          VendeoAI répond automatiquement aux messages et commentaires
+          prosendia répond automatiquement aux messages et commentaires
           Facebook, filtre les messages et vous alerte uniquement quand
           c&apos;est nécessaire. Boostez vos ventes 24/7.
         </motion.p>

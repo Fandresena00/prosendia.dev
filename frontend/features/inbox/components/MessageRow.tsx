@@ -112,7 +112,7 @@ export function MessageRow({
         {!prevSame && !isClient && (
           <p className="text-[11px] text-muted-foreground mb-1 px-1 flex items-center gap-1">
             {isAI ? (
-              <><Bot className="h-3 w-3" /> VendeoAI</>
+              <><Bot className="h-3 w-3" /> prosendia</>
             ) : (
               <><User className="h-3 w-3" /> Vous</>
             )}

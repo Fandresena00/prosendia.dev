@@ -53,7 +53,7 @@ export function InboxInfoPanel({ wsStatus }: InboxInfoPanelProps) {
         {/* Header */}
         <div className="px-4 py-3 bg-primary/5 border-b border-border/40">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold">VendeoAI Inbox</p>
+            <p className="text-xs font-semibold">prosendia Inbox</p>
             <div className="flex items-center gap-1.5">
               <span className={`h-1.5 w-1.5 rounded-full ${wsDot}`} />
               <span className="text-[10px] text-muted-foreground">{wsLabel}</span>

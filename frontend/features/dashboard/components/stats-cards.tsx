@@ -204,13 +204,13 @@ export function ActivityTodayCard({ data }: { data: ActivityToday }) {
           })}
         </div>
 
-        {/* Message VendeoAI travaille pour toi */}
+        {/* Message prosendia travaille pour toi */}
         {(data.aiRepliesSent > 0 || data.messagesReceived > 0) && (
           <div className="mt-3 pt-3 border-t border-border/30">
             <p className="text-[10px] text-muted-foreground/70 text-center italic">
               {data.aiRepliesSent > 0
-                ? `VendeoAI a géré ${data.aiRepliesSent} message${data.aiRepliesSent > 1 ? "s" : ""} à votre place aujourd'hui`
-                : "VendeoAI surveille vos messages en temps réel"}
+                ? `prosendia a géré ${data.aiRepliesSent} message${data.aiRepliesSent > 1 ? "s" : ""} à votre place aujourd'hui`
+                : "prosendia surveille vos messages en temps réel"}
             </p>
           </div>
         )}

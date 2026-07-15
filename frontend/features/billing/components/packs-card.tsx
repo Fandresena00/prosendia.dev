@@ -173,7 +173,7 @@ export function PackCard({
         </div>
         <div className="p-5 pt-0">
           <Button className="w-full h-9 text-sm gap-2" variant="outline"
-            onClick={() => window.open("mailto:contact@vendeoai.com?subject=Offre%20Custom%20VendeoAI", "_blank")}>
+            onClick={() => window.open("mailto:contact@prosendia.com?subject=Offre%20Custom%20prosendia", "_blank")}>
             <Mail className="h-4 w-4" />
             Nous contacter
           </Button>

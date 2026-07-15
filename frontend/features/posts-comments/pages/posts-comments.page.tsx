@@ -239,7 +239,7 @@ export function PostsCommentsPage() {
                     Retirer ce post de la gestion ?
                   </AlertDialogTitle>
                   <AlertDialogDescription className="mt-1.5 text-xs leading-relaxed">
-                    VendeoAI n&apos;automatisera plus les réponses pour cette
+                    prosendia n&apos;automatisera plus les réponses pour cette
                     publication. La configuration IA et les commentaires
                     synchronisés seront retirés de l&apos;interface.
                   </AlertDialogDescription>
@@ -308,7 +308,7 @@ function NoConnectedPageCta() {
           </h1>
           <p className="text-sm text-muted-foreground leading-relaxed">
             La gestion des posts et des réponses automatiques aux commentaires
-            nécessite une page Facebook connectée à VendeoAI.
+            nécessite une page Facebook connectée à prosendia.
           </p>
         </div>
         <Button

@@ -1,6 +1,6 @@
 "use client";
 
-import { VendeoLogo } from "@/components/shared/vendeo-logo";
+import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 
@@ -11,14 +11,14 @@ const SECTIONS = [
   {
     num: "01",
     title: "Acceptation des conditions",
-    content: `En accédant à VendeoAI ou en créant un compte, vous acceptez sans réserve les présentes Conditions d'utilisation ainsi que notre Politique de confidentialité. Si vous n'acceptez pas ces conditions, veuillez cesser d'utiliser le service immédiatement.
+    content: `En accédant à prosendia ou en créant un compte, vous acceptez sans réserve les présentes Conditions d'utilisation ainsi que notre Politique de confidentialité. Si vous n'acceptez pas ces conditions, veuillez cesser d'utiliser le service immédiatement.
 
-Ces conditions constituent un accord juridiquement contraignant entre vous et VendeoAI. Nous nous réservons le droit de les modifier à tout moment ; les modifications entrent en vigueur dès leur publication. Votre usage continu du service après toute modification vaut acceptation des nouvelles conditions.`,
+Ces conditions constituent un accord juridiquement contraignant entre vous et prosendia. Nous nous réservons le droit de les modifier à tout moment ; les modifications entrent en vigueur dès leur publication. Votre usage continu du service après toute modification vaut acceptation des nouvelles conditions.`,
   },
   {
     num: "02",
     title: "Description du service",
-    content: `VendeoAI est une plateforme SaaS d'automatisation commerciale propulsée par l'intelligence artificielle, conçue pour les vendeurs utilisant Facebook. Elle permet de :
+    content: `prosendia est une plateforme SaaS d'automatisation commerciale propulsée par l'intelligence artificielle, conçue pour les vendeurs utilisant Facebook. Elle permet de :
 
 • Automatiser les réponses aux messages et commentaires Facebook
 • Gérer plusieurs pages Facebook depuis une interface centralisée
@@ -26,23 +26,23 @@ Ces conditions constituent un accord juridiquement contraignant entre vous et Ve
 • Configurer des règles, templates et scénarios de réponse personnalisés
 • Connecter un catalogue produits pour enrichir les interactions IA
 
-VendeoAI est fourni « en l'état ». Nous ne garantissons pas l'absence d'interruptions ni d'erreurs.`,
+prosendia est fourni « en l'état ». Nous ne garantissons pas l'absence d'interruptions ni d'erreurs.`,
   },
   {
     num: "03",
     title: "Création de compte",
-    content: `Pour accéder à VendeoAI, vous devez créer un compte en fournissant des informations exactes, complètes et à jour. Vous vous engagez à :
+    content: `Pour accéder à prosendia, vous devez créer un compte en fournissant des informations exactes, complètes et à jour. Vous vous engagez à :
 
 • Maintenir la confidentialité de vos identifiants
 • Assumer l'entière responsabilité de toute activité effectuée depuis votre compte
-• Notifier immédiatement VendeoAI de tout accès non autorisé
+• Notifier immédiatement prosendia de tout accès non autorisé
 
 Vous devez être âgé d'au moins 18 ans. Nous nous réservons le droit de suspendre ou de supprimer tout compte fournissant de fausses informations ou violant ces conditions.`,
   },
   {
     num: "04",
     title: "Utilisation acceptable",
-    content: `Vous acceptez d'utiliser VendeoAI uniquement à des fins légales. Les comportements suivants sont expressément interdits :
+    content: `Vous acceptez d'utiliser prosendia uniquement à des fins légales. Les comportements suivants sont expressément interdits :
 
 • Envoi de communications non sollicitées (spam)
 • Violation des conditions d'utilisation de Facebook / Meta
@@ -56,10 +56,10 @@ Toute violation entraîne la résiliation immédiate du compte et peut donner li
   {
     num: "05",
     title: "Intégration Facebook & Meta",
-    content: `VendeoAI s'appuie sur l'API officielle de Meta Platforms, Inc. En utilisant notre service, vous reconnaissez que :
+    content: `prosendia s'appuie sur l'API officielle de Meta Platforms, Inc. En utilisant notre service, vous reconnaissez que :
 
 • Votre utilisation est également soumise aux Conditions et à la Politique de données de Meta
-• VendeoAI agit en qualité de sous-traitant pour les données Facebook transmises
+• prosendia agit en qualité de sous-traitant pour les données Facebook transmises
 • Nous ne sommes pas affiliés à Meta Platforms, Inc.
 • L'accès à l'API peut être modifié ou révoqué par Meta à tout moment
 
@@ -68,14 +68,14 @@ Vous êtes seul responsable du respect des politiques de Meta relatives à l'usa
   {
     num: "06",
     title: "Propriété intellectuelle",
-    content: `L'ensemble des composants de VendeoAI — logiciel, interface, algorithmes IA, marques et logos — sont la propriété exclusive de VendeoAI ou de ses concédants de licence. Les présentes conditions ne vous confèrent aucun droit de propriété intellectuelle sur le service.
+    content: `L'ensemble des composants de prosendia — logiciel, interface, algorithmes IA, marques et logos — sont la propriété exclusive de prosendia ou de ses concédants de licence. Les présentes conditions ne vous confèrent aucun droit de propriété intellectuelle sur le service.
 
 Vous conservez la propriété de vos données, contenus et catalogues. En utilisant le service, vous nous accordez une licence limitée, non exclusive et révocable pour les traiter dans le seul but de fournir le service.`,
   },
   {
     num: "07",
     title: "Tarification et paiements",
-    content: `VendeoAI propose différents plans tarifaires accessibles depuis notre page de facturation. Les paiements sont traités via MVola ou Orange Money. En souscrivant à un plan payant :
+    content: `prosendia propose différents plans tarifaires accessibles depuis notre page de facturation. Les paiements sont traités via MVola ou Orange Money. En souscrivant à un plan payant :
 
 • Les paiements sont manuels — aucun renouvellement automatique
 • Aucun remboursement n'est accordé pour les périodes partiellement utilisées
@@ -87,7 +87,7 @@ Le plan gratuit est soumis aux limitations décrites sur notre site.`,
   {
     num: "08",
     title: "Limitation de responsabilité",
-    content: `Dans les limites autorisées par la loi applicable, VendeoAI ne pourra être tenu responsable de dommages indirects, accessoires, spéciaux ou consécutifs, incluant la perte de profits, de données ou d'opportunités commerciales.
+    content: `Dans les limites autorisées par la loi applicable, prosendia ne pourra être tenu responsable de dommages indirects, accessoires, spéciaux ou consécutifs, incluant la perte de profits, de données ou d'opportunités commerciales.
 
 Notre responsabilité totale envers vous ne pourra excéder le montant payé pour le service au cours des trois (3) derniers mois.
 
@@ -96,7 +96,7 @@ Nous ne garantissons pas l'exactitude des réponses générées par l'IA. Vous �
   {
     num: "09",
     title: "Résiliation",
-    content: `Vous pouvez résilier votre compte à tout moment depuis les paramètres de votre profil. VendeoAI se réserve le droit de suspendre ou de résilier votre accès sans préavis en cas de :
+    content: `Vous pouvez résilier votre compte à tout moment depuis les paramètres de votre profil. prosendia se réserve le droit de suspendre ou de résilier votre accès sans préavis en cas de :
 
 • Violation des présentes conditions
 • Non-paiement des sommes dues
@@ -108,18 +108,18 @@ Suite à la résiliation, vos données seront supprimées dans un délai de 30 j
   {
     num: "10",
     title: "Droit applicable & litiges",
-    content: `Les présentes conditions sont régies par le droit du pays d'enregistrement de VendeoAI. Tout litige sera soumis à la juridiction exclusive des tribunaux compétents.
+    content: `Les présentes conditions sont régies par le droit du pays d'enregistrement de prosendia. Tout litige sera soumis à la juridiction exclusive des tribunaux compétents.
 
-Avant toute procédure judiciaire, les parties s'engagent à tenter une résolution amiable par médiation. Pour toute réclamation : legal@vendeo.ai`,
+Avant toute procédure judiciaire, les parties s'engagent à tenter une résolution amiable par médiation. Pour toute réclamation : legal@prosendia.ai`,
   },
   {
     num: "11",
     title: "Contact",
     content: `Pour toute question relative aux présentes Conditions d'utilisation :
 
-legal@vendeo.ai — Questions juridiques et contractuelles
-support@vendeo.ai — Support général
-https://vendeo.ai — Site officiel`,
+legal@prosendia.ai — Questions juridiques et contractuelles
+support@prosendia.ai — Support général
+https://prosendia.ai — Site officiel`,
   },
 ];
 
@@ -130,8 +130,8 @@ export default function TermsPage() {
       <div className="border-b border-border/40 bg-background/95 backdrop-blur-sm sticky top-0 z-10">
         <div className="w-full px-6 lg:px-16 py-4 flex items-center justify-between max-w-none">
           <Link href="/" className="flex items-center gap-2">
-            <VendeoLogo size={7} />
-            <span className="text-sm font-bold">VendeoAI</span>
+            <ProsendiaLogo size={7} />
+            <span className="text-sm font-bold">prosendia</span>
           </Link>
           <div className="flex items-center gap-3">
             <Link
@@ -159,14 +159,14 @@ export default function TermsPage() {
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight leading-tight">
             Règles d&apos;utilisation
             <br />
-            de VendeoAI
+            de prosendia
           </h1>
           <p className="text-muted-foreground mt-4 text-lg">
             Dernière mise à jour : {LAST_UPDATED}
           </p>
           <div className="mt-6 rounded-xl border border-border/50 bg-card/60 px-5 py-4">
             <p className="text-sm text-muted-foreground leading-relaxed">
-              En créant un compte ou en utilisant VendeoAI, vous acceptez les
+              En créant un compte ou en utilisant prosendia, vous acceptez les
               présentes conditions. Lisez-les attentivement avant d&apos;accéder
               au service.
             </p>
@@ -204,7 +204,7 @@ export default function TermsPage() {
               Des questions sur ces conditions ?
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Contactez-nous à legal@vendeo.ai
+              Contactez-nous à legal@prosendia.ai
             </p>
           </div>
           <div className="flex gap-3 flex-wrap">

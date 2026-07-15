@@ -199,8 +199,8 @@ export default function NotFound() {
 
       {/* ── Footer ── */}
       <p style={{ marginTop: "2.25rem", fontSize: "10px", color: "oklch(0.65 0.012 286)", letterSpacing: "0.02em" }}>
-        VendeoAI · Problème persistant ?{" "}
-        <a href="mailto:support@vendeo.ai" style={{ color: "oklch(0.52 0.24 256)", textDecoration: "none" }}>
+        prosendia · Problème persistant ?{" "}
+        <a href="mailto:support@prosendia.ai" style={{ color: "oklch(0.52 0.24 256)", textDecoration: "none" }}>
           Contacter le support
         </a>
       </p>

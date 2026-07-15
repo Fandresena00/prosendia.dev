@@ -110,7 +110,7 @@ export function AddPresetDialog({ open, onClose, onAdd }: AddPresetDialogProps) 
                 Images stockées sur le serveur
               </p>
               <p className="text-muted-foreground leading-relaxed">
-                Les images de référence sont hébergées par VendeoAI et envoyées
+                Les images de référence sont hébergées par prosendia et envoyées
                 directement sur Facebook. Elles restent disponibles même après fermeture du navigateur.
               </p>
             </div>

@@ -6,7 +6,7 @@
  */
 
 import { ThemeSwitcher } from "@/components/shared/theme-switcher";
-import { VendeoLogo } from "@/components/shared/vendeo-logo";
+import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
 import { Button } from "@/components/ui/button";
 import { EASE, fadeUp } from "@/lib/motion";
 import { motion } from "framer-motion";
@@ -61,8 +61,8 @@ export default function ResetPasswordPage() {
 
       <div className="relative z-10 w-full max-w-[360px]">
         <motion.div {...fadeUp(0)} className="mb-8 flex items-center gap-2">
-          <VendeoLogo size={7} />
-          <span className="text-sm font-bold">VendeoAI</span>
+          <ProsendiaLogo size={7} />
+          <span className="text-sm font-bold">prosendia</span>
         </motion.div>
 
         {!submitted ? (

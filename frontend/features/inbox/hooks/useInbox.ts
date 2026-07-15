@@ -16,7 +16,7 @@
  * CHANGES (realtime upgrade):
  *   - useInboxSse → useInboxWs (Socket.io). sseStatus renamed wsStatus.
  *   - aiTypingConvIds tracks which conversations currently show the
- *     "VendeoAI écrit…" bubble — set on ai_typing_start, cleared on
+ *     "prosendia écrit…" bubble — set on ai_typing_start, cleared on
  *     ai_typing_stop, on the next new_message for that conversation, or
  *     after a 20s safety timeout (in case the AI worker never confirms).
  *   - newMessageIds tracks message ids that just arrived in realtime, for a

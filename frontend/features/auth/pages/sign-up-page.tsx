@@ -17,7 +17,7 @@
  */
 
 import { ThemeSwitcher } from "@/components/shared/theme-switcher";
-import { VendeoLogo } from "@/components/shared/vendeo-logo";
+import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -212,7 +212,7 @@ export default function SignUpPage() {
     clearError();
     try {
       await verifyEmail({ email: pendingEmail, code });
-      toast.success("Compte créé ! Bienvenue sur VendeoAI 🎉");
+      toast.success("Compte créé ! Bienvenue sur prosendia 🎉");
       router.push("/dashboard");
     } catch {
       setCode("");
@@ -262,8 +262,8 @@ export default function SignUpPage() {
       <div className="relative z-10 flex flex-1 items-center justify-center p-6 sm:p-10">
         <div className="w-full max-w-90">
           <motion.div {...fadeUp(0)} className="mb-7 flex items-center gap-2">
-            <VendeoLogo size={7} />
-            <span className="text-sm font-bold">VendeoAI</span>
+            <ProsendiaLogo size={7} />
+            <span className="text-sm font-bold">prosendia</span>
           </motion.div>
 
           <AnimatePresence mode="wait">
@@ -321,7 +321,7 @@ export default function SignUpPage() {
                       </p>
                     ) : (
                       <p className="text-[11px] text-muted-foreground/60">
-                        Visible dans votre espace VendeoAI
+                        Visible dans votre espace prosendia
                       </p>
                     )}
                   </div>
@@ -581,7 +581,7 @@ export default function SignUpPage() {
             répondez moins
           </h2>
           <p className="text-sm text-muted-foreground">
-            VendeoAI répond instantanément à vos messages et commentaires
+            prosendia répond instantanément à vos messages et commentaires
             Facebook — 24h/24, 7j/7.
           </p>
         </div>

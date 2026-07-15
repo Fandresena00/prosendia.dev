@@ -1,6 +1,6 @@
 {
-  "name": "VendeoAI — Automatisez vos ventes Facebook",
-  "short_name": "VendeoAI",
+  "name": "prosendia — Automatisez vos ventes Facebook",
+  "short_name": "prosendia",
   "description": "Assistant IA pour automatiser vos messages et commentaires Facebook. Vendez plus, travaillez moins.",
   "start_url": "/",
   "id": "/",
@@ -19,14 +19,14 @@
       "sizes": "1280x800",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "Tableau de bord VendeoAI"
+      "label": "Tableau de bord prosendia"
     },
     {
       "src": "/screenshot-inbox.png",
       "sizes": "390x844",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "Inbox VendeoAI"
+      "label": "Inbox prosendia"
     }
   ],
   "icons": [

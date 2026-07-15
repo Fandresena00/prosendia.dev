@@ -1,4 +1,5 @@
 import { Toaster } from "@/components/ui/sonner";
+import { APP_NAME } from "@/lib/utils";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Metadata, Viewport } from "next";
@@ -22,14 +23,13 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL("https://vendeo.ai"),
   title: {
-    default: "VendeoAI — Automatisez vos ventes Facebook avec l'IA",
-    template: "%s | VendeoAI",
+    default: `${APP_NAME} — Automatisez vos ventes Facebook avec l'IA`,
+    template: `%s | ${APP_NAME}`,
   },
-  description:
-    "VendeoAI répond automatiquement à vos messages et commentaires Facebook 24h/24. Augmentez vos ventes, gérez plusieurs pages et convertissez plus de clients sans effort.",
-  applicationName: "VendeoAI",
+  description: `${APP_NAME} répond automatiquement à vos messages et commentaires Facebook 24h/24. Augmentez vos ventes, gérez plusieurs pages et convertissez plus de clients sans effort.`,
+  applicationName: APP_NAME,
   keywords: [
-    "VendeoAI",
+    APP_NAME,
     "IA Facebook",
     "automatisation Facebook",
     "chatbot Messenger",
@@ -42,9 +42,9 @@ export const metadata: Metadata = {
     "bot Facebook vente",
     "IA vente en ligne",
   ],
-  authors: [{ name: "VendeoAI", url: "https://vendeo.ai" }],
-  creator: "VendeoAI",
-  publisher: "VendeoAI",
+  authors: [{ name: APP_NAME, url: "https://vendeo.ai" }],
+  creator: APP_NAME,
+  publisher: APP_NAME,
   category: "technology",
   alternates: {
     canonical: "https://vendeo.ai",
@@ -58,16 +58,15 @@ export const metadata: Metadata = {
     locale: "fr_FR",
     alternateLocale: ["en_US"],
     url: "https://vendeo.ai",
-    siteName: "VendeoAI",
-    title: "VendeoAI — Vos ventes Facebook sur pilote automatique",
-    description:
-      "Ne manquez plus aucun client. VendeoAI répond instantanément à vos messages et commentaires Facebook — 24h/24, 7j/7. Vendez plus, travaillez moins.",
+    siteName: APP_NAME,
+    title: `${APP_NAME} — Vos ventes Facebook sur pilote automatique`,
+    description: `Ne manquez plus aucun client. ${APP_NAME} répond instantanément à vos messages et commentaires Facebook — 24h/24, 7j/7. Vendez plus, travaillez moins.`,
     images: [
       {
         url: "/og-image.png",
         width: 1200,
         height: 630,
-        alt: "VendeoAI — Assistant IA pour les ventes Facebook",
+        alt: `${APP_NAME} — Assistant IA pour les ventes Facebook`,
         type: "image/png",
       },
     ],
@@ -76,7 +75,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     site: "@vendeoai",
     creator: "@vendeoai",
-    title: "VendeoAI — IA pour vos ventes Facebook",
+    title: `${APP_NAME} — IA pour vos ventes Facebook`,
     description:
       "Automatisez vos réponses Facebook et boostez vos ventes avec l'IA. Essai gratuit, sans carte bancaire.",
     images: ["/og-image.png"],

@@ -11,7 +11,7 @@ export function ChatDemo() {
       ai: false,
     },
     {
-      who: "VendeoAI",
+      who: "prosendia",
       msg: "Oui ! Disponible en rouge et bleu. Livraison 48h.",
       ai: true,
     },
@@ -90,7 +90,7 @@ export function ChatDemo() {
             />
           ))}
           <span className="ml-1 text-[10px] text-muted-foreground">
-            VendeoAI répond…
+            prosendia répond…
           </span>
         </motion.div>
       </div>

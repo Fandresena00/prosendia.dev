@@ -446,7 +446,7 @@ function PostPreview({
             </div>
           </div>
 
-          {/* What VendeoAI will do */}
+          {/* What prosendia will do */}
           <div className="rounded-xl border border-primary/15 bg-primary/5 px-4 py-3 space-y-2">
             <p className="text-[11px] font-bold text-primary uppercase tracking-wider">
               Ce qui sera activé

@@ -11,7 +11,7 @@
  * NOTE sur les liens Facebook :
  *   facebookProfileUrl contient des URLs de profils privés qui ne sont pas
  *   accessibles publiquement. On utilise conversationUrl (inbox interne) ou
- *   postUrl à la place. Le lien "Voir conversation" ouvre l'inbox VendeoAI.
+ *   postUrl à la place. Le lien "Voir conversation" ouvre l'inbox prosendia.
  */
 "use client";
 

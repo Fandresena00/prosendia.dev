@@ -10,7 +10,7 @@
  * If forged, the user sees a protected page but every API call returns 401.
  */
 
-export const SESSION_COOKIE_NAME = "vendeo.session" as const;
+export const SESSION_COOKIE_NAME = "prosendia.session" as const;
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7; // 7 days
 

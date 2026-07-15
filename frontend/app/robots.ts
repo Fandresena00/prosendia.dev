@@ -1,7 +1,7 @@
 import { MetadataRoute } from "next";
 
 export default function robots(): MetadataRoute.Robots {
-  const base = "https://vendeo.ai";
+  const base = "https://prosendia.ai";
 
   return {
     rules: [

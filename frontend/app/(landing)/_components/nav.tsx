@@ -1,7 +1,7 @@
 "use client";
 
 import { ThemeSwitcher } from "@/components/shared/theme-switcher";
-import { VendeoLogo } from "@/components/shared/vendeo-logo";
+import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
 import Link from "next/link";
 
 interface NavProps {
@@ -15,8 +15,8 @@ export function Nav({ onScrollTo }: NavProps) {
       <div className="absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/30 to-transparent" />
       <div className="mx-auto flex h-13 max-w-6xl items-center justify-between px-6">
         <div className="flex items-center gap-2">
-          <VendeoLogo size={7} rounded="rounded-lg" />
-          <span className="text-sm font-bold tracking-tight">VendeoAI</span>
+          <ProsendiaLogo size={7} rounded="rounded-lg" />
+          <span className="text-sm font-bold tracking-tight">prosendia</span>
         </div>
 
         <div className="hidden items-center gap-7 md:flex">

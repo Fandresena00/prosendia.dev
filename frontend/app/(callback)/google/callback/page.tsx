@@ -8,14 +8,14 @@
  * Deux cas d'usage :
  *
  * ── CAS 1 (recommandé, simple) ───────────────────────────────────────────────
- * GOOGLE_CALLBACK_URL = https://vendeoia-api.fadevt.org/auth/google/callback
+ * GOOGLE_CALLBACK_URL = https://prosendiaia-api.fadevt.org/auth/google/callback
  * Le backend set les cookies PUIS redirige directement vers /dashboard.
  * → Cette page n'est jamais affichée en succès.
  * → Elle s'affiche uniquement si ?error=google_auth_failed (échec Google).
  *
  * ── CAS 2 (alternatif) ───────────────────────────────────────────────────────
  * Si tu veux que le backend redirige vers cette page frontend :
- * GOOGLE_CALLBACK_URL = https://vendeo-ai.fadevt.org/google-callback
+ * GOOGLE_CALLBACK_URL = https://prosendia-ai.fadevt.org/google-callback
  * → Le backend doit retourner un token temporaire dans l'URL.
  * → Cette page appelle initializeAuth() pour hydrater le store.
  *
@@ -24,7 +24,7 @@
  *   /sign-in?error=google_auth_failed → affiche l'erreur sur la page sign-in
  */
 
-import { VendeoLogo } from "@/components/shared/vendeo-logo";
+import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
 import { useAuthStore } from "@/features/auth/store/auth.store";
 import { EASE } from "@/lib/motion";
 import { motion } from "framer-motion";
@@ -67,7 +67,7 @@ export default function GoogleCallbackPage() {
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.4, ease: EASE }}
       >
-        <VendeoLogo size={10} />
+        <ProsendiaLogo size={10} />
       </motion.div>
 
       <motion.div

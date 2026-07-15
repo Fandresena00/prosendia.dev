@@ -288,7 +288,7 @@ export interface InboxUiPrefs {
   textDensity:    "normal" | "dense" | "spacious";
 }
 
-const UI_PREFS_KEY = 'vendeoai:inbox:uiprefs';
+const UI_PREFS_KEY = 'prosendia:inbox:uiprefs';
 
 export function loadUiPrefs(): InboxUiPrefs {
   try {

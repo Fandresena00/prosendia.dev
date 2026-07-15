@@ -37,7 +37,7 @@ export function SignOutDialog({
             Se déconnecter
           </AlertDialogTitle>
           <AlertDialogDescription>
-            Êtes-vous sûr de vouloir vous déconnecter de VendeoAI ? Vos données
+            Êtes-vous sûr de vouloir vous déconnecter de prosendia ? Vos données
             resteront sauvegardées.
           </AlertDialogDescription>
         </AlertDialogHeader>

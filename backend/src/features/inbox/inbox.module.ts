@@ -7,26 +7,38 @@
  * CHANGES (realtime upgrade):
  *   - InboxWsGateway replaces InboxSseController as the realtime transport
  *     (see gateways/inbox-sse.gateway.ts header for the rollback path).
- *   - AiSuggestionService added — powers the reply-suggestion button, called
- *     from InboxWsGateway's `request_ai_suggestion` handler.
- *   - JwtService is required by InboxWsGateway to authenticate the WebSocket
- *     handshake. This assumes JwtModule is registered globally at the
- *     AppModule level (the common pattern already used for the REST JWT
- *     guards) — if it isn't, add `JwtModule.register({...})` to the imports
- *     array below with the same secret as JwtAuthGuard.
+ *   - AiModule is now imported so InboxWsGateway can inject AiSuggestionService
+ *     (features/ai/services/ai-suggestion.service.ts) — it lives there, not
+ *     here, so it can reuse OpenRouterClient / PromptBuilderService /
+ *     CreditService instead of duplicating that wiring. No circular
+ *     dependency: AiModule only imports InboxEventsModule (the lean shared
+ *     module), never InboxModule itself.
+ *   - JwtModule.registerAsync — CONFIRMED NEEDED: booting the app threw
+ *     `UnknownDependenciesException` for InboxWsGateway's JwtService, which
+ *     means JwtModule is NOT global in this app (unlike ConfigModule, which
+ *     clearly is — every feature module injects ConfigService without
+ *     importing ConfigModule anywhere). Registered here with the exact same
+ *     config key (`jwtSecret`) JwtStrategy uses via
+ *     `configService.getOrThrow<string>('jwtSecret')`, so token
+ *     verification is guaranteed consistent between the REST 'jwt' Passport
+ *     strategy and this WebSocket gateway's manual check. No new dependency
+ *     — @nestjs/jwt is already installed (JwtStrategy already depends on
+ *     the underlying `jsonwebtoken` it wraps).
  */
 
 import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import * as path from 'path';
 import { PrismaModule } from '../../database/prisma.module.js';
+import { AiModule } from '../ai/ai.module.js';
 import { FacebookModule } from '../facebook/facebook.module.js';
 import { TokenEncryptionService } from '../facebook/security/token-encryption.service.js';
 import { QueueModule } from '../queue/queue.module.js';
 import { InboxController } from './controllers/inbox.controller.js';
 import { InboxWsGateway } from './gateways/inbox-ws.gateway.js';
 import { InboxEventsModule } from './inbox-events.module.js';
-import { AiSuggestionService } from './services/ai-suggestion.service.js';
 import { CacheCleanupService } from './services/cache-cleanup.service.js';
 import { ConversationService } from './services/conversation.service.js';
 import { InboxSyncSchedulerService } from './services/inbox-sync-scheduler.service.js';
@@ -43,6 +55,13 @@ import { UploadService } from './services/upload.service.js';
     FacebookModule,
     QueueModule,
     InboxEventsModule,
+    AiModule, // ← exposes AiSuggestionService to InboxWsGateway
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.getOrThrow<string>('jwtSecret'),
+      }),
+    }),
     ServeStaticModule.forRoot({
       rootPath: path.join(process.cwd(), 'uploads', 'inbox', 'references'),
       serveRoot: '/inbox/uploads',
@@ -63,7 +82,6 @@ import { UploadService } from './services/upload.service.js';
     TempFileCleanupService,
     TempUploadService,
     MediaDownloadService,
-    AiSuggestionService,
     InboxWsGateway,
   ],
   exports: [InboxSyncService],

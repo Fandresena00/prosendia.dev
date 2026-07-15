@@ -7,7 +7,7 @@
 import BillingPage from "@/features/billing/pages/billing-page";
 
 export const metadata = {
-  title: "Facturation — VendeoAI",
+  title: "Facturation — prosendia",
   description: "Gérez votre abonnement et votre consommation de crédits IA.",
 };
 
