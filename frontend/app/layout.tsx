@@ -21,7 +21,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://vendeo.ai"),
+  metadataBase: new URL("https://prosendia.genforus.com"),
   title: {
     default: `${APP_NAME} — Automatisez vos ventes Facebook avec l'IA`,
     template: `%s | ${APP_NAME}`,
@@ -42,22 +42,22 @@ export const metadata: Metadata = {
     "bot Facebook vente",
     "IA vente en ligne",
   ],
-  authors: [{ name: APP_NAME, url: "https://vendeo.ai" }],
+  authors: [{ name: APP_NAME, url: "https://prosendia.ai" }],
   creator: APP_NAME,
   publisher: APP_NAME,
   category: "technology",
   alternates: {
-    canonical: "https://vendeo.ai",
+    canonical: "https://prosendia.ai",
     languages: {
-      "fr-FR": "https://vendeo.ai",
-      "en-US": "https://vendeo.ai/en",
+      "fr-FR": "https://prosendia.ai",
+      "en-US": "https://prosendia.ai/en",
     },
   },
   openGraph: {
     type: "website",
     locale: "fr_FR",
     alternateLocale: ["en_US"],
-    url: "https://vendeo.ai",
+    url: "https://prosendia.ai",
     siteName: APP_NAME,
     title: `${APP_NAME} — Vos ventes Facebook sur pilote automatique`,
     description: `Ne manquez plus aucun client. ${APP_NAME} répond instantanément à vos messages et commentaires Facebook — 24h/24, 7j/7. Vendez plus, travaillez moins.`,
@@ -73,8 +73,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    site: "@vendeoai",
-    creator: "@vendeoai",
+    site: "@prosendia",
+    creator: "@prosendia",
     title: `${APP_NAME} — IA pour vos ventes Facebook`,
     description:
       "Automatisez vos réponses Facebook et boostez vos ventes avec l'IA. Essai gratuit, sans carte bancaire.",
@@ -96,20 +96,20 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       {
-        url: "/logo/vendeoai_logo_iconic_dark.svg",
+        url: "/logo/prosendia_logo_iconic_dark.svg",
         type: "image/svg+xml",
       },
       {
-        url: "/logo/vendeoai_logo_iconic_dark.png",
+        url: "/logo/prosendia_logo_iconic_dark.png",
         type: "image/png",
         sizes: "1024x1024",
       },
       { url: "/favicon.ico", sizes: "any" },
     ],
-    shortcut: "/logo/vendeoai_logo_iconic_dark.png",
+    shortcut: "/logo/prosendia_logo_iconic_dark.png",
     apple: [
       {
-        url: "/logo/vendeoai_logo_iconic_dark.png",
+        url: "/logo/prosendia_logo_iconic_dark.png",
         sizes: "1024x1024",
         type: "image/png",
       },
@@ -119,7 +119,7 @@ export const metadata: Metadata = {
   verification: { google: "your-google-site-verification-code" },
   other: {
     "msapplication-TileColor": "#020617",
-    "msapplication-TileImage": "/logo/vendeoai_logo_iconic_dark.png",
+    "msapplication-TileImage": "/logo/prosendia_logo_iconic_dark.png",
     "msapplication-config": "/browserconfig.xml",
   },
 };
@@ -139,13 +139,13 @@ export default function RootLayout({
         {/* Adaptive SVG favicon — light/dark media query */}
         <link
           rel="icon"
-          href="/logo/vendeoai_logo_iconic_light.svg"
+          href="/logo/prosendia_logo_iconic_light.svg"
           media="(prefers-color-scheme: light)"
           type="image/svg+xml"
         />
         <link
           rel="icon"
-          href="/logo/vendeoai_logo_iconic_dark.svg"
+          href="/logo/prosendia_logo_iconic_dark.svg"
           media="(prefers-color-scheme: dark)"
           type="image/svg+xml"
         />
