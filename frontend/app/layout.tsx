@@ -42,22 +42,22 @@ export const metadata: Metadata = {
     "bot Facebook vente",
     "IA vente en ligne",
   ],
-  authors: [{ name: APP_NAME, url: "https://prosendia.ai" }],
+  authors: [{ name: APP_NAME, url: "https://prosendia.genforus.com" }],
   creator: APP_NAME,
   publisher: APP_NAME,
   category: "technology",
   alternates: {
-    canonical: "https://prosendia.ai",
+    canonical: "https://prosendia.genforus.com",
     languages: {
-      "fr-FR": "https://prosendia.ai",
-      "en-US": "https://prosendia.ai/en",
+      "fr-FR": "https://prosendia.genforus.com",
+      "en-US": "https://prosendia.genforus.com/en",
     },
   },
   openGraph: {
     type: "website",
     locale: "fr_FR",
     alternateLocale: ["en_US"],
-    url: "https://prosendia.ai",
+    url: "https://prosendia.genforus.com",
     siteName: APP_NAME,
     title: `${APP_NAME} — Vos ventes Facebook sur pilote automatique`,
     description: `Ne manquez plus aucun client. ${APP_NAME} répond instantanément à vos messages et commentaires Facebook — 24h/24, 7j/7. Vendez plus, travaillez moins.`,
@@ -93,24 +93,28 @@ export const metadata: Metadata = {
       "max-snippet": -1,
     },
   },
+  // Single transparent-background mark now covers every context (light,
+  // dark, iOS, Android) — no more separate dark/light SVG pair to keep
+  // in sync.
   icons: {
     icon: [
+      { url: "/favicon.ico", sizes: "any" },
       {
-        url: "/logo/prosendia_logo_iconic_dark.svg",
-        type: "image/svg+xml",
+        url: "/logo/prosendia-favicon-32.png",
+        type: "image/png",
+        sizes: "32x32",
       },
       {
-        url: "/logo/prosendia_logo_iconic_dark.png",
+        url: "/logo/prosendia-logo-1024.png",
         type: "image/png",
         sizes: "1024x1024",
       },
-      { url: "/favicon.ico", sizes: "any" },
     ],
-    shortcut: "/logo/prosendia_logo_iconic_dark.png",
+    shortcut: "/favicon.ico",
     apple: [
       {
-        url: "/logo/prosendia_logo_iconic_dark.png",
-        sizes: "1024x1024",
+        url: "/logo/prosendia-apple-touch-icon.png",
+        sizes: "180x180",
         type: "image/png",
       },
     ],
@@ -119,7 +123,7 @@ export const metadata: Metadata = {
   verification: { google: "your-google-site-verification-code" },
   other: {
     "msapplication-TileColor": "#020617",
-    "msapplication-TileImage": "/logo/prosendia_logo_iconic_dark.png",
+    "msapplication-TileImage": "/logo/prosendia-logo-1024.png",
     "msapplication-config": "/browserconfig.xml",
   },
 };
@@ -135,19 +139,6 @@ export default function RootLayout({
           rel="preconnect"
           href="https://fonts.gstatic.com"
           crossOrigin="anonymous"
-        />
-        {/* Adaptive SVG favicon — light/dark media query */}
-        <link
-          rel="icon"
-          href="/logo/prosendia_logo_iconic_light.svg"
-          media="(prefers-color-scheme: light)"
-          type="image/svg+xml"
-        />
-        <link
-          rel="icon"
-          href="/logo/prosendia_logo_iconic_dark.svg"
-          media="(prefers-color-scheme: dark)"
-          type="image/svg+xml"
         />
       </head>
       <body className="min-h-full flex flex-col">

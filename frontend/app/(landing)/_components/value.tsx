@@ -63,7 +63,8 @@ function Benefits() {
             <motion.div
               key={title}
               variants={fadeUpVariant}
-              className="rounded-2xl border border-border/50 bg-card/60 p-5 backdrop-blur-sm"
+              whileHover={{ y: -3, transition: { duration: 0.2 } }}
+              className="rounded-2xl border border-border/50 bg-card/60 p-5 backdrop-blur-sm transition-colors hover:border-primary/25"
             >
               <div
                 className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl"

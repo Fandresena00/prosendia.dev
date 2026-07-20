@@ -24,7 +24,7 @@ export function Features() {
         />
 
         <motion.div
-          className="grid gap-3 md:grid-cols-2 lg:grid-cols-3"
+          className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"
           variants={stagger(0.07)}
           initial="hidden"
           whileInView="visible"

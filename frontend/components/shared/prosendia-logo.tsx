@@ -1,6 +1,5 @@
 "use client";
 
-import { APP_NAME } from "@/lib/utils";
 import Image from "next/image";
 
 interface ProsendiaLogoProps {
@@ -8,30 +7,26 @@ interface ProsendiaLogoProps {
   rounded?: string;
 }
 
+// Single transparent-background mark — the icon's own blue → teal gradient
+// already reads with enough contrast on both the light and dark surface,
+// so we no longer need to ship and switch between two separate SVGs.
 export function ProsendiaLogo({
   size = 7,
   rounded = "rounded-lg",
 }: ProsendiaLogoProps) {
   const px = size * 4;
   return (
-    <div className="relative shrink-0" style={{ width: px, height: px }}>
-      {/* Dark mode logo */}
+    <div
+      className={`relative shrink-0 ${rounded} overflow-hidden`}
+      style={{ width: px, height: px }}
+    >
       <Image
-        src="/logo/prosendia_logo_iconic_dark.svg"
-        loading="eager"
+        src="/logo/prosendia-logo.png"
         alt="prosendia"
         fill
-        className={`h-8 w-8 ${rounded} hidden dark:block`}
-        style={{ boxShadow: "0 0 14px oklch(0.52 0.24 256 / 28%)" }}
-      />
-      {/* Light mode logo */}
-      <Image
-        src="/logo/prosendia_logo_iconic_light.svg"
-        alt="prosendia"
         loading="eager"
-        fill
-        className={`h-8 w-8 ${rounded} block dark:hidden`}
-        style={{ boxShadow: "0 0 14px oklch(0.52 0.24 256 / 18%)" }}
+        sizes={`${px}px`}
+        className="object-contain drop-shadow-[0_0_10px_oklch(0.52_0.24_256_/_25%)]"
       />
     </div>
   );

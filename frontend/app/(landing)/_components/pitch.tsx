@@ -52,7 +52,8 @@ function Problem() {
             <motion.div
               key={title}
               variants={fadeUpVariant}
-              className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-6 backdrop-blur-sm"
+              whileHover={{ y: -3, transition: { duration: 0.2 } }}
+              className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-6 backdrop-blur-sm transition-colors hover:border-rose-500/35"
             >
               <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/10">
                 <Icon className="h-4.5 w-4.5 text-rose-400" />
@@ -192,8 +193,8 @@ function HowItWorks() {
     },
     {
       n: "02",
-      title: "Configurez vos produits",
-      desc: "Ajoutez vos produits, prix et informations pour que l'IA puisse répondre avec précision",
+      title: "Décrivez votre activité",
+      desc: "Présentez vos produits ou services, vos tarifs et vos informations clés pour que l'IA réponde avec la précision et le ton de votre marque",
     },
     {
       n: "03",

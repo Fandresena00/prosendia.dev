@@ -1,7 +1,7 @@
 "use client";
 
 import { Closing } from "./_components/closing";
-import { Faq } from "./_components/faq";
+import { Contact } from "./_components/contact";
 import { Features } from "./_components/features";
 import { Footer } from "./_components/footer";
 import { Hero } from "./_components/hero";
@@ -39,7 +39,7 @@ export default function Home() {
       <Pricing />
       <Divider />
 
-      <Faq />
+      <Contact />
       <Divider />
 
       <Closing />

@@ -5,9 +5,8 @@
 // Trust builds confidence, CTA converts it. Always adjacent, never split.
 
 import { stagger, fadeUpVariant } from "@/lib/motion";
-import { IconUsers } from "@tabler/icons-react";
 import { motion } from "framer-motion";
-import { ArrowRight, Check, Shield, Zap } from "lucide-react";
+import { ArrowRight, Check, Shield, Smartphone, Zap } from "lucide-react";
 import Link from "next/link";
 import { SectionHeader } from "../_sections/section-header";
 import { Divider } from "../_sections/layout";
@@ -23,18 +22,18 @@ function Trust() {
       desc: "Protocole OAuth officiel de Facebook pour une connexion 100% sécurisée",
     },
     {
-      icon: IconUsers,
+      icon: Check,
       color: "#34d399",
       bg: "oklch(0.5 0.15 155 / 10%)",
       title: "Données chiffrées",
       desc: "Toutes vos données sont chiffrées en transit et au repos",
     },
     {
-      icon: Check,
+      icon: Smartphone,
       color: "#a78bfa",
       bg: "oklch(0.5 0.18 290 / 10%)",
-      title: "RGPD compliant",
-      desc: "Respect total des réglementations européennes sur les données",
+      title: "Paiement local",
+      desc: "Réglez simplement par MVola ou Orange Money, sans carte bancaire",
     },
   ] as const;
 
@@ -57,7 +56,8 @@ function Trust() {
             <motion.div
               key={title}
               variants={fadeUpVariant}
-              className="rounded-2xl border border-border/50 bg-card/60 p-6 text-center backdrop-blur-sm"
+              whileHover={{ y: -3, transition: { duration: 0.2 } }}
+              className="rounded-2xl border border-border/50 bg-card/60 p-6 text-center backdrop-blur-sm transition-colors hover:border-primary/25"
             >
               <div
                 className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-2xl"
@@ -153,7 +153,10 @@ function Cta() {
             Rejoignez les vendeurs qui font confiance à prosendia.
           </motion.p>
 
-          <motion.div variants={fadeUpVariant}>
+          <motion.div
+            variants={fadeUpVariant}
+            className="flex flex-col items-center justify-center gap-3 sm:flex-row"
+          >
             <Link href="/sign-up">
               <button
                 className="inline-flex items-center gap-2 rounded-xl bg-primary px-8 py-3 text-sm font-semibold text-primary-foreground transition-all hover:scale-[1.03] hover:opacity-95"

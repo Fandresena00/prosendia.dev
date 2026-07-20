@@ -1,18 +1,3 @@
-// =============================================================================
-// VendeoAI — Prisma Schema
-//
-// Stack:    NestJS + PostgreSQL + Prisma
-// Naming:   models PascalCase, tables snake_case plural, fields camelCase
-// Encoding: all monetary amounts in smallest unit (Ariary, no decimals)
-//
-// log v3:
-//   - AiConfig: added replyModelId, summaryModelId, summaryEveryN, maxContextMessages
-//   - AiModelConfig: OpenRouter model catalogue per business profile
-//   - ConversationSummary: compressed history produced by DataAI every N messages
-//   - AiReplyLog: audit trail for every AI reply attempt (tokens, decision, latency)
-//   - Conversation: added needsAiReply flag (set by webhook, cleared after reply)
-// =============================================================================
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -22,7 +7,605 @@ datasource db {
   provider = "postgresql"
 }
 
-// ─── Enums ────────────────────────────────────────────────────────────────────
+model Admin {
+  id           String          @id @default(uuid())
+  email        String          @unique
+  passwordHash String
+  role         AdminRole       @default(ADMIN)
+  isActive     Boolean         @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  auditLogs    AdminAuditLog[]
+
+  @@map("admins")
+}
+
+model AdminAuditLog {
+  id         String           @id @default(uuid())
+  adminId    String
+  action     AdminAuditAction
+  targetType String
+  targetId   String?
+  metadata   Json?
+  createdAt  DateTime         @default(now())
+  admin      Admin            @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([targetType, targetId])
+  @@map("admin_audit_logs")
+}
+
+model User {
+  id                   String                @id @default(uuid())
+  email                String                @unique
+  username             String
+  password             String
+  avatarUrl            String?
+  avatarSource         AvatarSource          @default(LOCAL)
+  providerId           String?
+  onboardingDone       Boolean               @default(false)
+  emailVerified        Boolean               @default(false)
+  emailVerifiedAt      DateTime?
+  activePlan           Plan                  @default(FREE)
+  provider             AuthProvider          @default(LOCAL)
+  creditBalance        Int                   @default(0)
+  creditAlertSent      Boolean               @default(false)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  isSuspended          Boolean               @default(false)
+  suspendedAt          DateTime?
+  suspendedReason      String?
+  businessProfiles     BusinessProfile[]
+  creditLedger         CreditLedger[]
+  customPlanConfig     CustomPlanConfig?
+  notifications        Notification[]
+  payments             Payment[]
+  refreshTokens        RefreshToken[]
+  subscriptions        Subscription[]
+  webPushSubscriptions WebPushSubscription[]
+
+  @@map("users")
+}
+
+model EmailVerification {
+  id           String    @id @default(uuid())
+  email        String
+  username     String
+  /// bcrypt hash of the 6-digit code
+  codeHash     String
+  /// hashed password (bcrypt) stored temporarily until verification
+  passwordHash String
+  /// expiry — 30 minutes from creation
+  expiresAt    DateTime
+  /// consumed = already used, prevents replay
+  usedAt       DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([email])
+  @@map("email_verifications")
+}
+
+model BusinessProfile {
+  id                 String              @id @default(uuid())
+  userId             String
+  name               String
+  businessType       BusinessType
+  description        String?
+  whatsappNumber     String?
+  websiteUrl         String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  aiConfig           AiConfig?
+  aiModelConfig      AiModelConfig?
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chatResources      ChatResource[]
+  conversations      Conversation[]
+  facebookConnection FacebookConnection?
+  facebookPosts      FacebookPost[]
+
+  @@index([userId])
+  @@map("business_profiles")
+}
+
+/// AI assistant behaviour configuration per BusinessProfile.
+/// Prompt fields, tone, escalation thresholds.
+model AiConfig {
+  id                      String          @id @default(uuid())
+  businessProfileId       String          @unique
+  tone                    Tone            @default(FRIENDLY)
+  responseStyle           ResponseStyle   @default(MIXED)
+  autoReply               Boolean         @default(true)
+  /// Base system prompt injected before every AI reply
+  systemPrompt            String?
+  /// Extra instructions for Messenger inbox replies
+  inboxInstructions       String?
+  /// Extra instructions for post comment replies
+  commentInstructions     String?
+  /// ISO 639-1 code, e.g. "fr", "mg". Null = detect from client message.
+  replyLanguage           String?
+  /// Hard cap on tokens per reply (controls cost and response length)
+  maxReplyTokens          Int             @default(300)
+  /// Artificial delay in seconds before sending AI reply (0 = immediate)
+  replyDelaySeconds       Int             @default(0)
+  personalizeGreeting     Boolean         @default(true)
+  /// Number of recent messages included in every ReplyAI context window
+  maxContextMessages      Int             @default(8)
+  /// Generate a new summary every N client messages (keeps context lean)
+  summaryEveryN           Int             @default(10)
+  blockedKeywords         Json            @default("[]")
+  allowedTopics           Json            @default("[]")
+  escalateOnLowConfidence Boolean         @default(true)
+  escalationThreshold     Float           @default(0.6)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  businessProfile         BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+
+  @@map("ai_configs")
+}
+
+/// Stores the OpenRouter model IDs chosen for this business profile.
+/// Two separate AI roles:
+/// ReplyAI  — generates customer-facing replies (more capable model)
+/// DataAI   — generates conversation summaries (cheap + fast model)
+model AiModelConfig {
+  id                 String          @id @default(uuid())
+  businessProfileId  String          @unique
+  /// OpenRouter model ID, e.g. "anthropic/claude-3.5-haiku"
+  replyModelId       String          @default("anthropic/claude-3.5-haiku")
+  /// Human-readable name shown in UI
+  replyModelName     String          @default("Claude 3.5 Haiku")
+  /// Max tokens for a single reply (overrides AiConfig.maxReplyTokens when set)
+  replyMaxTokens     Int             @default(400)
+  /// Temperature for reply generation (0 = deterministic, 1 = creative)
+  replyTemperature   Float           @default(0.7)
+  /// OpenRouter model ID for comment replies. Null = use COMMENT_AI_MODEL default.
+  commentModelId     String?
+  /// Human-readable name shown in UI. Null = use COMMENT_AI_MODEL default.
+  commentModelName   String?
+  /// Max tokens for a comment/DM reply. Null = use COMMENT_AI_MODEL default (150).
+  commentMaxTokens   Int?
+  /// Temperature for comment replies. Null = use COMMENT_AI_MODEL default (0.6).
+  commentTemperature Float?
+  /// OpenRouter model ID, e.g. "meta-llama/llama-3.1-8b-instruct"
+  summaryModelId     String          @default("meta-llama/llama-3.1-8b-instruct:free")
+  summaryModelName   String          @default("Llama 3.1 8B Instruct (free)")
+  /// Max tokens for a summary (summaries must be concise)
+  summaryMaxTokens   Int             @default(200)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  businessProfile    BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+
+  @@map("ai_model_configs")
+}
+
+/// A compressed summary of a conversation window, produced by DataAI.
+/// ReplyAI reads the most recent summary instead of the full message history,
+/// keeping the context window small and token usage low.
+model ConversationSummary {
+  id              String       @id @default(uuid())
+  conversationId  String
+  /// The summary text produced by DataAI
+  summary         String
+  /// Index of the last message included in this summary
+  /// (used to know which messages are already summarised)
+  upToMessageId   String?
+  /// How many client messages were covered
+  messagesCovered Int          @default(0)
+  /// Model that generated this summary
+  modelId         String
+  tokensUsed      Int          @default(0)
+  createdAt       DateTime     @default(now())
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("conversation_summaries")
+}
+
+/// One record per AI reply attempt.
+/// Tracks tokens consumed, latency, decision, and any errors.
+/// Used for cost monitoring, debugging, and improving prompts.
+model AiReplyLog {
+  id               String       @id @default(uuid())
+  conversationId   String
+  /// The inbound message that triggered the reply attempt
+  inboundMessageId String?
+  decision         AiDecision
+  modelId          String
+  /// Total prompt tokens sent to OpenRouter
+  promptTokens     Int          @default(0)
+  /// Completion tokens received from OpenRouter
+  replyTokens      Int          @default(0)
+  /// Latency in milliseconds (wall clock from request to response)
+  latencyMs        Int          @default(0)
+  /// The generated reply text (null when decision = ESCALATED or ERROR)
+  replyText        String?
+  /// Escalation reason provided by ReplyAI (null when not escalated)
+  escalationReason String?
+  /// Confidence score returned by the model (0–1)
+  confidence       Float?
+  /// Raw error message when decision = ERROR
+  errorMessage     String?
+  createdAt        DateTime     @default(now())
+  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([decision])
+  @@map("ai_reply_logs")
+}
+
+model FacebookConnection {
+  id                   String          @id @default(uuid())
+  businessProfileId    String          @unique
+  pageId               String          @unique
+  pageName             String
+  encryptedAccessToken String
+  appId                String
+  tokenExpiresAt       DateTime?
+  tokenStatus          TokenStatus     @default(UNKNOWN)
+  tokenValidatedAt     DateTime?
+  grantedScopes        Json            @default("[]")
+  instagramAccountId   String?
+  webhookSubscribed    Boolean         @default(false)
+  isActive             Boolean         @default(true)
+  lastSyncedAt         DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  businessProfile      BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  webhookEvents        WebhookEvent[]
+
+  @@index([tokenStatus, isActive])
+  @@map("facebook_connections")
+}
+
+model WebhookEvent {
+  id                   String             @id @default(uuid())
+  facebookConnectionId String
+  externalId           String
+  eventType            WebhookEventType
+  status               WebhookEventStatus @default(PENDING)
+  rawPayload           Json
+  resultEntityId       String?
+  errorMessage         String?
+  attempts             Int                @default(0)
+  processedAt          DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  facebookConnection   FacebookConnection @relation(fields: [facebookConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([externalId, eventType])
+  @@index([facebookConnectionId, status])
+  @@map("webhook_events")
+}
+
+model Conversation {
+  id                  String                @id @default(uuid())
+  businessProfileId   String
+  externalId          String
+  clientPsid          String?
+  clientName          String?
+  clientAvatarUrl     String?
+  lastMessage         String?
+  lastMessageAt       DateTime?
+  handoverStatus      HandoverStatus        @default(AI)
+  humanTookOverAt     DateTime?
+  agentNote           String?
+  /// Set to true by WebhookService when a client message arrives and the
+  /// conversation is in AI mode. Cleared by ReplyAI after sending a reply.
+  needsAiReply        Boolean               @default(false)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  /// Timestamp of the last message received FROM the client (not the page).
+  /// Drives the Facebook Messenger 24h standard messaging window: free-form
+  /// sends are only allowed while now() - lastClientMessageAt < 24h.
+  /// Updated by InboxSyncService and InboxSyncSchedulerService whenever a
+  /// CLIENT message is inserted.
+  lastClientMessageAt DateTime?
+  aiReplyLogs         AiReplyLog[]
+  chatResource        ChatResource?
+  summaries           ConversationSummary[]
+  businessProfile     BusinessProfile       @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  messages            Message[]
+  notifications       Notification[]
+
+  @@unique([businessProfileId, externalId])
+  @@unique([businessProfileId, clientPsid])
+  @@index([businessProfileId, lastMessageAt])
+  @@index([handoverStatus, needsAiReply])
+  @@map("conversations")
+}
+
+model Message {
+  id             String        @id @default(uuid())
+  conversationId String
+  sender         SenderType
+  content        String?
+  imageUrl       String?
+  fileUrl        String?
+  status         MessageStatus @default(SENT)
+  externalId     String?       @unique
+  aiModel        String?
+  aiTokensUsed   Int?
+  createdAt      DateTime      @default(now())
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+model FacebookPost {
+  id                String          @id @default(uuid())
+  businessProfileId String
+  externalId        String          @unique
+  message           String?
+  imageUrl          String?
+  permalinkUrl      String?
+  reactionsCount    Int             @default(0)
+  commentsCount     Int             @default(0)
+  sharesCount       Int             @default(0)
+  publishedAt       DateTime
+  lastSyncedAt      DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  postAiConfig      PostAiConfig?
+  comments          PostComment[]
+
+  @@index([businessProfileId, publishedAt])
+  @@map("facebook_posts")
+}
+
+model PostComment {
+  id              String       @id @default(uuid())
+  postId          String
+  externalId      String       @unique
+  authorId        String
+  authorName      String
+  authorAvatarUrl String?
+  message         String
+  commentedAt     DateTime
+  lastSyncedAt    DateTime?
+  isReplied       Boolean      @default(false)
+  replyContent    String?
+  repliedAt       DateTime?
+  repliedByAi     Boolean?
+  /// Heuristic spam/relevance score (0-100) from the last AI evaluation.
+  aiSpamScore     Int?
+  /// True if PostCommentAiService evaluated this comment and chose NOT to
+  /// reply (e.g. spam-filtered). Cleared back to false once a reply is sent
+  /// (AI-generated, rule-based, or manual).
+  aiSkipped       Boolean      @default(false)
+  /// Machine-readable reason when aiSkipped=true (e.g. "spam_filtered").
+  aiSkipReason    String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  post            FacebookPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, isReplied])
+  @@map("post_comments")
+}
+
+model PostAiConfig {
+  id                  String         @id @default(uuid())
+  postId              String         @unique
+  autoReply           Boolean        @default(true)
+  tone                Tone?
+  responseStyle       ResponseStyle?
+  customInstructions  String?
+  replyLanguage       String?
+  maxReplyTokens      Int?
+  /// Send a Facebook Private Reply (DM via comment_id) after replying publicly.
+  /// Facebook allows this as a direct response to a comment (not cold DM).
+  privateReplyEnabled Boolean        @default(false)
+  /// Optional fixed message for the private reply. If null, AI generates it.
+  privateReplyMessage String?
+  /// "Répondre à tous les commentaires": bypasses the spam-score filter for
+  /// EVERY comment on this post. AI replies still consume credits per call —
+  /// use with care on high-traffic posts. See CommentPromptBuilderService.
+  replyToAllComments  Boolean        @default(false)
+  /// Deterministic, non-AI keyword reply rules (KeywordRule[] as JSON),
+  /// evaluated BEFORE the spam filter:
+  /// replyText set  → fixed reply posted directly, 0 AI calls/credits.
+  /// replyText null → bypasses the spam filter, AI replies as usual
+  /// (credits consumed).
+  /// Shape: { id, keyword, matchType: 'contains'|'exact', replyText: string|null,
+  /// sendPrivateReply: boolean, privateReplyText: string|null }[]
+  keywordRules        Json           @default("[]")
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  post                FacebookPost   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@map("post_ai_configs")
+}
+
+model ChatResource {
+  id                String              @id @default(uuid())
+  businessProfileId String
+  conversationId    String?             @unique
+  name              String
+  description       String?
+  isActive          Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  images            ChatResourceImage[]
+  businessProfile   BusinessProfile     @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  conversation      Conversation?       @relation(fields: [conversationId], references: [id])
+
+  @@index([businessProfileId])
+  @@map("chat_resources")
+}
+
+model ChatResourceImage {
+  id             String       @id @default(uuid())
+  chatResourceId String
+  url            String
+  description    String
+  sortOrder      Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  chatResource   ChatResource @relation(fields: [chatResourceId], references: [id], onDelete: Cascade)
+
+  @@index([chatResourceId])
+  @@map("chat_resource_images")
+}
+
+model Subscription {
+  id             String             @id @default(uuid())
+  userId         String
+  plan           Plan
+  status         SubscriptionStatus @default(PENDING)
+  creditsGranted Int
+  periodStart    DateTime
+  periodEnd      DateTime
+  renewedFromId  String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  creditLedger   CreditLedger[]
+  payments       Payment[]
+  renewedFrom    Subscription?      @relation("Renewals", fields: [renewedFromId], references: [id])
+  renewals       Subscription[]     @relation("Renewals")
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([periodEnd])
+  @@map("subscriptions")
+}
+
+model Payment {
+  id                    String          @id @default(uuid())
+  userId                String
+  subscriptionId        String
+  amount                Int
+  currency              String          @default("MGA")
+  status                PaymentStatus   @default(PENDING)
+  provider              PaymentProvider
+  papiReference         String?         @unique
+  papiPaymentLink       String?
+  papiNotificationToken String?
+  papiPayerPhone        String?
+  papiPayerName         String?
+  papiTransactionRef    String?
+  paidAt                DateTime?
+  failureReason         String?
+  expiresAt             DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  subscription          Subscription    @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([papiReference])
+  @@index([subscriptionId])
+  @@map("payments")
+}
+
+model CreditLedger {
+  id             String                @id @default(uuid())
+  userId         String
+  subscriptionId String?
+  type           CreditTransactionType
+  amount         Int
+  tokensUsed     Int?
+  modelId        String?
+  conversationId String?
+  commentId      String?
+  description    String?
+  createdAt      DateTime              @default(now())
+  subscription   Subscription?         @relation(fields: [subscriptionId], references: [id])
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, type])
+  @@map("credit_ledger")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  jti       String    @unique
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, jti])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model Notification {
+  id             String               @id @default(uuid())
+  userId         String
+  type           NotificationType
+  severity       NotificationSeverity
+  title          String
+  message        String
+  conversationId String?
+  postId         String?
+  commentId      String?
+  clientName     String?
+  clientFbPsid   String?
+  clientFbPageId String?
+  dedupeKey      String?
+  isRead         Boolean              @default(false)
+  readAt         DateTime?
+  actionLabel    String?
+  actionUrl      String?
+  pushSentAt     DateTime?
+  emailSentAt    DateTime?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  conversation   Conversation?        @relation(fields: [conversationId], references: [id])
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@index([userId, type])
+  @@index([dedupeKey])
+  @@map("notifications")
+}
+
+model WebPushSubscription {
+  id        String    @id @default(uuid())
+  userId    String
+  endpoint  String    @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  isActive  Boolean   @default(true)
+  lastUsed  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("web_push_subscriptions")
+}
+
+model CustomPlanConfig {
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  name               String   @default("Plan Custom")
+  description        String?
+  priceAriary        Int
+  durationDays       Int      @default(30)
+  credits            Int
+  maxPages           Int
+  maxManagedPosts    Int
+  maxReferenceImages Int
+  isVisible          Boolean  @default(true)
+  isPurchasable      Boolean  @default(true)
+  createdByAdminId   String
+  note               String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("custom_plan_configs")
+}
 
 enum AdminRole {
   SUPER_ADMIN
@@ -133,7 +716,6 @@ enum CreditTransactionType {
   ADMIN_ADJUST
 }
 
-
 enum TokenStatus {
   VALID
   INVALID
@@ -154,9 +736,7 @@ enum WebhookEventStatus {
   SKIPPED
 }
 
-
 enum NotificationType {
-  // Système
   PAYMENT_CONFIRMED
   SUBSCRIPTION_EXPIRING
   CREDITS_LOW
@@ -166,7 +746,6 @@ enum NotificationType {
   SYNC_FAILED
   POST_LIMIT_REACHED
   PAGE_CONNECTED
-  // Client / Métier
   HUMAN_TAKEOVER_REQUIRED
   ANGRY_CLIENT_DETECTED
   AI_STUCK_LOOP
@@ -176,10 +755,10 @@ enum NotificationType {
 }
 
 enum NotificationSeverity {
-  INFO      // bleu
-  WARNING   // orange
-  CRITICAL  // rouge
-  SUCCESS   // vert
+  INFO
+  WARNING
+  CRITICAL
+  SUCCESS
 }
 
 enum NotificationChannel {
@@ -187,7 +766,6 @@ enum NotificationChannel {
   WEB_PUSH
   EMAIL
 }
-
 
 /// Decision taken by ReplyAI for a given message
 enum AiDecision {
@@ -200,796 +778,3 @@ enum AiDecision {
   /// OpenRouter call failed — reply was not sent
   ERROR
 }
-
-
-
-model Admin {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  passwordHash String
-  role         AdminRole @default(ADMIN)
-  isActive     Boolean   @default(true)
-  lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  auditLogs AdminAuditLog[]
-
-  @@map("admins")
-}
-
-model AdminAuditLog {
-  id         String           @id @default(uuid())
-  adminId    String
-  admin      Admin            @relation(fields: [adminId], references: [id], onDelete: Cascade)
-  action     AdminAuditAction
-  targetType String           // "USER" | "ADMIN" | "SUBSCRIPTION"
-  targetId   String?
-  metadata   Json?
-  createdAt  DateTime         @default(now())
-
-  @@index([adminId])
-  @@index([targetType, targetId])
-  @@map("admin_audit_logs")
-}
-
-
-
-// =============================================================================
-// ── Auth & Users
-// =============================================================================
-
-model User {
-  id String @id @default(uuid())
-
-  email     String  @unique
-  username  String
-  password  String
-  avatarUrl String?
-  avatarSource  AvatarSource @default(LOCAL)
-
-  providerId     String?
-  onboardingDone  Boolean      @default(false)
-
-emailVerified   Boolean      @default(false)
-emailVerifiedAt DateTime?
-
-  activePlan     Plan         @default(FREE)
-  customPlanConfig CustomPlanConfig?
-  provider       AuthProvider @default(LOCAL)
-
-
-  businessProfiles BusinessProfile[]
-  payments         Payment[]
-  refreshTokens    RefreshToken[]
-
-   creditBalance    Int     @default(0)
-    creditAlertSent  Boolean @default(false)
-     subscriptions    Subscription[]
-     creditLedger     CreditLedger[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-    isSuspended   Boolean   @default(false)
-  suspendedAt   DateTime?
-  suspendedReason String?
-
-  @@map("users")
-  webPushSubscriptions WebPushSubscription[]
-  notifications Notification[]
-}
-
-model EmailVerification {
-  id        String   @id @default(uuid())
-  email     String
-  username  String
-  /// bcrypt hash of the 6-digit code
-  codeHash  String
-  /// hashed password (bcrypt) stored temporarily until verification
-  passwordHash String
-  /// expiry — 30 minutes from creation
-  expiresAt DateTime
-  /// consumed = already used, prevents replay
-  usedAt    DateTime?
-  createdAt DateTime @default(now())
-
-  @@index([email])
-  @@map("email_verifications")
-}
-
-
-// =============================================================================
-// ── Business
-// =============================================================================
-
-model BusinessProfile {
-  id String @id @default(uuid())
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  name           String
-  businessType   BusinessType
-  description    String?
-  whatsappNumber String?
-  websiteUrl     String?
-
-  aiConfig           AiConfig?
-  facebookConnection FacebookConnection?
-  conversations      Conversation[]
-  facebookPosts      FacebookPost[]
-  chatResources      ChatResource[]
-  /// OpenRouter model preferences for this profile
-  aiModelConfig      AiModelConfig?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId])
-  @@map("business_profiles")
-}
-
-/// AI assistant behaviour configuration per BusinessProfile.
-/// Prompt fields, tone, escalation thresholds.
-model AiConfig {
-  id String @id @default(uuid())
-
-  businessProfileId String          @unique
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-
-  // ── Behaviour
-  tone          Tone          @default(FRIENDLY)
-  responseStyle ResponseStyle @default(MIXED)
-  autoReply     Boolean       @default(true)
-
-  // ── Prompts
-  /// Base system prompt injected before every AI reply
-  systemPrompt        String?
-  /// Extra instructions for Messenger inbox replies
-  inboxInstructions   String?
-  /// Extra instructions for post comment replies
-  commentInstructions String?
-  /// ISO 639-1 code, e.g. "fr", "mg". Null = detect from client message.
-  replyLanguage       String?
-
-  // ── Limits
-  /// Hard cap on tokens per reply (controls cost and response length)
-  maxReplyTokens      Int     @default(300)
-  /// Artificial delay in seconds before sending AI reply (0 = immediate)
-  replyDelaySeconds   Int     @default(0)
-  personalizeGreeting Boolean @default(true)
-  /// Number of recent messages included in every ReplyAI context window
-  maxContextMessages  Int     @default(8)
-
-  // ── DataAI summary settings
-  /// Generate a new summary every N client messages (keeps context lean)
-  summaryEveryN       Int     @default(10)
-
-  // ── Filters
-  blockedKeywords Json @default("[]")
-  allowedTopics   Json @default("[]")
-
-  // ── Escalation
-  escalateOnLowConfidence Boolean @default(true)
-  escalationThreshold     Float   @default(0.6)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("ai_configs")
-}
-
-// =============================================================================
-// ── AI Model Configuration (OpenRouter)
-// =============================================================================
-
-/// Stores the OpenRouter model IDs chosen for this business profile.
-/// Two separate AI roles:
-///   ReplyAI  — generates customer-facing replies (more capable model)
-///   DataAI   — generates conversation summaries (cheap + fast model)
-model AiModelConfig {
-  id String @id @default(uuid())
-
-  businessProfileId String          @unique
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-
-  // ── Reply AI (customer-facing responses — Messenger inbox)
-  /// OpenRouter model ID, e.g. "anthropic/claude-3.5-haiku"
-  replyModelId     String  @default("anthropic/claude-3.5-haiku")
-  /// Human-readable name shown in UI
-  replyModelName   String  @default("Claude 3.5 Haiku")
-  /// Max tokens for a single reply (overrides AiConfig.maxReplyTokens when set)
-  replyMaxTokens   Int     @default(400)
-  /// Temperature for reply generation (0 = deterministic, 1 = creative)
-  replyTemperature Float   @default(0.7)
-
-  // ── Comment AI (public/private Facebook post comment replies)
-  // Distinct from Reply AI (Messenger) so cost/latency/quality can be tuned
-  // independently — see features/ai/config/ai-models.config.ts COMMENT_AI_MODEL.
-  /// OpenRouter model ID for comment replies. Null = use COMMENT_AI_MODEL default.
-  commentModelId      String?
-  /// Human-readable name shown in UI. Null = use COMMENT_AI_MODEL default.
-  commentModelName    String?
-  /// Max tokens for a comment/DM reply. Null = use COMMENT_AI_MODEL default (150).
-  commentMaxTokens    Int?
-  /// Temperature for comment replies. Null = use COMMENT_AI_MODEL default (0.6).
-  commentTemperature  Float?
-
-  // ── Data AI (conversation summarisation — runs in background)
-  /// OpenRouter model ID, e.g. "meta-llama/llama-3.1-8b-instruct"
-  summaryModelId     String  @default("meta-llama/llama-3.1-8b-instruct:free")
-  summaryModelName   String  @default("Llama 3.1 8B Instruct (free)")
-  /// Max tokens for a summary (summaries must be concise)
-  summaryMaxTokens   Int     @default(200)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("ai_model_configs")
-}
-
-// =============================================================================
-// ── Conversation Summary (DataAI output)
-// =============================================================================
-
-/// A compressed summary of a conversation window, produced by DataAI.
-/// ReplyAI reads the most recent summary instead of the full message history,
-/// keeping the context window small and token usage low.
-model ConversationSummary {
-  id String @id @default(uuid())
-
-  conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-
-  /// The summary text produced by DataAI
-  summary String
-
-  /// Index of the last message included in this summary
-  /// (used to know which messages are already summarised)
-  upToMessageId String?
-  /// How many client messages were covered
-  messagesCovered Int @default(0)
-
-  /// Model that generated this summary
-  modelId      String
-  tokensUsed   Int    @default(0)
-
-  createdAt DateTime @default(now())
-
-  @@index([conversationId, createdAt])
-  @@map("conversation_summaries")
-}
-
-// =============================================================================
-// ── AI Reply Log (audit trail)
-// =============================================================================
-
-/// One record per AI reply attempt.
-/// Tracks tokens consumed, latency, decision, and any errors.
-/// Used for cost monitoring, debugging, and improving prompts.
-model AiReplyLog {
-  id String @id @default(uuid())
-
-  conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-
-  /// The inbound message that triggered the reply attempt
-  inboundMessageId String?
-
-  decision     AiDecision
-  modelId      String
-  /// Total prompt tokens sent to OpenRouter
-  promptTokens Int        @default(0)
-  /// Completion tokens received from OpenRouter
-  replyTokens  Int        @default(0)
-  /// Latency in milliseconds (wall clock from request to response)
-  latencyMs    Int        @default(0)
-
-  /// The generated reply text (null when decision = ESCALATED or ERROR)
-  replyText    String?
-  /// Escalation reason provided by ReplyAI (null when not escalated)
-  escalationReason String?
-  /// Confidence score returned by the model (0–1)
-  confidence   Float?
-  /// Raw error message when decision = ERROR
-  errorMessage String?
-
-  createdAt DateTime @default(now())
-
-  @@index([conversationId, createdAt])
-  @@index([decision])
-  @@map("ai_reply_logs")
-}
-
-// =============================================================================
-// ── Facebook Integration
-// =============================================================================
-
-model FacebookConnection {
-  id String @id @default(uuid())
-
-  businessProfileId String          @unique
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-
-  pageId   String @unique
-  pageName String
-
-  encryptedAccessToken String
-  appId String
-
-  tokenExpiresAt   DateTime?
-  tokenStatus      TokenStatus @default(UNKNOWN)
-  tokenValidatedAt DateTime?
-
-  grantedScopes      Json @default("[]")
-  instagramAccountId String?
-  webhookSubscribed  Boolean @default(false)
-  isActive           Boolean @default(true)
-  lastSyncedAt       DateTime?
-
-  webhookEvents WebhookEvent[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([tokenStatus, isActive])
-  @@map("facebook_connections")
-}
-
-model WebhookEvent {
-  id String @id @default(uuid())
-
-  facebookConnectionId String
-  facebookConnection   FacebookConnection @relation(fields: [facebookConnectionId], references: [id], onDelete: Cascade)
-
-  externalId String
-  eventType  WebhookEventType
-  status     WebhookEventStatus @default(PENDING)
-  rawPayload Json
-
-  resultEntityId String?
-  errorMessage   String?
-  attempts       Int      @default(0)
-
-  processedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  @@unique([externalId, eventType])
-  @@index([facebookConnectionId, status])
-  @@map("webhook_events")
-}
-
-// =============================================================================
-// ── Conversations & Messages
-// =============================================================================
-
-model Conversation {
-  id String @id @default(uuid())
-
-  businessProfileId String
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-
-  externalId String
-  clientPsid      String?
-  clientName      String?
-  clientAvatarUrl String?
-
-  lastMessage   String?
-  lastMessageAt DateTime?
-  /// Timestamp of the last message received FROM the client (not the page).
-  /// Drives the Facebook Messenger 24h standard messaging window: free-form
-  /// sends are only allowed while now() - lastClientMessageAt < 24h.
-  /// Updated by InboxSyncService and InboxSyncSchedulerService whenever a
-  /// CLIENT message is inserted.
-  lastClientMessageAt DateTime?
-  handoverStatus  HandoverStatus @default(AI)
-  humanTookOverAt DateTime?
-  agentNote String?
-
-  /// Set to true by WebhookService when a client message arrives and the
-  /// conversation is in AI mode. Cleared by ReplyAI after sending a reply.
-  needsAiReply Boolean @default(false)
-
-  messages     Message[]
-  chatResource ChatResource?
-  /// Summaries produced by DataAI for this conversation
-  summaries    ConversationSummary[]
-  /// Audit log of all AI reply attempts
-  aiReplyLogs  AiReplyLog[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([businessProfileId, externalId])
-  @@unique([businessProfileId, clientPsid])
-  @@index([businessProfileId, lastMessageAt])
-  /// Index used by the AI reply worker to find pending conversations
-  @@index([handoverStatus, needsAiReply])
-  @@map("conversations")
-  notifications Notification[]
-}
-
-model Message {
-  id String @id @default(uuid())
-
-  conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-
-  sender   SenderType
-  content  String?
-  imageUrl String?
-  fileUrl  String?
-  status   MessageStatus @default(SENT)
-
-  externalId String? @unique
-
-  aiModel      String?
-  aiTokensUsed Int?
-
-  createdAt DateTime @default(now())
-
-  @@index([conversationId, createdAt])
-  @@map("messages")
-}
-
-// =============================================================================
-// ── Posts & Comments
-// =============================================================================
-
-model FacebookPost {
-  id String @id @default(uuid())
-
-  businessProfileId String
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-
-  externalId   String  @unique
-  message      String?
-  imageUrl     String?
-  permalinkUrl String?
-
-  reactionsCount Int @default(0)
-  commentsCount  Int @default(0)
-  sharesCount    Int @default(0)
-
-  publishedAt  DateTime
-  lastSyncedAt DateTime?
-
-  comments     PostComment[]
-  postAiConfig PostAiConfig?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([businessProfileId, publishedAt])
-  @@map("facebook_posts")
-}
-
-model PostComment {
-  id String @id @default(uuid())
-
-  postId String
-  post   FacebookPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-
-  externalId String @unique
-
-  authorId        String
-  authorName      String
-  authorAvatarUrl String?
-
-  message      String
-  commentedAt  DateTime
-  lastSyncedAt DateTime?
-
-  isReplied    Boolean   @default(false)
-  replyContent String?
-  repliedAt    DateTime?
-  repliedByAi  Boolean?
-
-  // ── AI evaluation outcome ────────────────────────────────────────────────
-  /// Heuristic spam/relevance score (0-100) from the last AI evaluation.
-  aiSpamScore  Int?
-  /// True if PostCommentAiService evaluated this comment and chose NOT to
-  /// reply (e.g. spam-filtered). Cleared back to false once a reply is sent
-  /// (AI-generated, rule-based, or manual).
-  aiSkipped    Boolean   @default(false)
-  /// Machine-readable reason when aiSkipped=true (e.g. "spam_filtered").
-  aiSkipReason String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([postId, isReplied])
-  @@map("post_comments")
-}
-
-model PostAiConfig {
-  id     String       @id @default(uuid())
-  postId String       @unique
-  post   FacebookPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-
-  autoReply          Boolean       @default(true)
-  tone               Tone?
-  responseStyle      ResponseStyle?
-  customInstructions String?
-  replyLanguage      String?
-  maxReplyTokens     Int?
-
-  // ── NEW FIELDS ─────────────────────────────────────────────────────────────
-  /// Send a Facebook Private Reply (DM via comment_id) after replying publicly.
-  /// Facebook allows this as a direct response to a comment (not cold DM).
-  privateReplyEnabled Boolean @default(false)
-  /// Optional fixed message for the private reply. If null, AI generates it.
-  privateReplyMessage String?
-
-  // ── Flexible, instruction-driven reply rules ────────────────────────────────
-  /// "Répondre à tous les commentaires": bypasses the spam-score filter for
-  /// EVERY comment on this post. AI replies still consume credits per call —
-  /// use with care on high-traffic posts. See CommentPromptBuilderService.
-  replyToAllComments Boolean @default(false)
-  /// Deterministic, non-AI keyword reply rules (KeywordRule[] as JSON),
-  /// evaluated BEFORE the spam filter:
-  ///   replyText set  → fixed reply posted directly, 0 AI calls/credits.
-  ///   replyText null → bypasses the spam filter, AI replies as usual
-  ///                    (credits consumed).
-  /// Shape: { id, keyword, matchType: 'contains'|'exact', replyText: string|null,
-  ///          sendPrivateReply: boolean, privateReplyText: string|null }[]
-  keywordRules Json @default("[]")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("post_ai_configs")
-}
-
-// =============================================================================
-// ── Chat Resources
-// =============================================================================
-
-model ChatResource {
-  id String @id @default(uuid())
-
-  businessProfileId String
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-
-  conversationId String?       @unique
-  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-
-  name        String
-  description String?
-  isActive    Boolean @default(true)
-
-  images ChatResourceImage[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([businessProfileId])
-  @@map("chat_resources")
-}
-
-model ChatResourceImage {
-  id String @id @default(uuid())
-
-  chatResourceId String
-  chatResource   ChatResource @relation(fields: [chatResourceId], references: [id], onDelete: Cascade)
-
-  url         String
-  description String
-  sortOrder   Int    @default(0)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([chatResourceId])
-  @@map("chat_resource_images")
-}
-
-// =============================================================================
-// ── Billing
-// =============================================================================
-model Subscription {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  plan            Plan
-  status          SubscriptionStatus @default(PENDING)
-  creditsGranted  Int
-  periodStart     DateTime
-  periodEnd       DateTime
-
-  renewedFromId String?
-  renewedFrom   Subscription?  @relation("Renewals", fields: [renewedFromId], references: [id])
-  renewals      Subscription[] @relation("Renewals")
-
-  payments     Payment[]
-  creditLedger CreditLedger[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId, status])
-  @@index([periodEnd])
-  @@map("subscriptions")
-}
-
-
-model Payment {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  subscriptionId String
-  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-
-  amount   Int
-  currency String          @default("MGA")
-  status   PaymentStatus   @default(PENDING)
-  provider PaymentProvider
-
-  // Papi fields
-  papiReference          String?  @unique
-  papiPaymentLink        String?
-  papiNotificationToken  String?
-  papiPayerPhone         String?
-  papiPayerName          String?
-  papiTransactionRef     String?
-
-  paidAt        DateTime?
-  failureReason String?
-  expiresAt     DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId])
-  @@index([status])
-  @@index([papiReference])
-  @@index([subscriptionId])
-  @@map("payments")
-}
-
-
-model CreditLedger {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  subscriptionId String?
-  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
-
-  type   CreditTransactionType
-  amount Int                    // positif = ajout, négatif = consommation
-
-  tokensUsed     Int?
-  modelId        String?
-  conversationId String?
-  commentId      String?
-  description    String?
-
-  createdAt DateTime @default(now())
-
-  @@index([userId, createdAt])
-  @@index([userId, type])
-  @@map("credit_ledger")
-}
-
-// =============================================================================
-// ── Auth Tokens
-// =============================================================================
-
-model RefreshToken {
-  id String @id @default(uuid())
-
-  jti    String @unique
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  tokenHash String   @unique
-  expiresAt DateTime
-  revokedAt DateTime?
-
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-  @@index([userId, jti])
-  @@index([expiresAt])
-  @@map("refresh_tokens")
-}
-
-
-
-model Notification {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  type     NotificationType
-  severity NotificationSeverity
-  title    String
-  message  String
-
-  // Contexte métier
-  conversationId String?
-  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  postId         String?
-  commentId      String?
-  clientName     String?
-  clientFbPsid   String?       // pour lien profil Facebook
-  clientFbPageId String?       // pour construire l'URL profil Facebook
-
-  // Déduplication — évite les doublons par fenêtre de temps
-  dedupeKey      String?       // ex: "HUMAN_TAKEOVER_REQUIRED:conv:uuid"
-
-  // État
-  isRead         Boolean  @default(false)
-  readAt         DateTime?
-
-  // Actions rapides
-  actionLabel    String?
-  actionUrl      String?
-
-  // Push
-  pushSentAt     DateTime?
-  emailSentAt    DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId, isRead])
-  @@index([userId, createdAt])
-  @@index([userId, type])
-  @@index([dedupeKey])
-  @@map("notifications")
-}
-
-model WebPushSubscription {
-  id       String @id @default(uuid())
-  userId   String
-  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  endpoint  String   @unique
-  p256dh    String   // public key
-  auth      String   // auth secret
-  userAgent String?
-
-  isActive  Boolean  @default(true)
-  lastUsed  DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId])
-  @@map("web_push_subscriptions")
-}
-
-
-model CustomPlanConfig {
- id String @id @default(uuid())
- userId String @unique  
- user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
- name String @default("Plan Custom")
- description String?
-
- priceAriary Int
- durationDays Int @default(30)
- credits Int
- maxPages Int
- maxManagedPosts Int
- maxReferenceImages Int
-
- isVisible Boolean @default(true)  
- isPurchasable Boolean @default(true)  
-
- createdByAdminId String 
- note String? 
-
- createdAt DateTime @default(now())
- updatedAt DateTime @updatedAt
-
- @@map("custom_plan_configs")
- }
-
