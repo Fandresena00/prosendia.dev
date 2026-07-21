@@ -184,7 +184,7 @@ export default function TermsPage() {
           if (entry.isIntersecting) setActiveId(entry.target.id);
         });
       },
-      { rootMargin: "-15% 0px -70% 0px" }
+      { rootMargin: "-15% 0px -70% 0px" },
     );
     SECTIONS.forEach((s) => {
       const el = document.getElementById(s.num);
@@ -199,7 +199,7 @@ export default function TermsPage() {
       <div className="sticky top-0 z-10 border-b border-border/40 bg-background/95 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-none items-center justify-between px-6 py-4 lg:px-16">
           <Link href="/" className="flex items-center gap-2">
-            <ProsendiaLogo size={7} />
+            <ProsendiaLogo size={15} />
             <span className="text-sm font-bold">prosendia</span>
           </Link>
           <div className="flex items-center gap-3">

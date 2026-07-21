@@ -212,7 +212,7 @@ export default function PrivacyPage() {
           if (entry.isIntersecting) setActiveId(entry.target.id);
         });
       },
-      { rootMargin: "-15% 0px -70% 0px" }
+      { rootMargin: "-15% 0px -70% 0px" },
     );
     SECTIONS.forEach((s) => {
       const el = document.getElementById(s.num);
@@ -227,7 +227,7 @@ export default function PrivacyPage() {
       <div className="sticky top-0 z-10 border-b border-border/40 bg-background/95 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-none items-center justify-between px-6 py-4 lg:px-16">
           <Link href="/" className="flex items-center gap-2">
-            <ProsendiaLogo size={7} />
+            <ProsendiaLogo size={15} />
             <span className="text-sm font-bold">prosendia</span>
           </Link>
           <div className="flex items-center gap-3">
@@ -264,9 +264,9 @@ export default function PrivacyPage() {
           <div className="mt-6 rounded-xl border border-border/50 bg-card/60 px-5 py-4">
             <p className="text-sm leading-relaxed text-muted-foreground">
               La protection de vos données personnelles est une priorité pour
-              prosendia. Cette politique explique avec transparence comment
-              nous traitons vos informations, y compris celles transmises à
-              notre IA (article 10) et via l&apos;API Facebook (article 11).
+              prosendia. Cette politique explique avec transparence comment nous
+              traitons vos informations, y compris celles transmises à notre IA
+              (article 10) et via l&apos;API Facebook (article 11).
             </p>
           </div>
         </div>
@@ -323,9 +323,7 @@ export default function PrivacyPage() {
         {/* Footer CTA */}
         <div className="mt-16 flex flex-col items-start justify-between gap-6 border-t border-border/40 pt-12 sm:flex-row sm:items-center">
           <div>
-            <p className="text-sm font-semibold">
-              Questions sur vos données ?
-            </p>
+            <p className="text-sm font-semibold">Questions sur vos données ?</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               contact@genforus.com
             </p>
