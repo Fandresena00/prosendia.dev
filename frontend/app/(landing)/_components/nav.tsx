@@ -1,7 +1,7 @@
 "use client";
 
-import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
+import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { AnimatePresence, motion } from "framer-motion";
 import { Menu, X } from "lucide-react";
 import Link from "next/link";
@@ -53,7 +53,7 @@ export function Nav({ onScrollTo }: NavProps) {
           className="flex items-center gap-2"
           aria-label="prosendia — retour en haut"
         >
-          <ProsendiaLogo size={7} rounded="rounded-lg" />
+          <ProsendiaLogo size={15} rounded="rounded-lg" />
           <span className="text-sm font-bold tracking-tight">prosendia</span>
         </button>
 
@@ -108,7 +108,11 @@ export function Nav({ onScrollTo }: NavProps) {
                 transition={{ duration: 0.15 }}
                 className="flex"
               >
-                {open ? <X className="h-4.5 w-4.5" /> : <Menu className="h-4.5 w-4.5" />}
+                {open ? (
+                  <X className="h-4.5 w-4.5" />
+                ) : (
+                  <Menu className="h-4.5 w-4.5" />
+                )}
               </motion.span>
             </AnimatePresence>
           </button>

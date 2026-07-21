@@ -8,8 +8,8 @@
  * Fichier complet — remplace l'ancien sign-in-page.tsx.
  */
 
-import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
+import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,20 +37,17 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { AuthDotGrid } from "../components/shared/auth-background";
+import { EmailHint, PasswordInput } from "../components/shared/password-field";
 import { ChatDemo } from "../components/signin/chat-demo";
-import {
-  EmailHint,
-  PasswordInput,
-} from "../components/shared/password-field";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const FEATURES = [
   { icon: MessageCircleMore, label: "Réponses auto" },
-  { icon: Users,             label: "Mode humain" },
-  { icon: TrendingUp,        label: "Analytics" },
-  { icon: Settings,          label: "Automatisation" },
-  { icon: Zap,               label: "< 3 sec" },
+  { icon: Users, label: "Mode humain" },
+  { icon: TrendingUp, label: "Analytics" },
+  { icon: Settings, label: "Automatisation" },
+  { icon: Zap, label: "< 3 sec" },
 ] as const;
 
 /** URL backend du flow OAuth Google — naviguation native (pas fetch) */
@@ -64,12 +61,12 @@ const URL_ERROR_MESSAGES: Record<string, string> = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SignInPage() {
-  const router       = useRouter();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const { login, isLoading, authError, clearError } = useAuthStore();
 
   // Erreur transmise depuis le callback Google (?error=...)
-  const urlError    = searchParams.get("error");
+  const urlError = searchParams.get("error");
   const googleError = urlError ? URL_ERROR_MESSAGES[urlError] : null;
 
   const {
@@ -121,8 +118,10 @@ export default function SignInPage() {
         />
 
         <div className="flex items-center gap-3">
-          <ProsendiaLogo size={9} rounded="rounded-xl" />
-          <span className="text-[15px] font-bold tracking-tight">prosendia</span>
+          <ProsendiaLogo size={15} rounded="rounded-xl" />
+          <span className="text-[15px] font-bold tracking-tight">
+            prosendia
+          </span>
         </div>
 
         <div className="space-y-8">
@@ -144,8 +143,8 @@ export default function SignInPage() {
               </span>
             </h2>
             <p className="text-[13px] leading-relaxed text-muted-foreground">
-              prosendia gère vos messages et commentaires Facebook en temps réel,
-              filtre les demandes et ne vous alerte que quand c&apos;est
+              prosendia gère vos messages et commentaires Facebook en temps
+              réel, filtre les demandes et ne vous alerte que quand c&apos;est
               vraiment nécessaire.
             </p>
           </div>
@@ -242,10 +241,7 @@ export default function SignInPage() {
               {/* Password */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <Label
-                    htmlFor="password"
-                    className="text-[12px] font-medium"
-                  >
+                  <Label htmlFor="password" className="text-[12px] font-medium">
                     Mot de passe
                   </Label>
                   <Link

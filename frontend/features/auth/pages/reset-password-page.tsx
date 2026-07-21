@@ -5,8 +5,8 @@
  * Redesigned: PasswordInput toggle + real-time rules + StrengthBar.
  */
 
-import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
+import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { EASE, fadeUp } from "@/lib/motion";
 import { motion } from "framer-motion";
@@ -18,7 +18,10 @@ import {
   AuthDotGrid,
   AuthRadialGlow,
 } from "../components/shared/auth-background";
-import { PasswordInput, PasswordRequirements } from "../components/shared/password-field";
+import {
+  PasswordInput,
+  PasswordRequirements,
+} from "../components/shared/password-field";
 
 const PASSWORD_RULES = [
   { test: (v: string) => v.length >= 8 },
@@ -59,9 +62,9 @@ export default function ResetPasswordPage() {
         <ThemeSwitcher />
       </div>
 
-      <div className="relative z-10 w-full max-w-[360px]">
+      <div className="relative z-10 w-full max-w-90">
         <motion.div {...fadeUp(0)} className="mb-8 flex items-center gap-2">
-          <ProsendiaLogo size={7} />
+          <ProsendiaLogo size={15} />
           <span className="text-sm font-bold">prosendia</span>
         </motion.div>
 
@@ -110,9 +113,13 @@ export default function ResetPasswordPage() {
                   autoComplete="new-password"
                 />
                 {confirmPassword.length > 0 && (
-                  <div className={`flex items-center gap-1.5 text-[11px] ${matches ? "text-emerald-400" : "text-rose-400"}`}>
+                  <div
+                    className={`flex items-center gap-1.5 text-[11px] ${matches ? "text-emerald-400" : "text-rose-400"}`}
+                  >
                     <span>{matches ? "✓" : "✗"}</span>
-                    {matches ? "Les mots de passe correspondent" : "Les mots de passe ne correspondent pas"}
+                    {matches
+                      ? "Les mots de passe correspondent"
+                      : "Les mots de passe ne correspondent pas"}
                   </div>
                 )}
               </div>
@@ -120,14 +127,19 @@ export default function ResetPasswordPage() {
               <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
                   <span className="font-semibold text-primary">Conseil :</span>{" "}
-                  Utilisez majuscules, minuscules, chiffres et symboles pour un mot de passe solide.
+                  Utilisez majuscules, minuscules, chiffres et symboles pour un
+                  mot de passe solide.
                 </p>
               </div>
 
               <Button
                 disabled={!canSubmit || isLoading}
                 className="w-full h-9 gap-2 text-[13px] font-semibold disabled:opacity-40"
-                style={{ boxShadow: canSubmit ? "0 4px 16px oklch(0.52 0.24 256 / 24%)" : "none" }}
+                style={{
+                  boxShadow: canSubmit
+                    ? "0 4px 16px oklch(0.52 0.24 256 / 24%)"
+                    : "none",
+                }}
                 onClick={handleReset}
               >
                 {isLoading ? (
@@ -165,16 +177,24 @@ export default function ResetPasswordPage() {
               <motion.div
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
-                transition={{ duration: 0.4, type: "spring", stiffness: 220, delay: 0.1 }}
+                transition={{
+                  duration: 0.4,
+                  type: "spring",
+                  stiffness: 220,
+                  delay: 0.1,
+                }}
                 className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10"
                 style={{ boxShadow: "0 0 20px oklch(0.5 0.15 155 / 15%)" }}
               >
                 <CheckCircle className="h-7 w-7 text-emerald-400" />
               </motion.div>
               <div>
-                <h2 className="text-[1.4rem] font-bold">Mot de passe mis à jour !</h2>
+                <h2 className="text-[1.4rem] font-bold">
+                  Mot de passe mis à jour !
+                </h2>
                 <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
-                  Votre mot de passe a été changé avec succès. Vous pouvez maintenant vous connecter.
+                  Votre mot de passe a été changé avec succès. Vous pouvez
+                  maintenant vous connecter.
                 </p>
               </div>
             </div>

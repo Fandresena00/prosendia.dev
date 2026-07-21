@@ -16,8 +16,8 @@
  *   7. Auto-submit quand 6 chiffres saisis
  */
 
-import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
+import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -262,7 +262,7 @@ export default function SignUpPage() {
       <div className="relative z-10 flex flex-1 items-center justify-center p-6 sm:p-10">
         <div className="w-full max-w-90">
           <motion.div {...fadeUp(0)} className="mb-7 flex items-center gap-2">
-            <ProsendiaLogo size={7} />
+            <ProsendiaLogo size={15} />
             <span className="text-sm font-bold">prosendia</span>
           </motion.div>
 

@@ -32,7 +32,7 @@ export function Footer() {
         <div className="grid gap-10 md:grid-cols-4">
           <div>
             <div className="mb-3 flex items-center gap-2">
-              <ProsendiaLogo size={6} rounded="rounded-lg" />
+              <ProsendiaLogo size={10} rounded="rounded-lg" />
               <span className="text-sm font-bold text-foreground">
                 prosendia
               </span>

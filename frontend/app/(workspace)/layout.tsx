@@ -14,8 +14,8 @@
 
 "use client";
 
-import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
+import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import {
   Sidebar,
   SidebarFooter,
@@ -72,7 +72,7 @@ export default function WorkspaceLayout({
           />
           {/* Logo + collapse trigger */}
           <div className="relative flex items-center gap-2 sm:gap-3">
-            <ProsendiaLogo size={12} rounded="rounded-xl" />
+            <ProsendiaLogo size={20} rounded="rounded-xl" />
             <div className="flex-1 min-w-0">
               <span className="text-[13px] sm:text-sm font-bold tracking-tight">
                 prosendia

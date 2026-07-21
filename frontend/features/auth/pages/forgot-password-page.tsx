@@ -5,8 +5,8 @@
  * Redesigned: live email validation.
  */
 
-import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { ProsendiaLogo } from "@/components/shared/prosendia-logo";
+import { ThemeSwitcher } from "@/components/shared/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,9 +47,9 @@ export default function ForgotPasswordPage() {
         <ThemeSwitcher />
       </div>
 
-      <div className="relative z-10 w-full max-w-[360px]">
+      <div className="relative z-10 w-full max-w-90">
         <motion.div {...fadeUp(0)} className="mb-8 flex items-center gap-2">
-          <ProsendiaLogo size={7} />
+          <ProsendiaLogo size={15} />
           <span className="text-sm font-bold">prosendia</span>
         </motion.div>
 
@@ -80,7 +80,9 @@ export default function ForgotPasswordPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="h-9 text-[13px]"
-                  onKeyDown={(e) => e.key === "Enter" && isValidEmail && handleSubmit()}
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && isValidEmail && handleSubmit()
+                  }
                   autoComplete="email"
                 />
                 <EmailHint value={email} />
@@ -89,7 +91,11 @@ export default function ForgotPasswordPage() {
               <Button
                 className="w-full h-9 gap-2 text-[13px] font-semibold disabled:opacity-40"
                 disabled={!isValidEmail || isLoading}
-                style={{ boxShadow: isValidEmail ? "0 4px 16px oklch(0.52 0.24 256 / 24%)" : "none" }}
+                style={{
+                  boxShadow: isValidEmail
+                    ? "0 4px 16px oklch(0.52 0.24 256 / 24%)"
+                    : "none",
+                }}
                 onClick={handleSubmit}
               >
                 {isLoading ? (
@@ -125,7 +131,12 @@ export default function ForgotPasswordPage() {
               <motion.div
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
-                transition={{ duration: 0.4, type: "spring", stiffness: 220, delay: 0.1 }}
+                transition={{
+                  duration: 0.4,
+                  type: "spring",
+                  stiffness: 220,
+                  delay: 0.1,
+                }}
                 className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10"
                 style={{ boxShadow: "0 0 20px oklch(0.5 0.15 155 / 15%)" }}
               >
@@ -135,8 +146,8 @@ export default function ForgotPasswordPage() {
                 <h2 className="text-[1.4rem] font-bold">Email envoyé !</h2>
                 <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
                   Si un compte existe pour{" "}
-                  <span className="font-semibold text-foreground">{email}</span>,
-                  vous recevrez un lien dans quelques minutes.
+                  <span className="font-semibold text-foreground">{email}</span>
+                  , vous recevrez un lien dans quelques minutes.
                 </p>
                 <p className="mt-2 text-[11px] text-muted-foreground/60">
                   Vérifiez aussi votre dossier spam.
@@ -147,12 +158,18 @@ export default function ForgotPasswordPage() {
               <Button
                 variant="outline"
                 className="w-full h-9 text-[13px] font-medium border-border/60"
-                onClick={() => { setSubmitted(false); setEmail(""); }}
+                onClick={() => {
+                  setSubmitted(false);
+                  setEmail("");
+                }}
               >
                 Renvoyer l&apos;email
               </Button>
               <Link href="/sign-in">
-                <Button variant="ghost" className="w-full h-9 text-[13px] font-medium text-muted-foreground hover:text-foreground">
+                <Button
+                  variant="ghost"
+                  className="w-full h-9 text-[13px] font-medium text-muted-foreground hover:text-foreground"
+                >
                   <ArrowLeft className="h-3.5 w-3.5 mr-2" />
                   Retour à la connexion
                 </Button>
