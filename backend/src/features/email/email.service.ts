@@ -4,7 +4,7 @@
  * All outgoing emails in the application go through this service.
  *
  * Install: pnpm add resend
- * Env:     RESEND_API_KEY, EMAIL_FROM (e.g. "VendeoAI <noreply@vendeoai.com>")
+ * Env:     RESEND_API_KEY, EMAIL_FROM (e.g. "Prosendia <noreply@Prosendia.com>")
  */
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -54,18 +54,18 @@ export interface SystemNotificationEmailPayload {
 // ─── Design tokens (mirror globals.css OKLCH → approximate hex for email) ─────
 // Email clients don't support oklch() — we use closest hex equivalents.
 const COLORS = {
-  primary: '#4F5BD5',        // oklch(0.52 0.24 256) ≈ indigo-blue
-  primaryLight: '#E8EAFB',   // primary / 10%
+  primary: '#4F5BD5', // oklch(0.52 0.24 256) ≈ indigo-blue
+  primaryLight: '#E8EAFB', // primary / 10%
   primaryDark: '#3A45B8',
-  background: '#0F1117',     // dark bg
-  surface: '#1C1F2E',        // card bg dark
+  background: '#0F1117', // dark bg
+  surface: '#1C1F2E', // card bg dark
   surfaceBorder: '#2A2D3E',
   foreground: '#F5F5FA',
   mutedFg: '#8B8FA8',
-  success: '#34D399',        // emerald
+  success: '#34D399', // emerald
   successLight: '#0D2E24',
-  warning: '#FB923C',        // orange
-  destructive: '#F87171',    // rose
+  warning: '#FB923C', // orange
+  destructive: '#F87171', // rose
   white: '#FFFFFF',
 } as const;
 
@@ -78,7 +78,7 @@ function baseTemplate(content: string, previewText: string): string {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="x-apple-disable-message-reformatting" />
-  <title>VendeoAI</title>
+  <title>Prosendia</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -239,16 +239,16 @@ function baseTemplate(content: string, previewText: string): string {
       <div class="header">
         <div class="logo-mark">
           <div class="logo-icon"></div>
-          <span class="logo-text">VendeoAI</span>
+          <span class="logo-text">Prosendia</span>
         </div>
       </div>
       ${content}
       <div class="footer">
-        <p>© ${new Date().getFullYear()} VendeoAI · Automatisation IA pour vendeurs Facebook</p>
+        <p>© ${new Date().getFullYear()} Prosendia · Automatisation IA pour vendeurs Facebook</p>
         <p style="margin-top:6px;">
-          <a href="https://vendeoai.com/privacy">Confidentialité</a> ·
-          <a href="https://vendeoai.com/terms">CGU</a> ·
-          <a href="https://vendeoai.com/unsubscribe">Se désabonner</a>
+          <a href="https://Prosendia.com/privacy">Confidentialité</a> ·
+          <a href="https://Prosendia.com/terms">CGU</a> ·
+          <a href="https://Prosendia.com/unsubscribe">Se désabonner</a>
         </p>
       </div>
     </div>
@@ -259,8 +259,13 @@ function baseTemplate(content: string, previewText: string): string {
 
 // ─── Templates ────────────────────────────────────────────────────────────────
 
-function verificationTemplate(username: string, code: string, expiresIn: number): string {
-  return baseTemplate(`
+function verificationTemplate(
+  username: string,
+  code: string,
+  expiresIn: number,
+): string {
+  return baseTemplate(
+    `
     <div class="card">
       <div style="width:48px;height:48px;background:${COLORS.primaryLight};border-radius:14px;display:flex;align-items:center;justify-content:center;margin-bottom:20px;">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="${COLORS.primary}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -270,7 +275,7 @@ function verificationTemplate(username: string, code: string, expiresIn: number)
       <h1 class="card-title">Vérifiez votre email</h1>
       <p class="card-subtitle">
         Bonjour <strong style="color:${COLORS.foreground};">${username}</strong>,<br/>
-        Utilisez ce code à 6 chiffres pour confirmer votre adresse email et activer votre compte VendeoAI.
+        Utilisez ce code à 6 chiffres pour confirmer votre adresse email et activer votre compte Prosendia.
       </p>
 
       <div class="code-block">
@@ -285,27 +290,30 @@ function verificationTemplate(username: string, code: string, expiresIn: number)
       <div class="divider"></div>
 
       <p style="font-size:13px;color:${COLORS.mutedFg};line-height:1.7;">
-        Ce code est à usage unique et ne peut pas être partagé. Ne le communiquez jamais à quelqu'un d'autre, même s'il prétend être de l'équipe VendeoAI.
+        Ce code est à usage unique et ne peut pas être partagé. Ne le communiquez jamais à quelqu'un d'autre, même s'il prétend être de l'équipe Prosendia.
       </p>
     </div>
-  `, `Votre code de vérification VendeoAI : ${code}`);
+  `,
+    `Votre code de vérification Prosendia : ${code}`,
+  );
 }
 
 function welcomeTemplate(username: string): string {
-  return baseTemplate(`
+  return baseTemplate(
+    `
     <div class="card">
       <div style="width:48px;height:48px;background:${COLORS.successLight};border-radius:14px;display:flex;align-items:center;justify-content:center;margin-bottom:20px;">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="${COLORS.success}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
         </svg>
       </div>
-      <h1 class="card-title">Bienvenue sur VendeoAI 🎉</h1>
+      <h1 class="card-title">Bienvenue sur Prosendia 🎉</h1>
       <p class="card-subtitle">
         Bonjour <strong style="color:${COLORS.foreground};">${username}</strong>,<br/>
         Votre compte est activé. Vous pouvez maintenant connecter vos pages Facebook et laisser l'IA répondre à vos clients automatiquement.
       </p>
 
-      <a class="btn" href="https://vendeoai.com/dashboard">
+      <a class="btn" href="https://Prosendia.com/dashboard">
         Accéder à mon tableau de bord →
       </a>
 
@@ -316,20 +324,31 @@ function welcomeTemplate(username: string): string {
         ['1', 'Connectez votre page Facebook', 'Paramètres → Pages Facebook'],
         ['2', 'Configurez votre assistant IA', 'Profil business → Description'],
         ['3', 'Activez les réponses automatiques', 'Inbox → Mode IA'],
-      ].map(([n, title, sub]) => `
+      ]
+        .map(
+          ([n, title, sub]) => `
       <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:14px;">
         <div style="min-width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,${COLORS.primary},${COLORS.primaryDark});display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:white;">${n}</div>
         <div>
           <div style="font-size:13px;font-weight:600;color:${COLORS.foreground};">${title}</div>
           <div style="font-size:12px;color:${COLORS.mutedFg};">${sub}</div>
         </div>
-      </div>`).join('')}
+      </div>`,
+        )
+        .join('')}
     </div>
-  `, 'Bienvenue sur VendeoAI — votre compte est activé !');
+  `,
+    'Bienvenue sur Prosendia — votre compte est activé !',
+  );
 }
 
-function passwordResetTemplate(username: string, resetUrl: string, expiresIn: number): string {
-  return baseTemplate(`
+function passwordResetTemplate(
+  username: string,
+  resetUrl: string,
+  expiresIn: number,
+): string {
+  return baseTemplate(
+    `
     <div class="card">
       <div style="width:48px;height:48px;background:${COLORS.primaryLight};border-radius:14px;display:flex;align-items:center;justify-content:center;margin-bottom:20px;">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="${COLORS.primary}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -357,11 +376,14 @@ function passwordResetTemplate(username: string, resetUrl: string, expiresIn: nu
         <span style="color:${COLORS.primary};">${resetUrl}</span>
       </p>
     </div>
-  `, 'Réinitialisez votre mot de passe VendeoAI');
+  `,
+    'Réinitialisez votre mot de passe Prosendia',
+  );
 }
 
 function billingTemplate(p: BillingEmailPayload): string {
-  return baseTemplate(`
+  return baseTemplate(
+    `
     <div class="card">
       <div style="width:48px;height:48px;background:${COLORS.successLight};border-radius:14px;display:flex;align-items:center;justify-content:center;margin-bottom:20px;">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="${COLORS.success}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -382,11 +404,15 @@ function billingTemplate(p: BillingEmailPayload): string {
           <span class="info-label">Montant</span>
           <span class="info-value" style="color:${COLORS.success};font-weight:700;">${p.amount}</span>
         </div>
-        ${p.nextBillingDate ? `
+        ${
+          p.nextBillingDate
+            ? `
         <div class="info-row">
           <span class="info-label">Prochain débit</span>
           <span class="info-value">${p.nextBillingDate}</span>
-        </div>` : ''}
+        </div>`
+            : ''
+        }
         <div class="info-row">
           <span class="info-label">Statut</span>
           <span class="info-value"><span class="badge badge-success">✓ Payé</span></span>
@@ -395,11 +421,14 @@ function billingTemplate(p: BillingEmailPayload): string {
 
       ${p.invoiceUrl ? `<a class="btn" href="${p.invoiceUrl}">Télécharger ma facture →</a>` : ''}
     </div>
-  `, `Confirmation paiement ${p.planName} — ${p.amount}`);
+  `,
+    `Confirmation paiement ${p.planName} — ${p.amount}`,
+  );
 }
 
 function systemNotificationTemplate(p: SystemNotificationEmailPayload): string {
-  return baseTemplate(`
+  return baseTemplate(
+    `
     <div class="card">
       <h1 class="card-title">${p.title}</h1>
       <p class="card-subtitle">
@@ -410,7 +439,9 @@ function systemNotificationTemplate(p: SystemNotificationEmailPayload): string {
       </div>
       ${p.ctaLabel && p.ctaUrl ? `<a class="btn" href="${p.ctaUrl}">${p.ctaLabel} →</a>` : ''}
     </div>
-  `, p.subject);
+  `,
+    p.subject,
+  );
 }
 
 // ─── Service ──────────────────────────────────────────────────────────────────
@@ -424,7 +455,9 @@ export class EmailService {
   constructor(private readonly config: ConfigService) {
     const apiKey = this.config.getOrThrow<string>('resendApiKey');
     this.resend = new Resend(apiKey);
-    this.from = this.config.get<string>('emailFrom') ?? 'VendeoAI <noreply@vendeoai.com>';
+    this.from =
+      this.config.get<string>('emailFrom') ??
+      'Prosendia <noreply@Prosendia.com>';
   }
 
   // ─── Core send ─────────────────────────────────────────────────────────────
@@ -438,7 +471,9 @@ export class EmailService {
         html,
       });
       if (error) {
-        this.logger.error(`[EMAIL_SEND_FAILED] to=${to} subject="${subject}" err="${error.message}"`);
+        this.logger.error(
+          `[EMAIL_SEND_FAILED] to=${to} subject="${subject}" err="${error.message}"`,
+        );
         throw new Error(`Email send failed: ${error.message}`);
       }
       this.logger.log(`[EMAIL_SENT] to=${to} subject="${subject}"`);
@@ -455,7 +490,7 @@ export class EmailService {
     const expiresIn = payload.expiresInMinutes ?? 30;
     await this.send(
       payload.to,
-      'Votre code de vérification VendeoAI',
+      'Votre code de vérification Prosendia',
       verificationTemplate(payload.username, payload.code, expiresIn),
     );
   }
@@ -463,12 +498,14 @@ export class EmailService {
   async sendWelcomeEmail(payload: WelcomeEmailPayload): Promise<void> {
     await this.send(
       payload.to,
-      'Bienvenue sur VendeoAI 🎉',
+      'Bienvenue sur Prosendia 🎉',
       welcomeTemplate(payload.username),
     );
   }
 
-  async sendPasswordResetEmail(payload: PasswordResetEmailPayload): Promise<void> {
+  async sendPasswordResetEmail(
+    payload: PasswordResetEmailPayload,
+  ): Promise<void> {
     const expiresIn = payload.expiresInMinutes ?? 30;
     await this.send(
       payload.to,
@@ -485,7 +522,9 @@ export class EmailService {
     );
   }
 
-  async sendSystemNotification(payload: SystemNotificationEmailPayload): Promise<void> {
+  async sendSystemNotification(
+    payload: SystemNotificationEmailPayload,
+  ): Promise<void> {
     await this.send(
       payload.to,
       payload.subject,

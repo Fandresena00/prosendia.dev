@@ -17,17 +17,14 @@ import { BillingWebhookController } from './billing-webhook.controller.js';
 import { BillingController } from './billing.controller.js';
 import { PapiClient } from './clients/papi.client.js';
 import { CreditGuard } from './guards/credit.guard.js';
+import { AdminCustomPlanTemplateBillingService } from './services/admin-custom-plan-template-billing.service.js';
 import { BillingCleanupService } from './services/billing-cleanup.service.js';
 import { BillingService } from './services/billing.service.js';
 import { CreditService } from './services/credit.service.js';
-import { AdminCustomPlanTemplateBillingService } from './services/admin-custom-plan-template-billing.service.js';
-import {
-  NOTIFICATION_SERVICE_TOKEN,
-  SubscriptionService,
-} from './services/subscription.service.js';
+import { SubscriptionService } from './services/subscription.service.js';
 
+import { AdminModule } from '../admin/admin.module.js';
 import { DashboardModule } from '../dashboard/dashboard.module.js';
-import { AdminModule } from '../admin/admin.module.js'; // ← NOUVEAU
 
 @Module({
   imports: [
