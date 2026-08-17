@@ -28,52 +28,52 @@ import {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface PapiCreatePaymentLinkRequest {
-  amount:          number;
-  clientName:      string;
-  reference:       string;
-  description:     string;
-  successUrl:      string;
-  failureUrl:      string;
+  amount: number;
+  clientName: string;
+  reference: string;
+  description: string;
+  successUrl: string;
+  failureUrl: string;
   notificationUrl: string;
-  validDuration:   number;
-  provider?:       string;
-  payerEmail?:     string;
-  payerPhone?:     string;
-  isTestMode?:     boolean;
-  testReason?:     string;
+  validDuration: number;
+  provider?: string;
+  payerEmail?: string;
+  payerPhone?: string;
+  isTestMode?: boolean;
+  testReason?: string;
 }
 
 export interface PapiPaymentLinkData {
-  amount:                 number;
-  currency:               string;
-  linkCreationDateTime:   number;
+  amount: number;
+  currency: string;
+  linkCreationDateTime: number;
   linkExpirationDateTime: number;
-  paymentLink:            string;
-  clientName:             string;
+  paymentLink: string;
+  clientName: string;
   /**
    * Papi retourne ici la référence que VOUS avez envoyée (champ `reference`).
    * C'est notre VENDEO-XXXXXXXX.
    */
-  paymentReference:       string;
-  description:            string;
-  successUrl:             string;
-  failureUrl:             string;
-  notificationUrl:        string;
-  payerEmail:             string | null;
-  payerPhone:             string | null;
+  paymentReference: string;
+  description: string;
+  successUrl: string;
+  failureUrl: string;
+  notificationUrl: string;
+  payerEmail: string | null;
+  payerPhone: string | null;
   /** Token à stocker pour vérifier les futures notifications. */
-  notificationToken:      string;
-  isTestMode:             boolean;
+  notificationToken: string;
+  isTestMode: boolean;
 }
 
 export interface PapiNotificationPayload {
-  paymentStatus:            string;  // SUCCESS | PENDING | FAILED
-  paymentMethod:            string;
-  currency:                 string;
-  amount:                   number;
-  fee:                      number;
-  clientName:               string;
-  description:              string;
+  paymentStatus: string; // SUCCESS | PENDING | FAILED
+  paymentMethod: string;
+  currency: string;
+  amount: number;
+  fee: number;
+  clientName: string;
+  description: string;
   /**
    * Référence interne du prestataire de paiement Papi.
    * PAS notre référence.
@@ -84,11 +84,11 @@ export interface PapiNotificationPayload {
    * C'est notre VENDEO-XXXXXXXX.
    * Utiliser ce champ pour retrouver le paiement en DB.
    */
-  paymentReference:         string;
-  notificationToken:        string;
-  message:                  string;
-  payerEmail:               string | null;
-  payerPhone:               string | null;
+  paymentReference: string;
+  notificationToken: string;
+  message: string;
+  payerEmail: string | null;
+  payerPhone: string | null;
 }
 
 export class PapiError extends Error {
@@ -106,34 +106,34 @@ export class PapiError extends Error {
 
 const PAPI_BASE_URL = 'https://app.papi.mg';
 const PAPI_ENDPOINT = '/dashboard/api/payment-links';
-const TIMEOUT_MS    = 15_000;
+const TIMEOUT_MS = 15_000;
 
 @Injectable()
 export class PapiClient {
   private readonly logger = new Logger(PapiClient.name);
-  private readonly apiKey:      string;
+  private readonly apiKey: string;
   private readonly frontendUrl: string;
-  private readonly backendUrl:  string;
-  private readonly isTestMode:  boolean;
+  private readonly backendUrl: string;
+  private readonly isTestMode: boolean;
 
   constructor(private readonly config: ConfigService) {
-    this.apiKey      = config.getOrThrow<string>('papiApiKey');
+    this.apiKey = config.getOrThrow<string>('papiApiKey');
     this.frontendUrl = config.getOrThrow<string>('frontendUrl');
-    this.backendUrl  = config.getOrThrow<string>('backendUrl');
+    this.backendUrl = config.getOrThrow<string>('backendUrl');
     // isTestMode = true UNIQUEMENT en development
     // En production Render.com → false → vrai paiement + vrai webhook
-    this.isTestMode  = config.get<string>('nodeEnv') !== 'production';
+    this.isTestMode = config.get<string>('nodeEnv') !== 'production';
   }
 
   // ─── Create payment link ──────────────────────────────────────────────────
 
   async createPaymentLink(
-    reference:  string,
-    amount:     number,
-    provider:   string,
-    payerName:  string,
+    reference: string,
+    amount: number,
+    provider: string,
+    payerName: string,
     payerPhone: string,
-    planName:   string,
+    planName: string,
   ): Promise<PapiPaymentLinkData> {
     const papiProvider = PROVIDER_TO_PAPI[provider];
     if (!papiProvider) {
@@ -142,51 +142,56 @@ export class PapiClient {
 
     const body: PapiCreatePaymentLinkRequest = {
       amount,
-      clientName:      payerName,
+      clientName: payerName,
       // `reference` = notre identifiant unique → sera retourné dans paymentReference
       reference,
-      description:     `Abonnement VendeoAI ${planName} — ${reference}`.slice(0, 255),
-      successUrl:      `${this.frontendUrl}/billing/success?ref=${reference}`,
-      failureUrl:      `${this.frontendUrl}/billing/failure?ref=${reference}`,
-      // L'URL de notification DOIT être accessible depuis internet
-      // En dev local → utiliser ngrok ou un tunnel, pas localhost
+      description: `Abonnement Prosendia ${planName} — ${reference}`.slice(
+        0,
+        255,
+      ),
+      successUrl: `${this.frontendUrl}/billing/success?ref=${reference}`,
+      failureUrl: `${this.frontendUrl}/billing/failure?ref=${reference}`,
       notificationUrl: `${this.backendUrl}/billing/webhook/papi`,
-      validDuration:   PAPI_LINK_VALIDITY_MINUTES,
-      provider:        papiProvider,
+      validDuration: PAPI_LINK_VALIDITY_MINUTES,
+      provider: papiProvider,
       payerPhone,
-      isTestMode:      this.isTestMode,
-      ...(this.isTestMode ? { testReason: 'VendeoAI sandbox' } : {}),
+      isTestMode: this.isTestMode,
+      ...(this.isTestMode ? { testReason: 'Prosendia sandbox' } : {}),
     };
 
     this.logger.log(
       `[PAYMENT_CREATE] Creating Papi link — ref=${reference} amount=${amount}MGA ` +
-      `provider=${papiProvider} testMode=${this.isTestMode} ` +
-      `notificationUrl=${body.notificationUrl}`,
+        `provider=${papiProvider} testMode=${this.isTestMode} ` +
+        `notificationUrl=${body.notificationUrl}`,
     );
 
     const controller = new AbortController();
-    const timeout    = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
       const res = await fetch(`${PAPI_BASE_URL}${PAPI_ENDPOINT}`, {
-        method:  'POST',
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Token':        this.apiKey,
+          Token: this.apiKey,
         },
-        body:   JSON.stringify(body),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
 
-      const json = await res.json().catch(() => ({})) as Record<string, unknown>;
+      const json = (await res.json().catch(() => ({}))) as Record<
+        string,
+        unknown
+      >;
 
       if (!res.ok) {
-        const msg  = (json.error as { message?: string } | undefined)?.message
-          ?? `HTTP ${res.status}`;
+        const msg =
+          (json.error as { message?: string } | undefined)?.message ??
+          `HTTP ${res.status}`;
         const code = (json.error as { code?: string } | undefined)?.code;
         this.logger.error(
           `[PAYMENT_CREATE_FAILED] Papi HTTP ${res.status} — ref=${reference} ` +
-          `msg="${msg}" code=${code ?? '?'}`,
+            `msg="${msg}" code=${code ?? '?'}`,
         );
         throw new PapiError(msg, code, res.status);
       }
@@ -196,7 +201,7 @@ export class PapiClient {
       if (!data.paymentLink || !data.notificationToken) {
         this.logger.error(
           `[PAYMENT_CREATE_FAILED] Missing paymentLink or notificationToken — ` +
-          `ref=${reference} response=${JSON.stringify(data)}`,
+            `ref=${reference} response=${JSON.stringify(data)}`,
         );
         throw new PapiError(
           'Réponse Papi invalide: paymentLink ou notificationToken manquant',
@@ -205,8 +210,8 @@ export class PapiClient {
 
       this.logger.log(
         `[PAYMENT_CREATED] Papi link ready — ref=${reference} ` +
-        `papiPaymentRef="${data.paymentReference}" ` +
-        `amount=${amount}MGA`,
+          `papiPaymentRef="${data.paymentReference}" ` +
+          `amount=${amount}MGA`,
       );
 
       return data;
@@ -242,21 +247,21 @@ export class PapiClient {
    * @param storedToken     payment.papiNotificationToken en DB
    */
   verifyNotification(
-    payload:          PapiNotificationPayload,
-    storedReference:  string,
-    storedToken:      string | null | undefined,
+    payload: PapiNotificationPayload,
+    storedReference: string,
+    storedToken: string | null | undefined,
   ): boolean {
     this.logger.debug(
       `[WEBHOOK_VERIFY] payload.paymentReference="${payload.paymentReference}" ` +
-      `storedReference="${storedReference}" ` +
-      `status="${payload.paymentStatus}" amount=${payload.amount}MGA`,
+        `storedReference="${storedReference}" ` +
+        `status="${payload.paymentStatus}" amount=${payload.amount}MGA`,
     );
 
     // Guard 1 — token présent en DB
     if (!storedToken) {
       this.logger.error(
         `[WEBHOOK_VERIFY_FAILED] storedToken is null for ref="${storedReference}". ` +
-        `Payment link save may have failed.`,
+          `Payment link save may have failed.`,
       );
       return false;
     }
@@ -265,7 +270,7 @@ export class PapiClient {
     if (payload.paymentReference !== storedReference) {
       this.logger.error(
         `[WEBHOOK_VERIFY_FAILED] paymentReference mismatch — ` +
-        `payload="${payload.paymentReference}" stored="${storedReference}"`,
+          `payload="${payload.paymentReference}" stored="${storedReference}"`,
       );
       return false;
     }
@@ -280,7 +285,7 @@ export class PapiClient {
 
     this.logger.log(
       `[PAYMENT_VERIFIED] Notification authentic — ref="${storedReference}" ` +
-      `status="${payload.paymentStatus}" amount=${payload.amount}MGA`,
+        `status="${payload.paymentStatus}" amount=${payload.amount}MGA`,
     );
 
     return true;
