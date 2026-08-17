@@ -12,9 +12,7 @@ export default () => ({
   appUrl: process.env.APP_URL ?? process.env.FRONTEND_URL,
   appTitle: process.env.APP_TITLE ?? 'VendeoAI',
   backendUrl:
-    process.env.BACKEND_URL ??
-    process.env.APP_URL ??
-    `http://localhost:${process.env.PORT ?? '5000'}`,
+    process.env.BACKEND_URL ?? `http://localhost:${process.env.PORT ?? '5000'}`,
 
   // ── Auth JWT ───────────────────────────────────────────────────────────
   jwtSecret: process.env.JWT_SECRET,
